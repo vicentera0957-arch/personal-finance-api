@@ -1,35 +1,52 @@
-// @ts-check
 import eslint from '@eslint/js';
-import eslintPluginPrettierRecommended from 'eslint-plugin-prettier/recommended';
-import globals from 'globals';
 import tseslint from 'typescript-eslint';
+import prettierPlugin from 'eslint-plugin-prettier';
+import eslintConfigPrettier from 'eslint-config-prettier';
 
 export default tseslint.config(
+  // 1. Archivos a ignorar (reemplaza a .eslintignore)
   {
-    ignores: ['eslint.config.mjs'],
+    ignores: [
+      '**/node_modules/**',
+      '**/dist/**',
+      '**/coverage/**',
+      'test/**', // Si no quieres linting en los tests e2e todavía
+      '.eslintrc.js', // Archivos de config viejos
+      'eslint.config.mjs', // Evita que se analice a sí mismo
+    ],
   },
+
+  // 2. Configuración base de ESLint y TypeScript
   eslint.configs.recommended,
-  ...tseslint.configs.recommendedTypeChecked,
-  eslintPluginPrettierRecommended,
+  ...tseslint.configs.recommended,
+
   {
     languageOptions: {
-      globals: {
-        ...globals.node,
-        ...globals.jest,
-      },
-      sourceType: 'commonjs',
       parserOptions: {
-        projectService: true,
+        project: './tsconfig.json',
         tsconfigRootDir: import.meta.dirname,
       },
     },
-  },
-  {
+    plugins: {
+      prettier: prettierPlugin,
+    },
     rules: {
-      '@typescript-eslint/no-explicit-any': 'off',
-      '@typescript-eslint/no-floating-promises': 'warn',
-      '@typescript-eslint/no-unsafe-argument': 'warn',
-      "prettier/prettier": ["error", { endOfLine: "auto" }],
+      // --- REGLAS ESTRICTAS DE TYPESCRIPT ---
+      '@typescript-eslint/no-explicit-any': 'error', // Prohibido el uso de 'any'
+      '@typescript-eslint/explicit-function-return-type': 'warn', // Obliga a tipar retornos
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        { argsIgnorePattern: '^_' },
+      ],
+
+      // --- REGLAS DE NESTJS / CALIDAD ---
+      'no-console': 'warn',
+
+      // --- INTEGRACIÓN CON PRETTIER ---
+      'prettier/prettier': 'error', // Marca fallos de formato como errores de ESLint
     },
   },
+
+  // 3. Desactiva reglas de ESLint que choquen con Prettier (Siempre al final)
+  eslintConfigPrettier,
 );
