@@ -1,5 +1,3 @@
-// src/modules/users/domain/entities/user.entity.ts
-
 import { Email } from '../value-objects/email.vo';
 
 // Este tipo agrupa los datos necesarios para crear un usuario nuevo
@@ -52,10 +50,11 @@ export class User {
     );
   }
 
-  // --- Métodos de negocio ---
+  // --- Métodos de negocio --- comportamiento propio del usuario
 
   updateProfile(name: string): void {
     if (!name || name.trim().length === 0) {
+      // validación simple, se puede mejorar, proteger invariantes
       throw new Error('El nombre no puede estar vacío');
     }
     this.name = name.trim();
