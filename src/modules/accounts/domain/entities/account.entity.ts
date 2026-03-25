@@ -2,6 +2,8 @@ import { AccountType } from '../value-objects/type.vo';
 import { Balance } from '../value-objects/balance.vo';
 
 // current_balance se omite — una cuenta nueva siempre arranca con el balance inicial
+
+// The object should state its own creation time.
 interface CreateAccountProps {
   id: string;
   userId: string;
@@ -64,7 +66,6 @@ export class Account {
   // Métodos de negocio — operaciones de balance
   // ============================================
 
-  // Registra una entrada de dinero — el VO Balance garantiza que no quede negativo
   inflow(amount: Balance): void {
     if (amount.isZero()) {
       throw new Error('El monto de entrada debe ser mayor a cero');
@@ -73,7 +74,6 @@ export class Account {
     this.updatedAt = new Date();
   }
 
-  // Registra una salida de dinero — subtract en Balance lanza excepción si el resultado sería negativo
   outflow(amount: Balance): void {
     if (amount.isZero()) {
       throw new Error('El monto de egreso debe ser mayor a cero');
@@ -82,7 +82,6 @@ export class Account {
     this.updatedAt = new Date();
   }
 
-  // Verifica si hay fondos suficientes — el use case lo usa antes de llamar outflow
   hasSufficientFunds(amount: Balance): boolean {
     return (
       this.currentBalance.greaterThan(amount) ||
@@ -90,7 +89,6 @@ export class Account {
     );
   }
 
-  // Ajusta el balance a un valor específico — útil para correcciones contables
   adjustBalance(newBalance: Balance, reason: string): void {
     if (!reason || reason.trim().length === 0) {
       throw new Error('El motivo del ajuste es requerido');
@@ -99,7 +97,6 @@ export class Account {
     this.updatedAt = new Date();
   }
 
-  // Reestablece el balance al valor inicial
   resetToInitialBalance(): void {
     this.currentBalance = this.initialBalance;
     this.updatedAt = new Date();
@@ -152,7 +149,6 @@ export class Account {
   getUpdatedAt(): Date {
     return this.updatedAt;
   }
-
   hasFunds(): boolean {
     return !this.currentBalance.isZero();
   }

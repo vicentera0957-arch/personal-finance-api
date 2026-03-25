@@ -12,15 +12,16 @@ export class Balance {
     if (amount < 0) {
       throw new Error('El balance no puede ser negativo');
     }
-    return new Balance(Math.round(amount * 100));
+    // Usamos Math.round para asegurar que no entren decimales accidentales
+    return new Balance(Math.round(amount));
   }
 
   static zero(): Balance {
     return new Balance(0);
   }
 
-  static reconstitute(cents: number): Balance {
-    return new Balance(cents);
+  static reconstitute(value: number): Balance {
+    return new Balance(value);
   }
 
   add(other: Balance): Balance {
@@ -35,16 +36,14 @@ export class Balance {
     return new Balance(result);
   }
 
+  // Ahora getValue devuelve el valor directo sin dividir por 100
   getValue(): number {
-    return this.value / 100;
-  }
-
-  getCents(): number {
     return this.value;
   }
 
+  // Eliminamos decimales del toString para CLP
   toString(): string {
-    return (this.value / 100).toFixed(2);
+    return this.value.toString();
   }
 
   equals(other: Balance): boolean {

@@ -10,7 +10,8 @@ export class AccountType {
     //inmutable
     this.tipo = tipo;
   }
-
+  // eligo aca un array en vez de un set, incluso usando o(n) en vez de o(1)
+  // Los arrays ocupan bloques de memoria contiguos, lo que puede mejorar la localización de datos y el rendimiento en algunos casos. Además, para un número pequeño de elementos, la diferencia de rendimiento entre un array y un set es insignificante.
   private static readonly tiposValidos = [
     'ahorro',
     'corriente',
@@ -25,7 +26,7 @@ export class AccountType {
     }
 
     const tipoNormalizado = tipo.trim().toLowerCase();
-
+    //verificacion si el tipo esta dentro de los validos
     if (!this.tiposValidos.includes(tipoNormalizado)) {
       throw new Error('El tipo de cuenta no es válido');
     }

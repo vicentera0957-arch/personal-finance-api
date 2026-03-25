@@ -33,18 +33,33 @@ Un slice vertical completo: desde la base de datos hasta la respuesta HTTP, pasa
 
 Esta capa está completamente implementada. Se documenta aquí como referencia para las capas siguientes.
 
+1.1 value objects:
+. Balance
+. Type
+
 ### 1.1 Value object `Balance`
 
 **Archivo:** `domain/value-objects/balance.vo.ts`
 
-Clase inmutable que encapsula un monto monetario. Almacena el valor internamente en **centavos** (entero) para evitar errores de punto flotante. Métodos clave:
+Clase inmutable que encapsula un monto monetario en **CLP** (peso chileno, sin decimales). Relación 1:1 entre el valor del VO y lo que se persiste en la DB — sin conversión de centavos. Métodos clave:
 
-- `Balance.create(amount)` — valida que sea número finito y no negativo, convierte a centavos
-- `Balance.reconstitute(cents)` — reconstruye desde persistencia sin validación extra
+- `Balance.create(amount)` — valida que sea número finito y no negativo; aplica `Math.round` para descartar decimales accidentales
+- `Balance.reconstitute(value)` — reconstruye desde persistencia sin validación extra
 - `Balance.zero()` — factory para balance cero
 - `add(other)`, `subtract(other)` — aritmética inmutable; `subtract` lanza error si el resultado sería negativo
-- `getValue()` — devuelve el valor en unidades (centavos / 100)
-- `getCents()` — devuelve el entero en centavos, lo que se persiste en la DB
+- `getValue()` — devuelve el valor directo, que es exactamente lo que se almacena en la DB
+
+> **Por qué `add` y `subtract` viven aquí y no en `transactions`:**
+> El principio DDD aplicado es _encapsulación de invariantes en el Value Object_. La regla "un balance no puede ser negativo" le pertenece al VO, no al módulo que decide cuándo operar. Si esa validación viviera en `Account` o en `transactions`, habría que repetirla en cada lugar que modifique un balance, y sería posible construir un `Balance(-100)` desde cualquier rincón del sistema. Al ponerla en el VO, es imposible tener un `Balance` inválido sin importar desde dónde se llame.
+
+Por que decidi quitar cents:
+CLP no tiene centavos, así que almacenar en centavos solo  
+ añadiría una capa de conversión sin ningún beneficio real. La relación 1:1 hace el código más predecible y el
+mapper más simple.
+
+El único riesgo que hay que tener en mente es si en el futuro el sistema necesita soportar otras monedas que  
+ sí usan decimales (USD, EUR). En ese caso habría que migrar la columna de int a algo como decimal(15,2) y  
+ revisar el VO. Pero para una V1 en CLP creo es la decisión correcta.
 
 ### 1.2 Value object `AccountType`
 
@@ -55,7 +70,7 @@ Clase inmutable que valida el tipo de cuenta contra una lista cerrada: `ahorro`,
 ### 1.3 Entidad `Account`
 
 **Archivo:** `domain/entities/account.entity.ts`
-
+He tenido dudas con respecto a dejar algunas validaciones dentro del cosntructor, las deje sin validaciones confiando en el patron de factory methods
 Clase pura sin decoradores. Constructor privado con dos factory methods:
 
 - `Account.create(props)` — para cuentas nuevas; `currentBalance` arranca igual a `initialBalance`
@@ -149,17 +164,17 @@ Puerto de salida definido como clase abstracta (necesario para que NestJS lo use
 
 Entidad TypeORM completamente separada de la entidad de dominio. Columnas:
 
-| Columna           | Tipo      | Notas                                              |
-|-------------------|-----------|----------------------------------------------------|
-| `id`              | `uuid`    | PK, generado fuera de TypeORM (en el use case)     |
-| `userId`          | `varchar` | Referencia lógica al usuario (sin FK por ahora)    |
-| `name`            | `varchar` |                                                    |
-| `type`            | `varchar` | Almacena el string del VO `AccountType`            |
-| `initialBalance`  | `int`     | Almacena centavos del VO `Balance`                 |
-| `currentBalance`  | `int`     | Almacena centavos del VO `Balance`                 |
-| `isArchived`      | `boolean` | Default `false`                                    |
-| `createdAt`       | `timestamp`|                                                   |
-| `updatedAt`       | `timestamp`|                                                   |
+| Columna          | Tipo        | Notas                                            |
+| ---------------- | ----------- | ------------------------------------------------ |
+| `id`             | `uuid`      | PK, generado fuera de TypeORM (en el use case)   |
+| `userId`         | `varchar`   | Referencia lógica al usuario (sin FK por ahora)  |
+| `name`           | `varchar`   |                                                  |
+| `type`           | `varchar`   | Almacena el string del VO `AccountType`          |
+| `initialBalance` | `int`       | Almacena el valor directo en CLP (1:1 con el VO) |
+| `currentBalance` | `int`       | Almacena el valor directo en CLP (1:1 con el VO) |
+| `isArchived`     | `boolean`   | Default `false`                                  |
+| `createdAt`      | `timestamp` |                                                  |
+| `updatedAt`      | `timestamp` |                                                  |
 
 ### 3.2 `AccountMapper`
 
@@ -167,8 +182,8 @@ Entidad TypeORM completamente separada de la entidad de dominio. Columnas:
 
 Convierte entre las dos representaciones. Es el único lugar que conoce ambas capas:
 
-- `toDomain(orm: AccountOrmEntity): Account` — usa `Balance.reconstitute(cents)` para los balances y `AccountType.create(tipo)` para el tipo; usa `Account.reconstitute()`
-- `toOrm(domain: Account): AccountOrmEntity` — usa `getCents()` para los balances y `getType()` para el tipo
+- `toDomain(orm: AccountOrmEntity): Account` — usa `Balance.reconstitute(value)` para los balances y `AccountType.create(tipo)` para el tipo; usa `Account.reconstitute()`
+- `toOrm(domain: Account): AccountOrmEntity` — usa `getValue()` para los balances y `getType()` para el tipo
 
 ### 3.3 `AccountRepositoryImpl`
 
@@ -188,22 +203,22 @@ Implementa `IAccountRepository` usando el repositorio de TypeORM. Usa `AccountMa
 
 **Archivo:** `infrastructure/http/controllers/accounts.controller.ts`
 
-| Método | Ruta                         | Use case                   | HTTP success |
-|--------|------------------------------|----------------------------|--------------|
-| POST   | `/accounts`                  | `CreateAccountUseCase`     | 201          |
-| GET    | `/accounts/:id`              | `GetAccountByIdUseCase`    | 200          |
-| GET    | `/accounts/user/:userId`     | `GetAccountsByUserIdUseCase`| 200         |
-| PATCH  | `/accounts/:id/rename`       | `RenameAccountUseCase`     | 200          |
-| PATCH  | `/accounts/:id/archive`      | `ArchiveAccountUseCase`    | 200          |
-| DELETE | `/accounts/:id`              | `DeleteAccountUseCase`     | 204          |
+| Método | Ruta                     | Use case                     | HTTP success |
+| ------ | ------------------------ | ---------------------------- | ------------ |
+| POST   | `/accounts`              | `CreateAccountUseCase`       | 201          |
+| GET    | `/accounts/:id`          | `GetAccountByIdUseCase`      | 200          |
+| GET    | `/accounts/user/:userId` | `GetAccountsByUserIdUseCase` | 200          |
+| PATCH  | `/accounts/:id/rename`   | `RenameAccountUseCase`       | 200          |
+| PATCH  | `/accounts/:id/archive`  | `ArchiveAccountUseCase`      | 200          |
+| DELETE | `/accounts/:id`          | `DeleteAccountUseCase`       | 204          |
 
 Cada handler atrapa las excepciones de dominio y las traduce a su equivalente HTTP:
 
-| Excepción de dominio        | HTTP       |
-|-----------------------------|------------|
-| `AccountNotFoundException`  | 404        |
-| `AccountArchivedException`  | 409        |
-| `InsufficientFundsException`| 422        |
+| Excepción de dominio         | HTTP |
+| ---------------------------- | ---- |
+| `AccountNotFoundException`   | 404  |
+| `AccountArchivedException`   | 409  |
+| `InsufficientFundsException` | 422  |
 
 ---
 
