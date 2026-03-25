@@ -99,7 +99,7 @@ Puerto de salida definido como clase abstracta (necesario para que NestJS lo use
 - `save(account: Account): Promise<Account>`
 - `delete(id: string): Promise<void>`
 
----
+## Revise el dom, y deje como pendiente revisar el detalle de si verificar agregar validaciones dentro del constructor en la entity. Aun asi todo va bien.
 
 ## Paso 2 — Capa application
 

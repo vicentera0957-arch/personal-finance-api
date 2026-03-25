@@ -1,5 +1,6 @@
 import { AccountType } from '../value-objects/type.vo';
 import { Balance } from '../value-objects/balance.vo';
+import { AccountArchivedException } from '../exceptions/account.exceptions';
 
 // current_balance se omite — una cuenta nueva siempre arranca con el balance inicial
 
@@ -107,6 +108,7 @@ export class Account {
   // ============================================
 
   rename(name: string): void {
+    if (this.isArchived) throw new AccountArchivedException(this.id);
     if (!name || name.trim().length === 0) {
       throw new Error('El nombre no puede estar vacío');
     }

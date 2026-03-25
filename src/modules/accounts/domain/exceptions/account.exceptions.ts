@@ -7,18 +7,18 @@ export abstract class AccountException extends Error {
 
 export class AccountNotFoundException extends AccountException {
   constructor(id: string) {
-    super(`Account not found: ${id}`);
+    super(`Cuenta no encontrada: ${id}`);
   }
 }
 
 export class InsufficientFundsException extends AccountException {
-  constructor(required: number, available: number) {
-    super(`Insufficient funds. Required: ${required}, Available: ${available}`);
+  constructor() {
+    super('Fondos insuficientes para realizar la operación');
   }
 }
 
 export class AccountArchivedException extends AccountException {
   constructor(id: string) {
-    super(`Account ${id} is archived.`);
+    super(`La cuenta ${id} está archivada`);
   }
 }
