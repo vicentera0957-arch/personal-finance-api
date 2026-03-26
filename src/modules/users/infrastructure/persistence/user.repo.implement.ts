@@ -10,7 +10,7 @@ import { UserMapper } from './user.mapper';
 export class UserRepositoryImpl extends IUserRepository {
   constructor(
     // @InjectRepository le dice a NestJS qué repositorio de TypeORM inyectar
-    // sin este decorador NestJS no sabe qué tabla querés
+    // sin este decorador NestJS no sabe qué tabla quieres
     @InjectRepository(UserOrmEntity)
     private readonly ormRepository: Repository<UserOrmEntity>,
 

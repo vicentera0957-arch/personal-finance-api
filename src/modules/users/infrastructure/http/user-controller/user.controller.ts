@@ -30,6 +30,7 @@ import {
 @Controller('users')
 export class UsersController {
   constructor(
+    //inyectamos los casos de uso necesarios para las operaciones del controlador
     private readonly createUserUseCase: CreateUserUseCase,
     private readonly getUserByIdUseCase: GetUserByIdUseCase,
     private readonly updateUserProfileUseCase: UpdateUserProfileUseCase,
@@ -53,6 +54,7 @@ export class UsersController {
   async create(@Body() dto: CreateUserDto): Promise<UserResponseDto> {
     try {
       const user = await this.createUserUseCase.execute({
+        // pide el objeto dto con los datos necesarios para crear el usuario, el use case se encarga de validar y manipular esos datos usando los value objects y la logica de negocio, y devuelve la entidad User creada, que el controlador convierte a UserResponseDto para devolver al cliente. El controlador no conoce la logica de negocio ni la implementacion concreta del repo ni del vo, solo conoce las interfaces y los DTOs.
         email: dto.email,
         password: dto.password,
         name: dto.name,

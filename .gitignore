@@ -35,6 +35,9 @@ lerna-debug.log*
 !.vscode/launch.json
 !.vscode/extensions.json
 
+#claude and other ai tools
+CLAUDE.md
+sistema-aprendizaje-claude-code.md
 # dotenv environment variable files
 .env
 .env.development.local
