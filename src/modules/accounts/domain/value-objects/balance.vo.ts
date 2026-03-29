@@ -1,3 +1,5 @@
+import { InvalidBalanceException } from '../exceptions/account.exceptions';
+
 export class Balance {
   private readonly value: number;
 
@@ -7,13 +9,15 @@ export class Balance {
 
   static create(amount: number): Balance {
     if (!Number.isFinite(amount)) {
-      throw new Error('El balance debe ser un número finito');
+      throw new InvalidBalanceException('debe ser un número finito');
     }
     if (amount < 0) {
-      throw new Error('El balance no puede ser negativo');
+      throw new InvalidBalanceException('no puede ser negativo');
     }
-    // Usamos Math.round para asegurar que no entren decimales accidentales
-    return new Balance(Math.round(amount));
+    if (!Number.isInteger(amount)) {
+      throw new InvalidBalanceException('no acepta decimales (CLP no tiene centavos)');
+    }
+    return new Balance(amount);
   }
 
   static zero(): Balance {
@@ -31,17 +35,15 @@ export class Balance {
   subtract(other: Balance): Balance {
     const result = this.value - other.value;
     if (result < 0) {
-      throw new Error('El balance no puede ser negativo');
+      throw new InvalidBalanceException('no puede ser negativo');
     }
     return new Balance(result);
   }
 
-  // Ahora getValue devuelve el valor directo sin dividir por 100
   getValue(): number {
     return this.value;
   }
 
-  // Eliminamos decimales del toString para CLP
   toString(): string {
     return this.value.toString();
   }

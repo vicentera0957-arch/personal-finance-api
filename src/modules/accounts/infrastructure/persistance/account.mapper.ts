@@ -10,8 +10,10 @@ import { AccountOrmEntity } from './account.orm.entity';
 export class AccountMapper {
   toDomain(orm: AccountOrmEntity): Account {
     const type = AccountType.create(orm.type);
-    const initialBalance = Balance.create(orm.initialBalance);
-    const currentBalance = Balance.create(orm.currentBalance);
+    //usamos reconstitute para evitar validaciones innecesarias
+    // y tambien para flexibilizarnos a posibles cambios de dominio a futuro.
+    const initialBalance = Balance.reconstitute(orm.initialBalance);
+    const currentBalance = Balance.reconstitute(orm.currentBalance);
     return Account.reconstitute({
       id: orm.id,
       userId: orm.userId,

@@ -22,3 +22,61 @@ export class AccountArchivedException extends AccountException {
     super(`La cuenta ${id} está archivada`);
   }
 }
+
+export class ZeroAmountInflowException extends AccountException {
+  constructor() {
+    super('El monto de entrada debe ser mayor a cero');
+  }
+}
+
+export class ZeroAmountOutflowException extends AccountException {
+  constructor() {
+    super('El monto de egreso debe ser mayor a cero');
+  }
+}
+
+export class InvalidAdjustmentReasonException extends AccountException {
+  constructor() {
+    super('El motivo del ajuste es requerido');
+  }
+}
+
+export class InvalidAccountNameException extends AccountException {
+  constructor() {
+    super('El nombre no puede estar vacío');
+  }
+}
+
+export class AccountAlreadyArchivedDomainException extends AccountException {
+  constructor() {
+    super('La cuenta ya está archivada');
+  }
+}
+
+export class AccountNotArchivedDomainException extends AccountException {
+  constructor() {
+    super('La cuenta no está archivada');
+  }
+}
+
+export class CannotOperateOnArchivedAccountException extends AccountException {
+  constructor() {
+    super('No se pueden realizar operaciones en una cuenta archivada');
+  }
+}
+
+// ============================================
+// Value Object Exceptions
+// ============================================
+
+export class InvalidBalanceException extends AccountException {
+  constructor(message: string) {
+    super(`Balance inválido: ${message}`);
+  }
+}
+
+export class InvalidAccountTypeException extends AccountException {
+  constructor(type: string) {
+    super(`Tipo de cuenta inválido: ${type}. Tipos válidos: ahorro, corriente, vista, ruta, otros`);
+  }
+}

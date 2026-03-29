@@ -2,7 +2,7 @@
 
 ---
 
-## Paso 0 — Definir el alcance
+# Paso 0 — Definir el alcance
 
 Antes de escribir una sola línea de código, documentar qué hace y qué no hace esta feature en V1.
 
@@ -29,7 +29,7 @@ Un slice vertical completo: desde la base de datos hasta la respuesta HTTP, pasa
 
 ---
 
-## Paso 1 — Capa domain ✅ (ya implementada)
+# Paso 1 — Capa domain ✅ (ya implementada)
 
 Esta capa está completamente implementada. Se documenta aquí como referencia para las capas siguientes.
 
@@ -76,7 +76,31 @@ Clase pura sin decoradores. Constructor privado con dos factory methods:
 - `Account.create(props)` — para cuentas nuevas; `currentBalance` arranca igual a `initialBalance`
 - `Account.reconstitute(props)` — para reconstruir desde persistencia; acepta `currentBalance` independiente
 
-Métodos de negocio disponibles: `inflow(amount)`, `outflow(amount)`, `hasSufficientFunds(amount)`, `adjustBalance(newBalance, reason)`, `resetToInitialBalance()`, `rename(name)`, `archive()`, `unarchive()`.
+Métodos de negocio disponibles: `inflow()`, `outflow()`, `hasSufficientFunds()`, `adjustBalance()`, `resetToInitialBalance()`, `rename()`, `archive()`, `unarchive()`.
+
+### 1.4 Decisión de Dominio: Cuentas Archivadas son "Muertas"
+
+Una cuenta archivada **nunca puede modificar su balance**. Es una regla de invariante que garantiza que una cuenta archivada está genuinamente "congelada":
+
+#### Métodos bloqueados si está archivada:
+
+| Método                              | Excepción                                 |
+| ----------------------------------- | ----------------------------------------- |
+| `inflow(amount)`                    | `CannotOperateOnArchivedAccountException` |
+| `outflow(amount)`                   | `CannotOperateOnArchivedAccountException` |
+| `adjustBalance(newBalance, reason)` | `CannotOperateOnArchivedAccountException` |
+| `resetToInitialBalance()`           | `CannotOperateOnArchivedAccountException` |
+| `rename(name)`                      | `AccountArchivedException`                |
+
+#### Métodos permitidos siempre:
+
+| Método                 | Notas                                        |
+| ---------------------- | -------------------------------------------- |
+| `archive()`            | Valida que no esté ya archivada              |
+| `unarchive()`          | Valida que esté archivada; permite reactivar |
+| `hasSufficientFunds()` | Solo lectura, siempre disponible             |
+
+**Razonamiento:** Impedir cambios en balances protege la integridad histó rica. Si una cuenta está archivada, el usuario debe llamar explícitamente a `unarchive()` antes de poder operar. Esto previene modificaciones accidentales en cuentas "muertas".
 
 ### 1.4 Excepciones de dominio
 
@@ -101,7 +125,7 @@ Puerto de salida definido como clase abstracta (necesario para que NestJS lo use
 
 ## Revise el dom, y deje como pendiente revisar el detalle de si verificar agregar validaciones dentro del constructor en la entity. Aun asi todo va bien.
 
-## Paso 2 — Capa application
+# Paso 2 — Capa application
 
 ### 2.1 `CreateAccountUseCase`
 
@@ -156,7 +180,7 @@ Puerto de salida definido como clase abstracta (necesario para que NestJS lo use
 
 ---
 
-## Paso 3 — Capa infrastructure
+# Paso 3 — Capa infrastructure
 
 ### 3.1 `AccountOrmEntity`
 
@@ -181,6 +205,7 @@ Entidad TypeORM completamente separada de la entidad de dominio. Columnas:
 **Archivo:** `infrastructure/persistence/account.mapper.ts`
 
 Convierte entre las dos representaciones. Es el único lugar que conoce ambas capas:
+cambiamos a recontitute en el mapper para flexibilizarnos con posibles cambio de dominio a futuro, evitando validar denuevo datos persistidos previamente.
 
 - `toDomain(orm: AccountOrmEntity): Account` — usa `Balance.reconstitute(value)` para los balances y `AccountType.create(tipo)` para el tipo; usa `Account.reconstitute()`
 - `toOrm(domain: Account): AccountOrmEntity` — usa `getValue()` para los balances y `getType()` para el tipo
@@ -222,7 +247,7 @@ Cada handler atrapa las excepciones de dominio y las traduce a su equivalente HT
 
 ---
 
-## Paso 4 — Wiring
+# Paso 4 — Wiring
 
 ### 4.1 `AccountsModule`
 
@@ -261,7 +286,7 @@ Importar `AccountsModule` en `app.module.ts` y asegurar que `TypeOrmModule.forRo
 
 ---
 
-## Paso 5 — Verificación
+# Paso 5 — Verificación
 
 - [ ] `POST /accounts` crea una cuenta y retorna el `AccountResponseDto`
 - [ ] `POST /accounts` con tipo inválido retorna `400 Bad Request`

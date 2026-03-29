@@ -1,6 +1,15 @@
 import { AccountType } from '../value-objects/type.vo';
 import { Balance } from '../value-objects/balance.vo';
-import { AccountArchivedException } from '../exceptions/account.exceptions';
+import {
+  AccountArchivedException,
+  ZeroAmountInflowException,
+  ZeroAmountOutflowException,
+  InvalidAdjustmentReasonException,
+  InvalidAccountNameException,
+  AccountAlreadyArchivedDomainException,
+  AccountNotArchivedDomainException,
+  CannotOperateOnArchivedAccountException,
+} from '../exceptions/account.exceptions';
 
 // current_balance se omite — una cuenta nueva siempre arranca con el balance inicial
 
@@ -68,16 +77,22 @@ export class Account {
   // ============================================
 
   inflow(amount: Balance): void {
+    if (this.isArchived) {
+      throw new CannotOperateOnArchivedAccountException();
+    }
     if (amount.isZero()) {
-      throw new Error('El monto de entrada debe ser mayor a cero');
+      throw new ZeroAmountInflowException();
     }
     this.currentBalance = this.currentBalance.add(amount);
     this.updatedAt = new Date();
   }
 
   outflow(amount: Balance): void {
+    if (this.isArchived) {
+      throw new CannotOperateOnArchivedAccountException();
+    }
     if (amount.isZero()) {
-      throw new Error('El monto de egreso debe ser mayor a cero');
+      throw new ZeroAmountOutflowException();
     }
     this.currentBalance = this.currentBalance.subtract(amount);
     this.updatedAt = new Date();
@@ -91,14 +106,20 @@ export class Account {
   }
 
   adjustBalance(newBalance: Balance, reason: string): void {
+    if (this.isArchived) {
+      throw new CannotOperateOnArchivedAccountException();
+    }
     if (!reason || reason.trim().length === 0) {
-      throw new Error('El motivo del ajuste es requerido');
+      throw new InvalidAdjustmentReasonException();
     }
     this.currentBalance = newBalance;
     this.updatedAt = new Date();
   }
 
   resetToInitialBalance(): void {
+    if (this.isArchived) {
+      throw new CannotOperateOnArchivedAccountException();
+    }
     this.currentBalance = this.initialBalance;
     this.updatedAt = new Date();
   }
@@ -110,7 +131,7 @@ export class Account {
   rename(name: string): void {
     if (this.isArchived) throw new AccountArchivedException(this.id);
     if (!name || name.trim().length === 0) {
-      throw new Error('El nombre no puede estar vacío');
+      throw new InvalidAccountNameException();
     }
     this.name = name.trim();
     this.updatedAt = new Date();
@@ -118,7 +139,7 @@ export class Account {
 
   archive(): void {
     if (this.isArchived) {
-      throw new Error('La cuenta ya está archivada');
+      throw new AccountAlreadyArchivedDomainException();
     }
     this.isArchived = true;
     this.updatedAt = new Date();
@@ -126,7 +147,7 @@ export class Account {
 
   unarchive(): void {
     if (!this.isArchived) {
-      throw new Error('La cuenta no está archivada');
+      throw new AccountNotArchivedDomainException();
     }
     this.isArchived = false;
     this.updatedAt = new Date();

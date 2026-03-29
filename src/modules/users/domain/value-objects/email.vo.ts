@@ -1,19 +1,23 @@
+import {
+  EmptyEmailException,
+  InvalidEmailFormatException,
+} from '../exceptions/user.exceptions';
+
 export class Email {
   private readonly value: string;
 
   private constructor(value: string) {
     this.value = value;
   }
-  // Email.create() es el único punto de entrada para crear una instancia de Email, lo que garantiza que siempre se valide el formato del email antes de crear el objeto.
-  //  Esto es una práctica común en los Value Objects para asegurar su inmutabilidad y validez.
+
   static create(raw: string): Email {
     if (!raw || raw.trim().length === 0) {
-      throw new Error('El email no puede estar vacío');
+      throw new EmptyEmailException();
     }
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(raw.trim())) {
-      throw new Error(`Formato de email inválido: ${raw}`);
+      throw new InvalidEmailFormatException(raw);
     }
 
     return new Email(raw.toLowerCase().trim());

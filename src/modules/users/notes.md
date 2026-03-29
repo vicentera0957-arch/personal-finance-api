@@ -130,6 +130,7 @@ Uso interno para el módulo `auth`. Misma lógica que `GetUserById` pero por ema
 **Archivo:** `infrastructure/persistence/user.orm-entity.ts`
 
 Entidad TypeORM con decoradores `@Entity`, `@Column`, `@PrimaryGeneratedColumn`, etc. Completamente separada de la entidad de dominio.
+-- Cambie las columnas de fecha autogeneradas por simplemente columnas ya que estas hacian override de los metodos de persitencia del dominio, pederiamos enfoque del DDD
 
 ### 3.2 `UserMapper`
 
