@@ -28,9 +28,9 @@ import { AccountResponseDto } from '../dto/account-response.dto';
 import { Account } from '../../../domain/entities/account.entity';
 import {
   AccountNotFoundException,
-  AccountArchivedException,
   AccountAlreadyArchivedDomainException,
   AccountNotArchivedDomainException,
+  CannotOperateOnArchivedAccountException,
   NoTypeProvidedException,
   InvalidAccountTypeException,
   InvalidBalanceException,
@@ -120,7 +120,7 @@ export class AccountsController {
       if (e instanceof AccountNotFoundException) {
         throw new NotFoundException(e.message);
       }
-      if (e instanceof AccountArchivedException) {
+      if (e instanceof CannotOperateOnArchivedAccountException) {
         throw new ConflictException(e.message);
       }
       throw e;

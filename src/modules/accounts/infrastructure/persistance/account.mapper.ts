@@ -9,7 +9,7 @@ import { AccountOrmEntity } from './account.orm.entity';
 @Injectable()
 export class AccountMapper {
   toDomain(orm: AccountOrmEntity): Account {
-    const type = AccountType.create(orm.type);
+    const type = AccountType.reconstitute(orm.type);
     //usamos reconstitute para evitar validaciones innecesarias
     // y tambien para flexibilizarnos a posibles cambios de dominio a futuro.
     const initialBalance = Balance.reconstitute(orm.initialBalance);

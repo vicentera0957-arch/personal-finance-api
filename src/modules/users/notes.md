@@ -1,68 +1,71 @@
-# Implementación de la feature `users`
+# Módulo `users` — Documentación de referencia
+
+## Alcance V1
+
+| Incluido | Excluido |
+| -------- | -------- |
+| Registro con email, password y nombre | Login / generación de JWT (módulo `auth`) |
+| Recuperar perfil por id | Recuperación de contraseña |
+| Actualizar nombre | Verificación de email |
+| Eliminar cuenta | Roles y permisos |
+| `GetUserByEmail` — uso interno para `auth` | Actualizar moneda por defecto |
 
 ---
 
-## Paso 0 — Definir el alcance
+## Capa domain
 
-Antes de escribir una sola línea de código, documentar qué hace y qué no hace esta feature en V1.
-
-### Casos de uso — V1
-
-- `CreateUser` — registro con email, password y nombre
-- `GetUserById` — recuperar perfil por id
-- `GetUserByEmail` — uso interno, necesario para auth
-- `UpdateUserProfile` — actualizar nombre
-- `DeleteUser` — baja de cuenta
-
-### Casos de uso — fuera de scope en V1
-
-- Login / generación de JWT (pertenece al módulo `auth`)
-- Recuperación de contraseña
-- Verificación de email
-- Roles y permisos
-
-### Resultado esperado
-
-Un archivo `src/modules/users/README.md` con esta misma definición, que sirva de contrato para el equipo antes de implementar.
-
----
-
-## Paso 1 — Capa domain
-
-### 1.1 Value object `Email`
+### Value object `Email`
 
 **Archivo:** `domain/value-objects/email.vo.ts`
 
-Clase inmutable que encapsula la validación del formato de email. Lanza una excepción de dominio si el formato es inválido. No depende de `class-validator` — la validación es pura TypeScript.
+Clase inmutable que encapsula y valida el formato de email. No depende de `class-validator` — la validación es TypeScript puro.
 
-### 1.2 Entidad `User`
+Métodos:
+- `Email.create(raw)` — valida formato y vacío; normaliza a minúsculas
+- `Email.reconstitute(raw)` — reconstruye desde persistencia sin re-validar; evita que cambios futuros en las reglas de validación rompan datos históricos
+- `getValue()`, `equals()`, `getDomain()`
+
+### Entidad `User`
 
 **Archivo:** `domain/entities/user.entity.ts`
 
-Clase pura sin decoradores. Constructor privado con dos factory methods:
+Clase pura sin decoradores de framework. Constructor privado con dos factory methods:
 
-- `User.create()` — para usuarios nuevos, genera `createdAt` y `updatedAt`
-- `User.reconstitute()` — para reconstruir desde persistencia, respeta fechas originales
+- `User.create(props)` — para usuarios nuevos; genera `createdAt` y `updatedAt`
+- `User.reconstitute(props)` — para reconstruir desde persistencia; respeta las fechas originales
 
 Propiedades: `id`, `email` (tipo `Email`), `passwordHash`, `name`, `createdAt`, `updatedAt`.
 
-Métodos de dominio: `updateProfile(name)`, `changePassword(newHash)`, `updateDefaultCurrency(currency)`.
+Métodos de negocio:
+- `updateProfile(name)` — valida que el nombre no sea vacío; lanza `InvalidNameException`
+- `changePassword(newHash)` — lanza `InvalidPasswordHashException` si el hash es vacío
 
-### 1.3 Excepciones de dominio
+### Excepciones de dominio
 
 **Archivo:** `domain/exceptions/user.exceptions.ts`
 
-Clases que extienden `Error`, no `HttpException`. El mapeo a HTTP ocurre en infrastructure.
+Todas extienden la clase base `UserException extends Error`. El mapeo a HTTP ocurre exclusivamente en el controlador, nunca acá.
 
-- `UserNotFoundException`
-- `UserAlreadyExistsException`
-- `InvalidCredentialsException`
+**Excepciones de entidad:**
+| Excepción | Cuándo se lanza |
+| --------- | --------------- |
+| `UserNotFoundException` | Usuario no encontrado por id o email |
+| `UserAlreadyExistsException` | Intento de crear usuario con email ya registrado |
+| `InvalidCredentialsException` | Credenciales inválidas (reservado para módulo `auth`) |
+| `InvalidNameException` | `updateProfile()` recibe nombre vacío |
+| `InvalidPasswordHashException` | `changePassword()` recibe hash vacío |
 
-### 1.4 Interface `IUserRepository`
+**Excepciones de Value Object:**
+| Excepción | Cuándo se lanza |
+| --------- | --------------- |
+| `EmptyEmailException` | `Email.create()` recibe string vacío |
+| `InvalidEmailFormatException` | `Email.create()` recibe formato inválido |
 
-**Archivo:** `domain/repositories/user.repository.ts`
+### Repositorio
 
-Puerto de salida. Define el contrato sin implementación. Métodos:
+**Archivo:** `domain/repository/user.repository.ts`
+
+Puerto de salida definido como clase abstracta (necesario para DI en NestJS — las interfaces TypeScript no existen en runtime). Métodos:
 
 - `findById(id: string): Promise<User | null>`
 - `findByEmail(email: string): Promise<User | null>`
@@ -71,110 +74,88 @@ Puerto de salida. Define el contrato sin implementación. Métodos:
 
 ---
 
-## Paso 2 — Capa application
+## Capa application
 
-### 2.1 `CreateUserUseCase`
+### Use cases
 
-**Archivo:** `application/use-cases/create-user.use-case.ts`
+| Use case | Descripción |
+| -------- | ----------- |
+| `CreateUserUseCase` | Verifica email único → hashea password con bcrypt → crea entidad → persiste |
+| `GetUserByIdUseCase` | Busca por id → lanza `UserNotFoundException` si no existe |
+| `GetUserByEmailUseCase` | Uso interno para `auth` — no expuesto como endpoint HTTP |
+| `UpdateUserProfileUseCase` | Recupera via `GetUserByIdUseCase` → llama `user.updateProfile()` → persiste |
+| `DeleteUserUseCase` | Verifica existencia → elimina via repositorio → retorna `void` |
 
-1. Verifica que el email no esté en uso via `IUserRepository.findByEmail`
-2. Lanza `UserAlreadyExistsException` si existe
-3. Hashea el password con bcrypt
-4. Crea la entidad con `User.create()`
-5. Persiste via `IUserRepository.save()`
-6. Retorna el usuario creado
-
-### 2.2 `GetUserByIdUseCase`
-
-**Archivo:** `application/use-cases/get-user-by-id.use-case.ts`
-
-1. Busca via `IUserRepository.findById`
-2. Lanza `UserNotFoundException` si no existe
-3. Retorna el usuario
-
-### 2.3 `GetUserByEmailUseCase`
-
-**Archivo:** `application/use-cases/get-user-by-email.use-case.ts`
-
-Uso interno para el módulo `auth`. Misma lógica que `GetUserById` pero por email. No se expone como endpoint HTTP.
-
-### 2.4 `UpdateUserProfileUseCase`
-
-**Archivo:** `application/use-cases/update-user-profile.use-case.ts`
-
-1. Recupera el usuario via `GetUserByIdUseCase`
-2. Llama a `user.updateProfile(name)`
-3. Persiste via `IUserRepository.save()`
-
-### 2.5 `UpdateDefaultCurrencyUseCase`
-
-**Archivo:** `application/use-cases/update-default-currency.use-case.ts`
-
-1. Recupera el usuario
-2. Llama a `user.updateDefaultCurrency(currency)`
-3. Persiste los cambios
-
-### 2.6 `DeleteUserUseCase`
-
-**Archivo:** `application/use-cases/delete-user.use-case.ts`
-
-1. Verifica que el usuario existe
-2. Elimina via `IUserRepository.delete()`
+**Nota sobre bcrypt:** `CreateUserUseCase` importa bcrypt directamente. En V2 esto debería reemplazarse con un `IPasswordHasher` abstracto inyectado por DI, para que el use case no tenga dependencia de infraestructura.
 
 ---
 
-## Paso 3 — Capa infrastructure
+## Capa infrastructure
 
-### 3.1 `UserOrmEntity`
+### `UserOrmEntity`
 
-**Archivo:** `infrastructure/persistence/user.orm-entity.ts`
+**Archivo:** `infrastructure/persistence/user.orm.entity.ts`
 
-Entidad TypeORM con decoradores `@Entity`, `@Column`, `@PrimaryGeneratedColumn`, etc. Completamente separada de la entidad de dominio.
--- Cambie las columnas de fecha autogeneradas por simplemente columnas ya que estas hacian override de los metodos de persitencia del dominio, pederiamos enfoque del DDD
+Entidad TypeORM completamente separada de la entidad de dominio.
 
-### 3.2 `UserMapper`
+| Columna | Tipo | Notas |
+| ------- | ---- | ----- |
+| `id` | `uuid` | PK, generado en el use case con `randomUUID()` |
+| `email` | `varchar` | Sin `unique: true` a nivel ORM — la unicidad la garantiza el use case |
+| `password_hash` | `varchar` | |
+| `full_name` | `varchar` | |
+| `created_at` | `timestamp` | `@Column` simple — el dominio controla este valor |
+| `updated_at` | `timestamp` | `@Column` simple — el dominio controla este valor |
 
-**Archivo:** `infrastructure/mappers/user.mapper.ts`
+**Decisión sobre timestamps:** Se usan `@Column` simples en lugar de `@CreateDateColumn`/`@UpdateDateColumn`. TypeORM con esos decoradores sobreescribe los valores en cada `save()`, ignorando lo que el dominio setea. Al usar `@Column` simple, la entidad de dominio es la única fuente de verdad para las fechas.
 
-Convierte entre las dos representaciones:
+### `UserMapper`
 
-- `toDomain(orm: UserOrmEntity): User` — usa `User.reconstitute()`
-- `toOrm(domain: User): UserOrmEntity`
+**Archivo:** `infrastructure/persistence/user.mapper.ts`
 
-### 3.3 `UserRepositoryImpl`
+Único punto de traducción entre ORM entity y domain entity.
 
-**Archivo:** `infrastructure/persistence/user.repository.impl.ts`
+- `toDomain(orm)` — usa `Email.reconstitute()` (no `Email.create()`) para no re-validar datos persistidos; usa `User.reconstitute()`
+- `toOrm(domain)` — extrae valores con getters del dominio
 
-Implementa `IUserRepository` usando el repositorio de TypeORM. Usa `UserMapper` en cada operación para convertir entre capas.
+### `UserRepositoryImpl`
 
-### 3.4 DTOs
+**Archivo:** `infrastructure/persistence/user.repo.implement.ts`
+
+Implementa `IUserRepository` con TypeORM. Delega toda la conversión al mapper. No contiene lógica de negocio.
+
+### DTOs
 
 **Archivos:** `infrastructure/http/dto/`
 
-- `CreateUserDto` — email, password, name con validaciones de `class-validator`
-- `UpdateUserProfileDto` — name opcional, extiende `PartialType`
-- `UpdateDefaultCurrencyDto` — currency con `@IsEnum`
-- `UserResponseDto` — excluye `passwordHash`, incluye id, email, name, createdAt
+- `CreateUserDto` — `email`, `password`, `name` con validaciones de `class-validator`
+- `UpdateUserProfileDto` — `name` opcional
+- `UserResponseDto` — excluye `passwordHash`; incluye `id`, `email`, `name`, `createdAt`, `updatedAt`
 
-### 3.5 `UsersController`
+### `UsersController`
 
-**Archivo:** `infrastructure/http/controllers/users.controller.ts`
+**Archivo:** `infrastructure/http/user-controller/user.controller.ts`
 
-| Método | Ruta                  | Use case                       |
-| ------ | --------------------- | ------------------------------ |
-| POST   | `/users`              | `CreateUserUseCase`            |
-| GET    | `/users/:id`          | `GetUserByIdUseCase`           |
-| PATCH  | `/users/:id/profile`  | `UpdateUserProfileUseCase`     |
-| PATCH  | `/users/:id/currency` | `UpdateDefaultCurrencyUseCase` |
-| DELETE | `/users/:id`          | `DeleteUserUseCase`            |
+| Método | Ruta | Use case | HTTP éxito |
+| ------ | ---- | -------- | ---------- |
+| POST | `/users` | `CreateUserUseCase` | 201 |
+| GET | `/users/:id` | `GetUserByIdUseCase` | 200 |
+| PATCH | `/users/:id/profile` | `UpdateUserProfileUseCase` | 200 |
+| DELETE | `/users/:id` | `DeleteUserUseCase` | 204 |
 
-Cada handler mapea la excepción de dominio a su equivalente HTTP correspondiente.
+Mapeo de excepciones de dominio a HTTP:
+
+| Excepción | HTTP |
+| --------- | ---- |
+| `UserNotFoundException` | 404 |
+| `UserAlreadyExistsException` | 409 |
+| `EmptyEmailException` | 400 |
+| `InvalidEmailFormatException` | 400 |
+| `InvalidNameException` | 400 |
 
 ---
 
-## Paso 4 — Wiring
-
-### 4.1 `UsersModule`
+## Wiring — `UsersModule`
 
 **Archivo:** `users.module.ts`
 
@@ -183,36 +164,30 @@ Cada handler mapea la excepción de dominio a su equivalente HTTP correspondient
   imports: [TypeOrmModule.forFeature([UserOrmEntity])],
   controllers: [UsersController],
   providers: [
-    // use cases
+    UserMapper,
     CreateUserUseCase,
     GetUserByIdUseCase,
     GetUserByEmailUseCase,
     UpdateUserProfileUseCase,
-    UpdateDefaultCurrencyUseCase,
     DeleteUserUseCase,
-    // vincula la interface con su implementación
-    {
-      provide: IUserRepository,
-      useClass: UserRepositoryImpl,
-    },
+    { provide: IUserRepository, useClass: UserRepositoryImpl },
   ],
-  exports: [GetUserByEmailUseCase], // exportado para el módulo auth
+  exports: [GetUserByEmailUseCase], // consumido por el módulo auth
 })
 export class UsersModule {}
 ```
 
-### 4.2 Registrar en `AppModule`
-
-Importar `UsersModule` en `app.module.ts` y asegurar que `TypeOrmModule.forRoot()` incluya `UserOrmEntity` en el array de entidades.
-
 ---
 
-## Paso 5 — Verificación
+## Checklist de verificación
 
-- [ ] `POST /users` crea un usuario y retorna el `UserResponseDto` sin `passwordHash`
-- [ ] `POST /users` con email duplicado retorna `409 Conflict`
+- [ ] `POST /users` crea usuario y retorna `UserResponseDto` sin `passwordHash`
+- [ ] `POST /users` con email duplicado → `409 Conflict`
+- [ ] `POST /users` con email inválido → `400 Bad Request`
 - [ ] `GET /users/:id` retorna el usuario
-- [ ] `GET /users/:id` con id inexistente retorna `404 Not Found`
+- [ ] `GET /users/:id` con id inexistente → `404 Not Found`
 - [ ] `PATCH /users/:id/profile` actualiza el nombre
-- [ ] `DELETE /users/:id` elimina el usuario
+- [ ] `PATCH /users/:id/profile` con nombre vacío → `400 Bad Request`
+- [ ] `DELETE /users/:id` elimina el usuario → `204 No Content`
+- [ ] `DELETE /users/:id` con id inexistente → `404 Not Found`
 - [ ] El módulo `auth` puede importar `GetUserByEmailUseCase` sin errores

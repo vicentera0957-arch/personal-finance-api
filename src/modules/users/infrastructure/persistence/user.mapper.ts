@@ -7,7 +7,7 @@ import { Email } from '../../domain/value-objects/email.vo';
 export class UserMapper {
   // no usamos metodos estaticos, es importante instanciar la clase para usar DI.
   toDomain(orm: UserOrmEntity): User {
-    const email = Email.create(orm.email);
+    const email = Email.reconstitute(orm.email);
 
     return User.reconstitute({
       id: orm.id,

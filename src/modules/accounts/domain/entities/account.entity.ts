@@ -1,7 +1,6 @@
 import { AccountType } from '../value-objects/type.vo';
 import { Balance } from '../value-objects/balance.vo';
 import {
-  AccountArchivedException,
   ZeroAmountInflowException,
   ZeroAmountOutflowException,
   InvalidAccountNameException,
@@ -109,7 +108,7 @@ export class Account {
   // ============================================
 
   rename(name: string): void {
-    if (this.isArchived) throw new AccountArchivedException(this.id);
+    if (this.isArchived) throw new CannotOperateOnArchivedAccountException();
     if (!name || name.trim().length === 0) {
       throw new InvalidAccountNameException();
     }

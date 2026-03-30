@@ -28,6 +28,7 @@ import {
   UserAlreadyExistsException,
   InvalidEmailFormatException,
   EmptyEmailException,
+  InvalidNameException,
 } from '../../../domain/exceptions/user.exceptions';
 
 @Controller('users')
@@ -104,6 +105,9 @@ export class UsersController {
     } catch (e) {
       if (e instanceof UserNotFoundException) {
         throw new NotFoundException(e.message); // 404
+      }
+      if (e instanceof InvalidNameException) {
+        throw new BadRequestException(e.message); // 400
       }
       throw e;
     }

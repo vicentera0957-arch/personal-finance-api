@@ -18,6 +18,10 @@ export class AccountType {
     'otros',
   ];
 
+  static reconstitute(tipo: string): AccountType {
+    return new AccountType(tipo);
+  }
+
   static create(tipo: string): AccountType {
     if (!tipo || tipo.trim().length === 0) {
       throw new NoTypeProvidedException();
