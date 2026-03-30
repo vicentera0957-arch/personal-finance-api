@@ -3,14 +3,19 @@
 // Separado del TransactionNature del módulo transactions para mantener
 // independencia entre bounded contexts (cada dominio evoluciona por separado).
 
-export class CategoryNature {
-  private readonly value: string;
+const VALID_NATURES = ['income', 'expense'] as const;
+type Nature = (typeof VALID_NATURES)[number];
 
-  private constructor(value: string) {
+export class CategoryNature {
+  private readonly value: Nature;
+
+  private constructor(value: Nature) {
     this.value = value;
   }
 
-  private static readonly valoresValidos = ['income', 'expense'];
+  private static isValidNature(value: string): value is Nature {
+    return (VALID_NATURES as readonly string[]).includes(value);
+  }
 
   static create(value: string): CategoryNature {
     if (!value || value.trim().length === 0) {
@@ -19,16 +24,16 @@ export class CategoryNature {
 
     const normalizado = value.trim().toLowerCase();
 
-    if (!this.valoresValidos.includes(normalizado)) {
+    if (!this.isValidNature(normalizado)) {
       throw new Error(
-        `La naturaleza de la categoría debe ser: ${this.valoresValidos.join(' | ')}`,
+        `La naturaleza de la categoría debe ser: ${VALID_NATURES.join(' | ')}`,
       );
     }
 
     return new CategoryNature(normalizado);
   }
 
-  getValue(): string {
+  getValue(): Nature {
     return this.value;
   }
 

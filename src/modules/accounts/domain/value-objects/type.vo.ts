@@ -3,22 +3,29 @@ import {
   NoTypeProvidedException,
 } from '../exceptions/account.exceptions';
 
-export class AccountType {
-  private readonly tipo: string;
+const VALID_ACCOUNT_TYPES = [
+  'ahorro',
+  'corriente',
+  'vista',
+  'ruta',
+  'otros',
+] as const;
+type ValidAccountType = (typeof VALID_ACCOUNT_TYPES)[number];
 
-  private constructor(tipo: string) {
+export class AccountType {
+  private readonly tipo: ValidAccountType;
+
+  private constructor(tipo: ValidAccountType) {
     this.tipo = tipo;
   }
-
-  private static readonly tiposValidos = [
-    'ahorro',
-    'corriente',
-    'vista',
-    'ruta',
-    'otros',
-  ];
-
+  private static isValidType(tipo: string): tipo is ValidAccountType {
+    return VALID_ACCOUNT_TYPES.includes(tipo as ValidAccountType);
+  }
+  //refactor de diseno
   static reconstitute(tipo: string): AccountType {
+    if (!this.isValidType(tipo)) {
+      throw new InvalidAccountTypeException(tipo);
+    }
     return new AccountType(tipo);
   }
 
@@ -28,14 +35,14 @@ export class AccountType {
     }
 
     const tipoNormalizado = tipo.trim().toLowerCase();
-    if (!this.tiposValidos.includes(tipoNormalizado)) {
+    if (!this.isValidType(tipoNormalizado)) {
       throw new InvalidAccountTypeException(tipoNormalizado);
     }
 
     return new AccountType(tipoNormalizado);
   }
 
-  getType(): string {
+  getType(): ValidAccountType {
     return this.tipo;
   }
 
