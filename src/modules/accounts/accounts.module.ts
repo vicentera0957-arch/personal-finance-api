@@ -20,6 +20,7 @@ import { RenameAccountUseCase } from './application/use-cases/rename-account.use
 import { ArchiveAccountUseCase } from './application/use-cases/archive-account.use-case';
 import { UnarchiveAccountUseCase } from './application/use-cases/unarchive-account.use-case';
 import { DeleteAccountUseCase } from './application/use-cases/delete-account.use-case';
+import { UpdateAccountBalanceUseCase } from './application/use-cases/update-account-balance.use-case';
 
 @Module({
   imports: [TypeOrmModule.forFeature([AccountOrmEntity])],
@@ -36,6 +37,7 @@ import { DeleteAccountUseCase } from './application/use-cases/delete-account.use
     ArchiveAccountUseCase,
     UnarchiveAccountUseCase,
     DeleteAccountUseCase,
+    UpdateAccountBalanceUseCase,
 
     // Vincula la interfaz con su implementación
     {
@@ -43,8 +45,10 @@ import { DeleteAccountUseCase } from './application/use-cases/delete-account.use
       useClass: AccountRepositoryImpl,
     },
   ],
-  // GetAccountByIdUseCase: para que transactions pueda buscar la cuenta
-  // IAccountRepository: para que transactions pueda guardar el balance actualizado
-  exports: [GetAccountByIdUseCase, IAccountRepository],
+  exports: [
+    GetAccountByIdUseCase,
+    GetAccountsByUserIdUseCase,
+    UpdateAccountBalanceUseCase,
+  ],
 })
 export class AccountsModule {}

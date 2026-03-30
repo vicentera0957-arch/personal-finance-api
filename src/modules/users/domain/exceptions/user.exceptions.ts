@@ -28,12 +28,6 @@ export class InvalidCredentialsException extends UserException {
   }
 }
 
-export class InvalidEmailException extends UserException {
-  constructor(message: string) {
-    super(message);
-  }
-}
-
 // ============================================
 // Value Object Exceptions
 // ============================================
@@ -47,5 +41,21 @@ export class InvalidEmailFormatException extends UserException {
 export class EmptyEmailException extends UserException {
   constructor() {
     super('El email no puede estar vacío');
+  }
+}
+
+// ============================================
+// Entity Exceptions
+// ============================================
+
+export class InvalidNameException extends UserException {
+  constructor() {
+    super('El nombre no puede estar vacío');
+  }
+}
+
+export class InvalidPasswordHashException extends UserException {
+  constructor() {
+    super('El hash de contraseña no puede estar vacío');
   }
 }

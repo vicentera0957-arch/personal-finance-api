@@ -39,6 +39,7 @@ lerna-debug.log*
 CLAUDE.md
 sistema-aprendizaje-claude-code.md
 .claude
+claude-dev-notes.md
 # dotenv environment variable files
 .env
 .env.development.local

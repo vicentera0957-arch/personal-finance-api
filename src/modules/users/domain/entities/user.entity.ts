@@ -1,4 +1,8 @@
 import { Email } from '../value-objects/email.vo';
+import {
+  InvalidNameException,
+  InvalidPasswordHashException,
+} from '../exceptions/user.exceptions';
 
 // Este tipo agrupa los datos necesarios para crear un usuario nuevo
 interface CreateUserProps {
@@ -54,8 +58,7 @@ export class User {
 
   updateProfile(name: string): void {
     if (!name || name.trim().length === 0) {
-      // validación simple, se puede mejorar, proteger invariantes
-      throw new Error('El nombre no puede estar vacío');
+      throw new InvalidNameException();
     }
     this.name = name.trim();
     this.updatedAt = new Date();
@@ -63,7 +66,7 @@ export class User {
 
   changePassword(newHash: string): void {
     if (!newHash) {
-      throw new Error('El hash de contraseña no puede estar vacío');
+      throw new InvalidPasswordHashException();
     }
     this.passwordHash = newHash;
     this.updatedAt = new Date();

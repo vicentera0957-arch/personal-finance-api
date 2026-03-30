@@ -1,4 +1,7 @@
-import { InvalidBalanceException } from '../exceptions/account.exceptions';
+import {
+  InvalidBalanceException,
+  InsufficientFundsException,
+} from '../exceptions/account.exceptions';
 
 export class Balance {
   private readonly value: number;
@@ -15,7 +18,9 @@ export class Balance {
       throw new InvalidBalanceException('no puede ser negativo');
     }
     if (!Number.isInteger(amount)) {
-      throw new InvalidBalanceException('no acepta decimales (CLP no tiene centavos)');
+      throw new InvalidBalanceException(
+        'no acepta decimales (CLP no tiene centavos)',
+      );
     }
     return new Balance(amount);
   }
@@ -35,7 +40,7 @@ export class Balance {
   subtract(other: Balance): Balance {
     const result = this.value - other.value;
     if (result < 0) {
-      throw new InvalidBalanceException('no puede ser negativo');
+      throw new InsufficientFundsException();
     }
     return new Balance(result);
   }

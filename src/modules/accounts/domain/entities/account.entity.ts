@@ -4,7 +4,6 @@ import {
   AccountArchivedException,
   ZeroAmountInflowException,
   ZeroAmountOutflowException,
-  InvalidAdjustmentReasonException,
   InvalidAccountNameException,
   AccountAlreadyArchivedDomainException,
   AccountNotArchivedDomainException,
@@ -103,25 +102,6 @@ export class Account {
       this.currentBalance.greaterThan(amount) ||
       this.currentBalance.equals(amount)
     );
-  }
-
-  adjustBalance(newBalance: Balance, reason: string): void {
-    if (this.isArchived) {
-      throw new CannotOperateOnArchivedAccountException();
-    }
-    if (!reason || reason.trim().length === 0) {
-      throw new InvalidAdjustmentReasonException();
-    }
-    this.currentBalance = newBalance;
-    this.updatedAt = new Date();
-  }
-
-  resetToInitialBalance(): void {
-    if (this.isArchived) {
-      throw new CannotOperateOnArchivedAccountException();
-    }
-    this.currentBalance = this.initialBalance;
-    this.updatedAt = new Date();
   }
 
   // ============================================

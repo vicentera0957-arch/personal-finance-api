@@ -1,4 +1,7 @@
-import { InvalidAccountTypeException } from '../exceptions/account.exceptions';
+import {
+  InvalidAccountTypeException,
+  NoTypeProvidedException,
+} from '../exceptions/account.exceptions';
 
 export class AccountType {
   private readonly tipo: string;
@@ -17,7 +20,7 @@ export class AccountType {
 
   static create(tipo: string): AccountType {
     if (!tipo || tipo.trim().length === 0) {
-      throw new InvalidAccountTypeException('no puede estar vacío');
+      throw new NoTypeProvidedException();
     }
 
     const tipoNormalizado = tipo.trim().toLowerCase();

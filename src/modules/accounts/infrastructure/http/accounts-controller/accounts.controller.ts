@@ -10,6 +10,7 @@ import {
   HttpStatus,
   NotFoundException,
   ConflictException,
+  BadRequestException,
 } from '@nestjs/common';
 // Use cases
 import { CreateAccountUseCase } from '../../../application/use-cases/create-account.use-case';
@@ -28,6 +29,11 @@ import { Account } from '../../../domain/entities/account.entity';
 import {
   AccountNotFoundException,
   AccountArchivedException,
+  AccountAlreadyArchivedDomainException,
+  AccountNotArchivedDomainException,
+  NoTypeProvidedException,
+  InvalidAccountTypeException,
+  InvalidBalanceException,
 } from '../../../domain/exceptions/account.exceptions';
 
 @Controller('accounts')
@@ -58,13 +64,24 @@ export class AccountsController {
 
   @Post()
   async create(@Body() dto: CreateAccountDto): Promise<AccountResponseDto> {
-    const account = await this.createAccountUseCase.execute({
-      userId: dto.userId,
-      name: dto.name,
-      type: dto.type,
-      initialBalance: dto.initialBalance,
-    });
-    return this.toResponse(account);
+    try {
+      const account = await this.createAccountUseCase.execute({
+        userId: dto.userId,
+        name: dto.name,
+        type: dto.type,
+        initialBalance: dto.initialBalance,
+      });
+      return this.toResponse(account);
+    } catch (e) {
+      if (
+        e instanceof NoTypeProvidedException ||
+        e instanceof InvalidAccountTypeException ||
+        e instanceof InvalidBalanceException
+      ) {
+        throw new BadRequestException(e.message);
+      }
+      throw e;
+    }
   }
 
   @Get(':id')
@@ -119,7 +136,7 @@ export class AccountsController {
       if (e instanceof AccountNotFoundException) {
         throw new NotFoundException(e.message);
       }
-      if (e instanceof AccountArchivedException) {
+      if (e instanceof AccountAlreadyArchivedDomainException) {
         throw new ConflictException(e.message);
       }
       throw e;
@@ -134,6 +151,9 @@ export class AccountsController {
     } catch (e) {
       if (e instanceof AccountNotFoundException) {
         throw new NotFoundException(e.message);
+      }
+      if (e instanceof AccountNotArchivedDomainException) {
+        throw new ConflictException(e.message);
       }
       throw e;
     }

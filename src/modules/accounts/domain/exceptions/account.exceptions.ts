@@ -35,12 +35,6 @@ export class ZeroAmountOutflowException extends AccountException {
   }
 }
 
-export class InvalidAdjustmentReasonException extends AccountException {
-  constructor() {
-    super('El motivo del ajuste es requerido');
-  }
-}
-
 export class InvalidAccountNameException extends AccountException {
   constructor() {
     super('El nombre no puede estar vacío');
@@ -77,6 +71,14 @@ export class InvalidBalanceException extends AccountException {
 
 export class InvalidAccountTypeException extends AccountException {
   constructor(type: string) {
-    super(`Tipo de cuenta inválido: ${type}. Tipos válidos: ahorro, corriente, vista, ruta, otros`);
+    super(
+      `Tipo de cuenta inválido: ${type}. Tipos válidos: ahorro, corriente, vista, ruta, otros`,
+    );
+  }
+}
+
+export class NoTypeProvidedException extends AccountException {
+  constructor() {
+    super('El tipo de cuenta es requerido');
   }
 }

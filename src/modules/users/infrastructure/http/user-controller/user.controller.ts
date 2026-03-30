@@ -11,6 +11,7 @@ import {
   HttpStatus,
   NotFoundException,
   ConflictException,
+  BadRequestException,
 } from '@nestjs/common';
 //use cases
 import { CreateUserUseCase } from '../../../application/use-cases/create-user.use-case';
@@ -25,6 +26,8 @@ import { User } from '../../../domain/entities/user.entity';
 import {
   UserNotFoundException,
   UserAlreadyExistsException,
+  InvalidEmailFormatException,
+  EmptyEmailException,
 } from '../../../domain/exceptions/user.exceptions';
 
 @Controller('users')
@@ -63,6 +66,12 @@ export class UsersController {
     } catch (e) {
       if (e instanceof UserAlreadyExistsException) {
         throw new ConflictException(e.message); // 409
+      }
+      if (
+        e instanceof InvalidEmailFormatException ||
+        e instanceof EmptyEmailException
+      ) {
+        throw new BadRequestException(e.message); // 400
       }
       throw e;
     }

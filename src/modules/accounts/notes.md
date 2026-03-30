@@ -76,7 +76,7 @@ Clase pura sin decoradores. Constructor privado con dos factory methods:
 - `Account.create(props)` — para cuentas nuevas; `currentBalance` arranca igual a `initialBalance`
 - `Account.reconstitute(props)` — para reconstruir desde persistencia; acepta `currentBalance` independiente
 
-Métodos de negocio disponibles: `inflow()`, `outflow()`, `hasSufficientFunds()`, `adjustBalance()`, `resetToInitialBalance()`, `rename()`, `archive()`, `unarchive()`.
+Métodos de negocio disponibles: `inflow()`, `outflow()`, `hasSufficientFunds()`, `rename()`, `archive()`, `unarchive()`.
 
 ### 1.4 Decisión de Dominio: Cuentas Archivadas son "Muertas"
 
@@ -84,13 +84,11 @@ Una cuenta archivada **nunca puede modificar su balance**. Es una regla de invar
 
 #### Métodos bloqueados si está archivada:
 
-| Método                              | Excepción                                 |
-| ----------------------------------- | ----------------------------------------- |
-| `inflow(amount)`                    | `CannotOperateOnArchivedAccountException` |
-| `outflow(amount)`                   | `CannotOperateOnArchivedAccountException` |
-| `adjustBalance(newBalance, reason)` | `CannotOperateOnArchivedAccountException` |
-| `resetToInitialBalance()`           | `CannotOperateOnArchivedAccountException` |
-| `rename(name)`                      | `AccountArchivedException`                |
+| Método           | Excepción                                 |
+| ---------------- | ----------------------------------------- |
+| `inflow(amount)` | `CannotOperateOnArchivedAccountException` |
+| `outflow(amount)`| `CannotOperateOnArchivedAccountException` |
+| `rename(name)`   | `AccountArchivedException`                |
 
 #### Métodos permitidos siempre:
 
@@ -124,6 +122,21 @@ Puerto de salida definido como clase abstracta (necesario para que NestJS lo use
 - `delete(id: string): Promise<void>`
 
 ## Revise el dom, y deje como pendiente revisar el detalle de si verificar agregar validaciones dentro del constructor en la entity. Aun asi todo va bien.
+
+---
+
+## Decisión: `adjustBalance` y `resetToInitialBalance` removidos de la entidad
+
+`adjustBalance(newBalance, reason)` fue removido porque tenía un problema de diseño fundamental: validaba que `reason` no estuviera vacío — lo que implica que el motivo de un ajuste importa — pero luego lo descartaba sin persistirlo ni emitirlo como evento. Esto genera una falsa apariencia de trazabilidad: el sistema parece registrar el motivo pero en realidad lo bota. Es peor que no tenerlo, porque da confianza que no está respaldada.
+
+`resetToInitialBalance` fue removido por la misma razón: manipulación directa del balance sin ningún registro del contexto.
+
+**Condiciones para reimplementar en V2:**
+Antes de volver a agregar estos métodos, debe existir al menos una de estas dos cosas:
+- Un módulo de auditoría que persista operaciones manuales con su motivo y actor
+- Eventos de dominio (`BalanceAdjusted`) que otro módulo consuma y persista
+
+Sin eso, cualquier implementación de `adjustBalance` repite el mismo problema.
 
 # Paso 2 — Capa application
 
