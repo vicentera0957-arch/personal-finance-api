@@ -49,6 +49,7 @@ import { UpdateAccountBalanceUseCase } from './application/use-cases/update-acco
     GetAccountByIdUseCase,
     GetAccountsByUserIdUseCase,
     UpdateAccountBalanceUseCase,
+    IAccountRepository,
   ],
 })
 export class AccountsModule {}

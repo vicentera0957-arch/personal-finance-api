@@ -5,6 +5,7 @@ import {
   Delete,
   Body,
   Param,
+  Query,
   HttpCode,
   HttpStatus,
   NotFoundException,
@@ -21,6 +22,7 @@ import { DeleteTransactionUseCase } from '../../../application/use-cases/delete-
 // DTOs
 import { CreateTransactionDto } from '../dto/create-transaction.dto';
 import { TransactionResponseDto } from '../dto/transaction-response.dto';
+import { GetTransactionsQueryDto } from '../dto/get-transactions-query.dto';
 // Dominio
 import { Transaction } from '../../../domain/entities/transaction.entity';
 import {
@@ -93,18 +95,38 @@ export class TransactionsController {
   @Get('user/:userId')
   async findByUserId(
     @Param('userId') userId: string,
+    @Query() query: GetTransactionsQueryDto,
   ): Promise<TransactionResponseDto[]> {
-    const transactions =
-      await this.getTransactionsByUserIdUseCase.execute(userId);
+    const offset =
+      query.page && query.limit ? (query.page - 1) * query.limit : undefined;
+    const transactions = await this.getTransactionsByUserIdUseCase.execute(
+      userId,
+      {
+        limit: query.limit,
+        offset,
+        from: query.from ? new Date(query.from) : undefined,
+        to: query.to ? new Date(query.to) : undefined,
+      },
+    );
     return transactions.map((t) => this.toResponse(t));
   }
 
   @Get('account/:accountId')
   async findByAccountId(
     @Param('accountId') accountId: string,
+    @Query() query: GetTransactionsQueryDto,
   ): Promise<TransactionResponseDto[]> {
-    const transactions =
-      await this.getTransactionsByAccountIdUseCase.execute(accountId);
+    const offset =
+      query.page && query.limit ? (query.page - 1) * query.limit : undefined;
+    const transactions = await this.getTransactionsByAccountIdUseCase.execute(
+      accountId,
+      {
+        limit: query.limit,
+        offset,
+        from: query.from ? new Date(query.from) : undefined,
+        to: query.to ? new Date(query.to) : undefined,
+      },
+    );
     return transactions.map((t) => this.toResponse(t));
   }
 

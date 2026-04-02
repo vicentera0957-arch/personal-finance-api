@@ -3,6 +3,8 @@
 // Separado del TransactionNature del módulo transactions para mantener
 // independencia entre bounded contexts (cada dominio evoluciona por separado).
 
+import { InvalidCategoryNatureException } from '../exceptions/category.exceptions';
+
 const VALID_NATURES = ['income', 'expense'] as const;
 type Nature = (typeof VALID_NATURES)[number];
 
@@ -18,19 +20,21 @@ export class CategoryNature {
   }
 
   static create(value: string): CategoryNature {
-    if (!value || value.trim().length === 0) {
-      throw new Error('La naturaleza de la categoría no puede estar vacía');
+    const normalizado = value?.trim().toLowerCase() ?? '';
+
+    if (!normalizado) {
+      throw new InvalidCategoryNatureException(value ?? '');
     }
 
-    const normalizado = value.trim().toLowerCase();
-
     if (!this.isValidNature(normalizado)) {
-      throw new Error(
-        `La naturaleza de la categoría debe ser: ${VALID_NATURES.join(' | ')}`,
-      );
+      throw new InvalidCategoryNatureException(value);
     }
 
     return new CategoryNature(normalizado);
+  }
+
+  static reconstitute(value: string): CategoryNature {
+    return new CategoryNature(value as Nature);
   }
 
   getValue(): Nature {

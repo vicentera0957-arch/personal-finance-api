@@ -42,11 +42,12 @@ export class Account {
   ) {}
 
   static create(props: CreateAccountProps): Account {
+    const normalizedName = Account.validateAndNormalizeName(props.name);
     const now = new Date();
     return new Account(
       props.id,
       props.userId,
-      props.name,
+      normalizedName,
       props.type,
       props.initialBalance,
       props.initialBalance, // currentBalance arranca igual al inicial
@@ -70,9 +71,16 @@ export class Account {
     );
   }
 
+  private static validateAndNormalizeName(name: string): string {
+    if (!name || name.trim().length === 0) {
+      throw new InvalidAccountNameException();
+    }
+    return name.trim();
+  }
+
   // ============================================
   // Métodos de negocio — operaciones de balance
-  // ============================================
+  // ==============================================
 
   inflow(amount: Balance): void {
     if (this.isArchived) {
@@ -109,10 +117,7 @@ export class Account {
 
   rename(name: string): void {
     if (this.isArchived) throw new CannotOperateOnArchivedAccountException();
-    if (!name || name.trim().length === 0) {
-      throw new InvalidAccountNameException();
-    }
-    this.name = name.trim();
+    this.name = Account.validateAndNormalizeName(name);
     this.updatedAt = new Date();
   }
 

@@ -5,12 +5,6 @@ import { Category } from '../entities/category.entity';
 export abstract class ICategoryRepository {
   abstract findById(id: string): Promise<Category | null>;
   abstract findByUserId(userId: string): Promise<Category[]>;
-  // Usado para validar duplicados antes de crear.
-  abstract findByUserIdAndNameAndNature(
-    userId: string,
-    name: string,
-    nature: string,
-  ): Promise<Category | null>;
   abstract save(category: Category): Promise<Category>;
   abstract delete(id: string): Promise<void>;
 }

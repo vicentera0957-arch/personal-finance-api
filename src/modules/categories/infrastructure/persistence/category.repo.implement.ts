@@ -3,6 +3,10 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ICategoryRepository } from '../../domain/repository/category.repository';
 import { Category } from '../../domain/entities/category.entity';
+import {
+  DuplicateCategoryException,
+  CategoryInUseException,
+} from '../../domain/exceptions/category.exceptions';
 import { CategoryOrmEntity } from './category.orm.entity';
 import { CategoryMapper } from './category.mapper';
 
@@ -28,25 +32,32 @@ export class CategoryRepositoryImpl extends ICategoryRepository {
   }
 
   // Busca por combinación userId + name + nature para validar duplicados
-  async findByUserIdAndNameAndNature(
-    userId: string,
-    name: string,
-    nature: string,
-  ): Promise<Category | null> {
-    const orm = await this.ormRepository.findOne({
-      where: { userId, name, nature },
-    });
-    if (!orm) return null;
-    return this.mapper.toDomain(orm);
-  }
-
   async save(category: Category): Promise<Category> {
     const orm = this.mapper.toOrm(category);
-    const saved = await this.ormRepository.save(orm);
-    return this.mapper.toDomain(saved);
+    try {
+      const saved = await this.ormRepository.save(orm);
+      return this.mapper.toDomain(saved);
+    } catch (error) {
+      // PostgreSQL unique constraint violation
+      if (error?.code === '23505') {
+        throw new DuplicateCategoryException(
+          category.getName(),
+          category.nature.getValue(),
+        );
+      }
+      throw error;
+    }
   }
 
   async delete(id: string): Promise<void> {
-    await this.ormRepository.delete(id);
+    try {
+      await this.ormRepository.delete(id);
+    } catch (error) {
+      // PostgreSQL FK violation — la categoría tiene transacciones asociadas
+      if (error?.code === '23503') {
+        throw new CategoryInUseException(id);
+      }
+      throw error;
+    }
   }
 }

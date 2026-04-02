@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { randomUUID } from 'crypto';
+import { DataSource } from 'typeorm';
 import { ITransactionRepository } from '../../domain/repository/transaction.repository';
 import { Transaction } from '../../domain/entities/transaction.entity';
 import { TransactionNature } from '../../domain/value-objects/transaction-nature.vo';
@@ -28,6 +29,7 @@ export class CreateTransactionUseCase {
     private readonly getAccountByIdUseCase: GetAccountByIdUseCase,
     private readonly accountRepository: IAccountRepository,
     private readonly getCategoryByIdUseCase: GetCategoryByIdUseCase,
+    private readonly dataSource: DataSource,
   ) {}
 
   async execute(command: CreateTransactionCommand): Promise<Transaction> {
@@ -65,9 +67,8 @@ export class CreateTransactionUseCase {
       transactionDate: command.transactionDate,
     });
 
-    // 6. Aplica el efecto en el balance de la cuenta.
-    // Se convierte Amount a Balance para llamar a los métodos de la cuenta.
-    // outflow puede lanzar InsufficientFundsException si no hay saldo suficiente.
+    // 6. Aplica el efecto en el balance (dominio puro — sin tocar la DB todavía).
+    // outflow puede lanzar InsufficientFundsException antes de abrir la transacción DB.
     const balanceAmount = Balance.create(amount.getValue());
     if (nature.isIncome()) {
       account.inflow(balanceAmount);
@@ -75,10 +76,21 @@ export class CreateTransactionUseCase {
       account.outflow(balanceAmount);
     }
 
-    // 7. Persiste la cuenta con el balance actualizado
-    await this.accountRepository.save(account);
-
-    // 8. Persiste la transacción
-    return this.transactionRepository.save(transaction);
+    // 7. Persiste cuenta + transacción de forma atómica.
+    // Si alguno falla, ambos se revierten (ROLLBACK).
+    const qr = this.dataSource.createQueryRunner();
+    await qr.connect();
+    await qr.startTransaction();
+    try {
+      await this.accountRepository.save(account, qr);
+      const saved = await this.transactionRepository.save(transaction, qr);
+      await qr.commitTransaction();
+      return saved;
+    } catch (err) {
+      await qr.rollbackTransaction();
+      throw err;
+    } finally {
+      await qr.release();
+    }
   }
 }

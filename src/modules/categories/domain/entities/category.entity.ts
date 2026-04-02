@@ -1,4 +1,9 @@
 import { CategoryNature } from '../value-objects/category-nature.vo';
+import {
+  InvalidCategoryNameException,
+  InvalidCategoryColorException,
+  InvalidCategoryIconException,
+} from '../exceptions/category.exceptions';
 
 // Props para crear una categoría nueva — sin fechas, las genera la entidad.
 interface CreateCategoryProps {
@@ -32,11 +37,15 @@ export class Category {
 
   // Factory para categorías nuevas.
   static create(props: CreateCategoryProps): Category {
+    const normalizedName = Category.validateAndNormalizeName(props.name);
+    if (props.color !== undefined) Category.assertValidColor(props.color);
+    if (props.icon !== undefined) Category.assertValidIcon(props.icon);
+
     const now = new Date();
     return new Category(
       props.id,
       props.userId,
-      props.name,
+      normalizedName,
       props.nature,
       props.isBudgetable,
       props.color ?? null,
@@ -67,21 +76,20 @@ export class Category {
 
   // Renombra la categoría. No se puede dejar vacío.
   rename(name: string): void {
-    if (!name || name.trim().length === 0) {
-      throw new Error('El nombre de la categoría no puede estar vacío');
-    }
-    this.name = name.trim();
+    this.name = Category.validateAndNormalizeName(name);
     this.updatedAt = new Date();
   }
 
   // Actualiza el color visual de la categoría (para la UI).
   changeColor(color: string): void {
+    Category.assertValidColor(color);
     this.color = color;
     this.updatedAt = new Date();
   }
 
   // Actualiza el ícono visual de la categoría (para la UI).
   changeIcon(icon: string): void {
+    Category.assertValidIcon(icon);
     this.icon = icon;
     this.updatedAt = new Date();
   }
@@ -114,5 +122,29 @@ export class Category {
 
   getUpdatedAt(): Date {
     return this.updatedAt;
+  }
+
+  // ============================================
+  // Invariant guards (private)
+  // ============================================
+
+  private static validateAndNormalizeName(name: string): string {
+    const trimmed = name?.trim() ?? '';
+    if (trimmed.length === 0) {
+      throw new InvalidCategoryNameException(name ?? '');
+    }
+    return trimmed;
+  }
+
+  private static assertValidColor(color: string): void {
+    if (color.trim().length === 0) {
+      throw new InvalidCategoryColorException(color);
+    }
+  }
+
+  private static assertValidIcon(icon: string): void {
+    if (icon.trim().length === 0) {
+      throw new InvalidCategoryIconException(icon);
+    }
   }
 }

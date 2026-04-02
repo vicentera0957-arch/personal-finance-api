@@ -22,6 +22,11 @@ Antes de escribir una sola línea de código, documentar qué hace y qué no hac
 - Seed/default categories al crear un usuario
 - Validación de si la categoría tiene transacciones asociadas antes de eliminar (se confía en la FK de la DB por ahora)
 
+### Pendientes técnicos
+
+- **FK violation en `delete` (error `23503`):** Cuando exista el módulo `transactions` con FK a `categories.id`, un `DELETE` de categoría con transacciones asociadas lanzará un error crudo de PostgreSQL → `500`. Hay que capturar `error.code === '23503'` en `CategoryRepositoryImpl.delete()` y convertirlo en una excepción de dominio (`CategoryHasTransactionsException`) mapeada a `409` en el controlador.
+- **`userId` en el body del request:** `CreateCategoryDto` recibe `userId` del cliente. Cuando se implemente el módulo `auth` con JWT, el `userId` debe extraerse del token (`@CurrentUser()`) y no del body — de lo contrario cualquier cliente puede crear categorías en nombre de otro usuario.
+
 ### Resultado esperado
 
 Un slice vertical completo: desde la base de datos hasta la respuesta HTTP, pasando por use cases y el repositorio concreto. La categoría exporta `GetCategoryByIdUseCase` para que el módulo `transactions` pueda validar que la categoría existe y que su naturaleza coincide con la de la transacción (R7).
@@ -35,9 +40,10 @@ Un slice vertical completo: desde la base de datos hasta la respuesta HTTP, pasa
 **Archivo:** `domain/value-objects/category-nature.vo.ts`
 
 Clase inmutable que encapsula la naturaleza de una categoría: `income` o `expense`. Sigue el mismo patrón que `AccountType` — lista cerrada de valores válidos, normalización a minúsculas.
+IMPORTANTE: Se añade un metodo de reconstitucion dentro del vo, asi logrammos felxibilizar la persistencia de datos durante las primeras instancias de la API y cubrir la data persistidad a posibles cambios de negocio.
 
 > **Decisión: ¿por qué un VO y no un simple string?**
-> La regla de negocio R7 dice: "una categoría de gasto solo clasifica gastos; una categoría de ingreso solo clasifica ingresos". Esto significa que `nature` no es un string arbitrario — es un invariante del dominio que necesita validación centralizada. Si fuera un string, cualquier parte del sistema podría crear una categoría con `nature = "foo"`. Con el VO, es imposible tener una naturaleza inválida.
+> La regla de negocio R7 dice: "una categoría de gasto solo clasifica gastos; una categoría de ingreso solo clasifica ingresos". Esto significa que `nature` no es un string arbitrario — es un INVARIANTE del dominio que necesita validación centralizada. Si fuera un string, cualquier parte del sistema podría crear una categoría con `nature = "foo"`. Con el VO, es imposible tener una naturaleza inválida.
 >
 > Además, este VO será usado por el módulo `transactions` para validar compatibilidad (R7): la naturaleza de la transacción debe coincidir con la naturaleza de su categoría.
 
@@ -56,6 +62,7 @@ Clase pura sin decoradores. Constructor privado con dos factory methods:
 Propiedades: `id`, `userId`, `name`, `nature` (tipo `CategoryNature`), `isBudgetable`, `color` (opcional), `icon` (opcional), `createdAt`, `updatedAt`.
 
 Métodos de dominio:
+
 - `rename(name)` — valida que no esté vacío
 - `changeColor(color)` — actualiza el color
 - `changeIcon(icon)` — actualiza el ícono
@@ -63,6 +70,7 @@ Métodos de dominio:
 
 > **Decisión: `updatedAt` no está en el esquema original de BD**
 > El diagrama de la BD solo tiene `created_at` para categorías, no `updated_at`. Sin embargo, decidí agregarlo porque:
+>
 > 1. Necesitamos soportar actualizaciones (renombrar, cambiar color/ícono/presupuestable)
 > 2. Tener registro de cuándo fue la última modificación es una buena práctica
 > 3. Mantiene consistencia con las otras entidades del sistema (users, accounts)
@@ -70,6 +78,8 @@ Métodos de dominio:
 
 > **Decisión: la naturaleza NO se puede cambiar después de creada**
 > No hay método `changeNature()`. Razón: si una categoría "Supermercado" (expense) tiene 50 transacciones de gasto asociadas, cambiarla a `income` rompería la invariante R7 para todas esas transacciones existentes. Es más seguro crear una categoría nueva y migrar. Esta restricción se refuerza en la entidad al no exponer un método para modificar `nature`.
+
+**AGREGAR: Columna timestamp de uppdated at en el diagrama de la db**
 
 ### 1.3 Excepciones de dominio
 
@@ -91,9 +101,10 @@ Puerto de salida definido como clase abstracta (necesario para que NestJS lo use
 
 - `findById(id: string): Promise<Category | null>`
 - `findByUserId(userId: string): Promise<Category[]>`
-- `findByUserIdAndNameAndNature(userId: string, name: string, nature: string): Promise<Category | null>` — para validar duplicados
 - `save(category: Category): Promise<Category>`
 - `delete(id: string): Promise<void>`
+
+> **Nota:** La validación de duplicados no se hace con un método `findByUserIdAndNameAndNature` previo. En cambio, `save()` delega al constraint `@Unique(['userId', 'name', 'nature'])` de la DB y el repositorio captura el error `23505` de PostgreSQL para lanzar `DuplicateCategoryException`.
 
 ---
 
@@ -178,7 +189,7 @@ Entidad TypeORM completamente separada de la entidad de dominio. Columnas:
 
 Convierte entre las dos representaciones. Es el único lugar que conoce ambas capas:
 
-- `toDomain(orm: CategoryOrmEntity): Category` — usa `CategoryNature.create(nature)` para el VO; usa `Category.reconstitute()`
+- `toDomain(orm: CategoryOrmEntity): Category` — usa `CategoryNature.reconstitute(nature)` para el VO (no re-valida datos ya persistidos); usa `Category.reconstitute()`
 - `toOrm(domain: Category): CategoryOrmEntity` — usa `getNature()` para extraer el string del VO
 
 ### 3.3 `CategoryRepositoryImpl`
@@ -199,13 +210,13 @@ Implementa `ICategoryRepository` usando el repositorio de TypeORM. Usa `Category
 
 **Archivo:** `infrastructure/http/categories-controller/categories.controller.ts`
 
-| Método | Ruta                          | Use case                       | HTTP success |
-| ------ | ----------------------------- | ------------------------------ | ------------ |
-| POST   | `/categories`                 | `CreateCategoryUseCase`        | 201          |
-| GET    | `/categories/:id`             | `GetCategoryByIdUseCase`       | 200          |
-| GET    | `/categories/user/:userId`    | `GetCategoriesByUserIdUseCase` | 200          |
-| PATCH  | `/categories/:id`             | `UpdateCategoryUseCase`        | 200          |
-| DELETE | `/categories/:id`             | `DeleteCategoryUseCase`        | 204          |
+| Método | Ruta                       | Use case                       | HTTP success |
+| ------ | -------------------------- | ------------------------------ | ------------ |
+| POST   | `/categories`              | `CreateCategoryUseCase`        | 201          |
+| GET    | `/categories/:id`          | `GetCategoryByIdUseCase`       | 200          |
+| GET    | `/categories/user/:userId` | `GetCategoriesByUserIdUseCase` | 200          |
+| PATCH  | `/categories/:id`          | `UpdateCategoryUseCase`        | 200          |
+| DELETE | `/categories/:id`          | `DeleteCategoryUseCase`        | 204          |
 
 Cada handler atrapa las excepciones de dominio y las traduce a su equivalente HTTP:
 

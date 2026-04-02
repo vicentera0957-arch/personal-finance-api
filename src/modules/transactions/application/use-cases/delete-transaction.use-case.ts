@@ -1,10 +1,12 @@
 import { Injectable } from '@nestjs/common';
+import { DataSource } from 'typeorm';
 import { ITransactionRepository } from '../../domain/repository/transaction.repository';
 import { GetTransactionByIdUseCase } from './get-transaction-by-id.use-case';
 import { CannotDeleteTransactionException } from '../../domain/exceptions/transaction.exceptions';
 import { GetAccountByIdUseCase } from '../../../accounts/application/use-cases/get-account-by-id.use-case';
 import { IAccountRepository } from '../../../accounts/domain/repository/accounts.repository';
 import { Balance } from '../../../accounts/domain/value-objects/balance.vo';
+import { InsufficientFundsException } from '../../../accounts/domain/exceptions/account.exceptions';
 
 @Injectable()
 export class DeleteTransactionUseCase {
@@ -13,6 +15,7 @@ export class DeleteTransactionUseCase {
     private readonly getTransactionByIdUseCase: GetTransactionByIdUseCase,
     private readonly getAccountByIdUseCase: GetAccountByIdUseCase,
     private readonly accountRepository: IAccountRepository,
+    private readonly dataSource: DataSource,
   ) {}
 
   async execute(id: string): Promise<void> {
@@ -26,26 +29,35 @@ export class DeleteTransactionUseCase {
 
     const balanceAmount = Balance.create(transaction.amount.getValue());
 
-    // 3. Revierte el efecto según la naturaleza:
-    //    - income → se revierte con outflow (quitar lo que se añadió)
-    //    - expense → se revierte con inflow (devolver lo que se restó)
+    // 3. Revierte el efecto según la naturaleza (dominio puro — sin tocar la DB todavía).
+    //    Solo InsufficientFundsException se convierte en CannotDeleteTransactionException.
+    //    Otros errores (ej: CannotOperateOnArchivedAccountException) se propagan tal cual.
     try {
       if (transaction.nature.isIncome()) {
-        // Puede fallar si el saldo actual es menor que el monto del ingreso original
         account.outflow(balanceAmount);
       } else {
-        // inflow siempre funciona — sumar nunca produce balance negativo
         account.inflow(balanceAmount);
       }
-    } catch {
-      // El outflow lanzó error de balance negativo — no se puede eliminar
-      throw new CannotDeleteTransactionException(id);
+    } catch (err) {
+      if (err instanceof InsufficientFundsException) {
+        throw new CannotDeleteTransactionException(id);
+      }
+      throw err;
     }
 
-    // 4. Persiste la cuenta con el balance revertido
-    await this.accountRepository.save(account);
-
-    // 5. Elimina la transacción
-    await this.transactionRepository.delete(id);
+    // 4. Persiste la cuenta con balance revertido + elimina la transacción de forma atómica.
+    const qr = this.dataSource.createQueryRunner();
+    await qr.connect();
+    await qr.startTransaction();
+    try {
+      await this.accountRepository.save(account, qr);
+      await this.transactionRepository.delete(id, qr);
+      await qr.commitTransaction();
+    } catch (err) {
+      await qr.rollbackTransaction();
+      throw err;
+    } finally {
+      await qr.release();
+    }
   }
 }

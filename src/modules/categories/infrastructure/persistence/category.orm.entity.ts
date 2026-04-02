@@ -4,16 +4,20 @@ import {
   Column,
   CreateDateColumn,
   UpdateDateColumn,
+  Unique,
+  Index,
 } from 'typeorm';
 
 // Entidad TypeORM — completamente separada de la entidad de dominio.
 // El mapper es el único que traduce entre las dos representaciones.
 @Entity('categories')
+@Unique(['userId', 'name', 'nature'])
 export class CategoryOrmEntity {
   // UUID generado en el use case, no por la DB
   @PrimaryColumn('uuid')
   id: string;
 
+  @Index()
   @Column({ name: 'user_id' })
   userId: string;
 

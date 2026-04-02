@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, QueryRunner } from 'typeorm';
 import { IAccountRepository } from '../../domain/repository/accounts.repository';
 import { Account } from '../../domain/entities/account.entity';
 import { AccountOrmEntity } from './account.orm.entity';
@@ -31,9 +31,11 @@ export class AccountRepositoryImpl extends IAccountRepository {
     return orms.map((orm) => this.mapper.toDomain(orm));
   }
 
-  async save(account: Account): Promise<Account> {
+  async save(account: Account, queryRunner?: QueryRunner): Promise<Account> {
     const orm = this.mapper.toOrm(account);
-    const saved = await this.ormRepository.save(orm);
+    const saved = queryRunner
+      ? await queryRunner.manager.save(AccountOrmEntity, orm)
+      : await this.ormRepository.save(orm);
     return this.mapper.toDomain(saved);
   }
 

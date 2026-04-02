@@ -7,7 +7,7 @@ import { TransactionOrmEntity } from './transaction.orm.entity';
 @Injectable()
 export class TransactionMapper {
   toDomain(orm: TransactionOrmEntity): Transaction {
-    const nature = TransactionNature.create(orm.nature);
+    const nature = TransactionNature.reconstitute(orm.nature);
     // reconstitute para Amount: no re-valida, confía en lo que está en la DB
     const amount = Amount.reconstitute(orm.amount);
 

@@ -2,13 +2,13 @@
 
 ## Alcance V1
 
-| Incluido | Excluido |
-| -------- | -------- |
-| Registro con email, password y nombre | Login / generación de JWT (módulo `auth`) |
-| Recuperar perfil por id | Recuperación de contraseña |
-| Actualizar nombre | Verificación de email |
-| Eliminar cuenta | Roles y permisos |
-| `GetUserByEmail` — uso interno para `auth` | Actualizar moneda por defecto |
+| Incluido                                   | Excluido                                  |
+| ------------------------------------------ | ----------------------------------------- |
+| Registro con email, password y nombre      | Login / generación de JWT (módulo `auth`) |
+| Recuperar perfil por id                    | Recuperación de contraseña                |
+| Actualizar nombre                          | Verificación de email                     |
+| Eliminar cuenta                            | Roles y permisos                          |
+| `GetUserByEmail` — uso interno para `auth` | Actualizar moneda por defecto             |
 
 ---
 
@@ -21,8 +21,8 @@
 Clase inmutable que encapsula y valida el formato de email. No depende de `class-validator` — la validación es TypeScript puro.
 
 Métodos:
+
 - `Email.create(raw)` — valida formato y vacío; normaliza a minúsculas
-- `Email.reconstitute(raw)` — reconstruye desde persistencia sin re-validar; evita que cambios futuros en las reglas de validación rompan datos históricos
 - `getValue()`, `equals()`, `getDomain()`
 
 ### Entidad `User`
@@ -37,6 +37,7 @@ Clase pura sin decoradores de framework. Constructor privado con dos factory met
 Propiedades: `id`, `email` (tipo `Email`), `passwordHash`, `name`, `createdAt`, `updatedAt`.
 
 Métodos de negocio:
+
 - `updateProfile(name)` — valida que el nombre no sea vacío; lanza `InvalidNameException`
 - `changePassword(newHash)` — lanza `InvalidPasswordHashException` si el hash es vacío
 
@@ -78,13 +79,13 @@ Puerto de salida definido como clase abstracta (necesario para DI en NestJS — 
 
 ### Use cases
 
-| Use case | Descripción |
-| -------- | ----------- |
-| `CreateUserUseCase` | Verifica email único → hashea password con bcrypt → crea entidad → persiste |
-| `GetUserByIdUseCase` | Busca por id → lanza `UserNotFoundException` si no existe |
-| `GetUserByEmailUseCase` | Uso interno para `auth` — no expuesto como endpoint HTTP |
+| Use case                   | Descripción                                                                 |
+| -------------------------- | --------------------------------------------------------------------------- |
+| `CreateUserUseCase`        | Verifica email único → hashea password con bcrypt → crea entidad → persiste |
+| `GetUserByIdUseCase`       | Busca por id → lanza `UserNotFoundException` si no existe                   |
+| `GetUserByEmailUseCase`    | Uso interno para `auth` — no expuesto como endpoint HTTP                    |
 | `UpdateUserProfileUseCase` | Recupera via `GetUserByIdUseCase` → llama `user.updateProfile()` → persiste |
-| `DeleteUserUseCase` | Verifica existencia → elimina via repositorio → retorna `void` |
+| `DeleteUserUseCase`        | Verifica existencia → elimina via repositorio → retorna `void`              |
 
 **Nota sobre bcrypt:** `CreateUserUseCase` importa bcrypt directamente. En V2 esto debería reemplazarse con un `IPasswordHasher` abstracto inyectado por DI, para que el use case no tenga dependencia de infraestructura.
 
@@ -98,14 +99,14 @@ Puerto de salida definido como clase abstracta (necesario para DI en NestJS — 
 
 Entidad TypeORM completamente separada de la entidad de dominio.
 
-| Columna | Tipo | Notas |
-| ------- | ---- | ----- |
-| `id` | `uuid` | PK, generado en el use case con `randomUUID()` |
-| `email` | `varchar` | Sin `unique: true` a nivel ORM — la unicidad la garantiza el use case |
-| `password_hash` | `varchar` | |
-| `full_name` | `varchar` | |
-| `created_at` | `timestamp` | `@Column` simple — el dominio controla este valor |
-| `updated_at` | `timestamp` | `@Column` simple — el dominio controla este valor |
+| Columna         | Tipo        | Notas                                                                 |
+| --------------- | ----------- | --------------------------------------------------------------------- |
+| `id`            | `uuid`      | PK, generado en el use case con `randomUUID()`                        |
+| `email`         | `varchar`   | Sin `unique: true` a nivel ORM — la unicidad la garantiza el use case |
+| `password_hash` | `varchar`   |                                                                       |
+| `full_name`     | `varchar`   |                                                                       |
+| `created_at`    | `timestamp` | `@Column` simple — el dominio controla este valor                     |
+| `updated_at`    | `timestamp` | `@Column` simple — el dominio controla este valor                     |
 
 **Decisión sobre timestamps:** Se usan `@Column` simples en lugar de `@CreateDateColumn`/`@UpdateDateColumn`. TypeORM con esos decoradores sobreescribe los valores en cada `save()`, ignorando lo que el dominio setea. Al usar `@Column` simple, la entidad de dominio es la única fuente de verdad para las fechas.
 
@@ -115,7 +116,7 @@ Entidad TypeORM completamente separada de la entidad de dominio.
 
 Único punto de traducción entre ORM entity y domain entity.
 
-- `toDomain(orm)` — usa `Email.reconstitute()` (no `Email.create()`) para no re-validar datos persistidos; usa `User.reconstitute()`
+- `toDomain(orm)` — usa `Email.create()` para reconstruir el VO con validación; usa `User.reconstitute()` para reconstruir la entidad sin generar nuevos timestamps
 - `toOrm(domain)` — extrae valores con getters del dominio
 
 ### `UserRepositoryImpl`
@@ -136,22 +137,22 @@ Implementa `IUserRepository` con TypeORM. Delega toda la conversión al mapper. 
 
 **Archivo:** `infrastructure/http/user-controller/user.controller.ts`
 
-| Método | Ruta | Use case | HTTP éxito |
-| ------ | ---- | -------- | ---------- |
-| POST | `/users` | `CreateUserUseCase` | 201 |
-| GET | `/users/:id` | `GetUserByIdUseCase` | 200 |
-| PATCH | `/users/:id/profile` | `UpdateUserProfileUseCase` | 200 |
-| DELETE | `/users/:id` | `DeleteUserUseCase` | 204 |
+| Método | Ruta                 | Use case                   | HTTP éxito |
+| ------ | -------------------- | -------------------------- | ---------- |
+| POST   | `/users`             | `CreateUserUseCase`        | 201        |
+| GET    | `/users/:id`         | `GetUserByIdUseCase`       | 200        |
+| PATCH  | `/users/:id/profile` | `UpdateUserProfileUseCase` | 200        |
+| DELETE | `/users/:id`         | `DeleteUserUseCase`        | 204        |
 
 Mapeo de excepciones de dominio a HTTP:
 
-| Excepción | HTTP |
-| --------- | ---- |
-| `UserNotFoundException` | 404 |
-| `UserAlreadyExistsException` | 409 |
-| `EmptyEmailException` | 400 |
-| `InvalidEmailFormatException` | 400 |
-| `InvalidNameException` | 400 |
+| Excepción                     | HTTP |
+| ----------------------------- | ---- |
+| `UserNotFoundException`       | 404  |
+| `UserAlreadyExistsException`  | 409  |
+| `EmptyEmailException`         | 400  |
+| `InvalidEmailFormatException` | 400  |
+| `InvalidNameException`        | 400  |
 
 ---
 

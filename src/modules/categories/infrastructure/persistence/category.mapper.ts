@@ -9,7 +9,7 @@ import { CategoryOrmEntity } from './category.orm.entity';
 export class CategoryMapper {
   toDomain(orm: CategoryOrmEntity): Category {
     // Reconstituye el VO de naturaleza desde el string guardado en la DB
-    const nature = CategoryNature.create(orm.nature);
+    const nature = CategoryNature.reconstitute(orm.nature);
 
     return Category.reconstitute({
       id: orm.id,

@@ -31,12 +31,13 @@ export class User {
 
   // Para usuarios nuevos — genera las fechas ahora
   static create(props: CreateUserProps): User {
+    const normalizedName = User.validateAndNormalizeName(props.name);
     const now = new Date();
     return new User(
       props.id,
       props.email,
       props.passwordHash,
-      props.name,
+      normalizedName,
       now,
       now,
     );
@@ -54,13 +55,17 @@ export class User {
     );
   }
 
-  // --- Métodos de negocio --- comportamiento propio del usuario
-
-  updateProfile(name: string): void {
+  private static validateAndNormalizeName(name: string): string {
     if (!name || name.trim().length === 0) {
       throw new InvalidNameException();
     }
-    this.name = name.trim();
+    return name.trim();
+  }
+
+  // --- Métodos de negocio --- comportamiento propio del usuario
+
+  updateProfile(name: string): void {
+    this.name = User.validateAndNormalizeName(name);
     this.updatedAt = new Date();
   }
 

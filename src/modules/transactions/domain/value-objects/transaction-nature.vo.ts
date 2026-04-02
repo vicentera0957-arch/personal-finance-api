@@ -10,6 +10,10 @@ export class TransactionNature {
 
   private static readonly valoresValidos = ['income', 'expense'];
 
+  static reconstitute(value: string): TransactionNature {
+    return new TransactionNature(value);
+  }
+
   static create(value: string): TransactionNature {
     if (!value || value.trim().length === 0) {
       throw new Error('La naturaleza de la transacción no puede estar vacía');

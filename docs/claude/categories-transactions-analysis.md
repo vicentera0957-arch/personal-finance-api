@@ -17,6 +17,7 @@ La decisión de diseño más importante de este módulo es que **`nature` es inm
 Este VO existe para garantizar que el campo `nature` solo pueda tener dos valores posibles: `'income'` o `'expense'`. Sin este VO, `nature` sería un simple `string` y cualquier parte del código podría asignarle `'ingresso'`, `'gasto'`, `'INCOME'`, o cualquier valor inválido sin que el compilador lo detecte.
 
 La implementación tiene un patrón clásico de VO:
+
 - Constructor privado — nadie puede crear uno directamente
 - `create(value)` — factory con validación, normaliza a minúsculas y trim
 - Los helpers `isIncome()` e `isExpense()` son más legibles que comparar strings directamente
@@ -28,6 +29,7 @@ La implementación tiene un patrón clásico de VO:
 La entidad tiene todos sus campos privados excepto `id`, `userId`, `nature` y `createdAt` que son `readonly` públicos. Esto significa que el único camino para leer `name`, `color`, `icon` o `isBudgetable` es a través de getters, y el único camino para modificarlos es a través de métodos de negocio. Este patrón garantiza que la entidad controla sus propias invariantes.
 
 Los cuatro métodos de mutación son:
+
 - `rename(name)` — valida que no esté vacío, actualiza `updatedAt`
 - `changeColor(color)` — **no valida nada**, acepta cualquier string
 - `changeIcon(icon)` — **no valida nada**, acepta cualquier string
@@ -42,6 +44,7 @@ Interfaz como clase abstracta (para ser token de DI en NestJS). El método más 
 #### **Excepciones** (`category.exceptions.ts`)
 
 Solo hay dos:
+
 - `CategoryNotFoundException` — cuando no se encuentra por id
 - `DuplicateCategoryException` — cuando ya existe nombre+nature para ese usuario
 
@@ -54,6 +57,7 @@ Hay un gap: no existe `InvalidCategoryNameException`. Cuando `rename()` falla (n
 #### **`CreateCategoryUseCase`**
 
 Flujo:
+
 1. Crea el VO `CategoryNature` (valida que sea income/expense)
 2. Consulta `findByUserIdAndNameAndNature()` para duplicados
 3. Si existe, lanza `DuplicateCategoryException`
@@ -109,6 +113,7 @@ Mismo problema que `CategoryNature`: lanza `Error` genérico en vez de una excep
 #### **`Amount` Value Object** (`amount.vo.ts`)
 
 Captura el monto de una transacción. La diferencia crítica con `Balance` del módulo accounts:
+
 - `Amount` debe ser **estrictamente mayor a cero** (no puedes crear una transacción de $0)
 - `Balance` puede ser **cero** (una cuenta puede tener saldo cero)
 
@@ -121,12 +126,14 @@ Mismo problema de excepciones: lanza `Error` genérico.
 La entidad más simple del proyecto. **Todos los campos son `readonly`**. No hay ningún método de mutación. El diseño refleja perfectamente la inmutabilidad contable.
 
 Campos relevantes:
+
 - `transactionDate: Date` — la fecha real del movimiento. Un usuario puede registrar hoy una transacción que ocurrió hace dos semanas. Esta separación de `transactionDate` vs `createdAt` es importante para reportes financieros correctos.
 - Sin `updatedAt` — ningún campo cambia post-creación, por lo que no tiene sentido tener esta columna.
 
 #### **Excepciones** (`transaction.exceptions.ts`)
 
 Tres excepciones bien tipadas:
+
 - `TransactionNotFoundException` — 404 estándar
 - `CannotDeleteTransactionException` — 409, cuando eliminar un ingreso dejaría el balance negativo
 - `IncompatibleCategoryNatureException` — 400, la regla R7 del negocio
@@ -196,13 +203,14 @@ Este plan está ordenado por impacto y dependencias. Cada item incluye qué hay 
 
 ### BLOQUE 1 — Correcciones de consistencia (Bajo riesgo, alto valor)
 
-#### **1.1 — Crear excepciones de dominio faltantes en Categories**
+#### **1.1 — Crear excepciones de dominio faltantes en Categories** LISTO
 
 **Qué**: Crear `InvalidCategoryNameException` en `category.exceptions.ts`. Modificar `Category.rename()` para que la lance en vez de `new Error()`.
 
 **Por qué**: El controller de categories tiene un catch para `CategoryNotFoundException` y `DuplicateCategoryException`, pero no para errores de validación internos de la entidad. Cuando `rename('')` falla, el error genérico llega al último `throw e` y NestJS devuelve un 500. Con una excepción tipada, el controller puede atraparla y devolver un 400.
 
 **Dónde**:
+
 - `category.exceptions.ts` — agregar `InvalidCategoryNameException`
 - `category.entity.ts` — usar la nueva excepción en `rename()`
 - `categories.controller.ts` — agregar el catch en el endpoint `PATCH /:id`
@@ -214,6 +222,7 @@ Este plan está ordenado por impacto y dependencias. Cada item incluye qué hay 
 **Por qué**: El mapper lee datos de la base de datos. Esos datos ya fueron validados cuando se guardaron. Re-validarlos al leerlos significa que si en el futuro cambias las reglas de validación (ej: agregas `'ahorro'` como nature válido), los registros históricos que tengan `'income'` seguirían siendo válidos, pero si cambias que solo `'gasto'` es válido, la lectura de datos históricos fallaría. El `reconstitute()` evita esto.
 
 **Dónde**:
+
 - `category-nature.vo.ts` — agregar método `static reconstitute(value: string): CategoryNature`
 - `category.mapper.ts` — cambiar línea 12 a usar `reconstitute()`
 
@@ -244,6 +253,7 @@ Este es el problema más importante de categories porque afecta consistencia de 
 **Recomendación**: Implementar Opción B con FK constraint en la DB y captura de error en el repositorio. Es la forma más robusta y no requiere cambiar la arquitectura de módulos.
 
 **Cambios**:
+
 - Agregar FK constraint en schema de `transactions` tabla
 - Crear excepción `CategoryInUseException extends CategoryException`
 - En `CategoryRepositoryImpl.delete()`, capturar error de FK violation y lanzar `CategoryInUseException`
@@ -262,6 +272,7 @@ Este es el problema más importante de categories porque afecta consistencia de 
 **Dónde**: `CreateTransactionUseCase` y `DeleteTransactionUseCase`. El `QueryRunner` se obtiene del `DataSource` inyectado.
 
 **Cómo queda el flujo**:
+
 ```typescript
 const queryRunner = this.dataSource.createQueryRunner();
 await queryRunner.connect();
@@ -284,6 +295,7 @@ El desafío arquitectónico es que los repositorios actuales (`IAccountRepositor
 Para mantener el diseño limpio, la opción recomendada es **pasar el `QueryRunner` como parámetro opcional** a los métodos `save()` de los repositorios que participan en operaciones atómicas.
 
 **Cambios**:
+
 - Firmas de `IAccountRepository.save()` e `ITransactionRepository.save()` aceptan `queryRunner?: QueryRunner`
 - Implementaciones en `AccountRepositoryImpl` y `TransactionRepositoryImpl` usan `queryRunner.manager.save()` si se proporciona
 - `CreateTransactionUseCase` y `DeleteTransactionUseCase` crean `QueryRunner`, envuelven las operaciones, manejan commit/rollback
@@ -297,17 +309,20 @@ Para mantener el diseño limpio, la opción recomendada es **pasar el `QueryRunn
 **Qué**: Los endpoints actuales devuelven todos los registros. Un usuario con 2 años de historial podría tener miles de transacciones.
 
 **Interface propuesta**:
+
 ```
 GET /transactions/user/:userId?page=1&limit=20&from=2025-01-01&to=2025-03-31
 ```
 
 **Dónde**:
+
 - `ITransactionRepository` — cambiar firma de `findByUserId()` para aceptar opciones de paginación y filtro
 - `TransactionRepositoryImpl` — implementar con TypeORM `skip/take` y `where` con rango de fechas
 - DTO de query params nuevo
 - Use case recibe los parámetros de paginación
 
 **Cambios**:
+
 ```typescript
 // En ITransactionRepository
 async findByUserId(
@@ -419,6 +434,7 @@ El desafío es que los repositorios actuales reciben un `Repository<T>` inyectad
 #### **NestJS Module exports e imports para dependencias cruzadas**
 
 Cuando `TransactionsModule` necesita usar `GetCategoryByIdUseCase` de `CategoriesModule`:
+
 1. `CategoriesModule` debe tener `GetCategoryByIdUseCase` en su array `exports`
 2. `TransactionsModule` debe importar `CategoriesModule` en su array `imports`
 3. NestJS hace disponible el use case en el contexto de DI de `TransactionsModule`
@@ -436,6 +452,7 @@ En este proyecto se usa `save()` en todos lados, lo cual está bien para V1. En 
 #### **Patrón `instanceof` para exception handling en NestJS**
 
 El controller captura excepciones de dominio con `instanceof`:
+
 ```typescript
 catch (e) {
   if (e instanceof CategoryNotFoundException) throw new NotFoundException(e.message);
@@ -454,15 +471,15 @@ TypeScript `interface` desaparece en runtime — el JavaScript compilado no tien
 
 ## Resumen del plan en tabla de prioridad
 
-| # | Qué | Dónde | Prioridad | Riesgo |
-|---|-----|-------|-----------|---------|
-| 1.1 | Crear `InvalidCategoryNameException` y usarla en `rename()` | `category.exceptions.ts`, `category.entity.ts`, controller | Alta | Bajo |
-| 1.2 | Agregar `CategoryNature.reconstitute()` y usarlo en mapper | `category-nature.vo.ts`, `category.mapper.ts` | Media | Bajo |
-| 1.3 | Trim consistente al crear categoría | `create-category.use-case.ts` | Baja | Mínimo |
-| 2.1 | FK constraint + captura de error al eliminar categoría con transacciones | DB schema, `category.repo.implement.ts`, exceptions | Alta | Medio |
-| 3.1 | Atomicidad en CreateTransaction y DeleteTransaction con QueryRunner | Use cases, repositorios, module | CRÍTICA | Alto |
-| 4.1 | Paginación y filtros de fecha en listados | `ITransactionRepository`, impl, use cases, controller | Media | Medio |
-| 5.1 | Catch específico en DeleteTransaction | `delete-transaction.use-case.ts` | Media | Bajo |
+| #   | Qué                                                                      | Dónde                                                      | Prioridad | Riesgo |
+| --- | ------------------------------------------------------------------------ | ---------------------------------------------------------- | --------- | ------ |
+| 1.1 | Crear `InvalidCategoryNameException` y usarla en `rename()`              | `category.exceptions.ts`, `category.entity.ts`, controller | Alta      | Bajo   |
+| 1.2 | Agregar `CategoryNature.reconstitute()` y usarlo en mapper               | `category-nature.vo.ts`, `category.mapper.ts`              | Media     | Bajo   |
+| 1.3 | Trim consistente al crear categoría                                      | `create-category.use-case.ts`                              | Baja      | Mínimo |
+| 2.1 | FK constraint + captura de error al eliminar categoría con transacciones | DB schema, `category.repo.implement.ts`, exceptions        | Alta      | Medio  |
+| 3.1 | Atomicidad en CreateTransaction y DeleteTransaction con QueryRunner      | Use cases, repositorios, module                            | CRÍTICA   | Alto   |
+| 4.1 | Paginación y filtros de fecha en listados                                | `ITransactionRepository`, impl, use cases, controller      | Media     | Medio  |
+| 5.1 | Catch específico en DeleteTransaction                                    | `delete-transaction.use-case.ts`                           | Media     | Bajo   |
 
 ---
 

@@ -10,10 +10,6 @@ export class Email {
     this.value = value;
   }
 
-  static reconstitute(raw: string): Email {
-    return new Email(raw);
-  }
-
   static create(raw: string): Email {
     if (!raw || raw.trim().length === 0) {
       throw new EmptyEmailException();

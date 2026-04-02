@@ -8,8 +8,10 @@ import {
   Param,
   HttpCode,
   HttpStatus,
+  BadRequestException,
   NotFoundException,
   ConflictException,
+  ParseUUIDPipe,
 } from '@nestjs/common';
 // Use cases
 import { CreateCategoryUseCase } from '../../../application/use-cases/create-category.use-case';
@@ -25,7 +27,11 @@ import { CategoryResponseDto } from '../dto/category-response.dto';
 import { Category } from '../../../domain/entities/category.entity';
 import {
   CategoryNotFoundException,
+  CategoryInUseException,
   DuplicateCategoryException,
+  InvalidCategoryNameException,
+  InvalidCategoryColorException,
+  InvalidCategoryIconException,
 } from '../../../domain/exceptions/category.exceptions';
 
 @Controller('categories')
@@ -66,6 +72,13 @@ export class CategoriesController {
       });
       return this.toResponse(category);
     } catch (e) {
+      if (
+        e instanceof InvalidCategoryNameException ||
+        e instanceof InvalidCategoryColorException ||
+        e instanceof InvalidCategoryIconException
+      ) {
+        throw new BadRequestException(e.message);
+      }
       if (e instanceof DuplicateCategoryException) {
         throw new ConflictException(e.message);
       }
@@ -75,7 +88,7 @@ export class CategoriesController {
 
   @Get('user/:userId')
   async findByUserId(
-    @Param('userId') userId: string,
+    @Param('userId', ParseUUIDPipe) userId: string,
   ): Promise<CategoryResponseDto[]> {
     const categories =
       await this.getCategoriesByUserIdUseCase.execute(userId);
@@ -83,7 +96,7 @@ export class CategoriesController {
   }
 
   @Get(':id')
-  async findById(@Param('id') id: string): Promise<CategoryResponseDto> {
+  async findById(@Param('id', ParseUUIDPipe) id: string): Promise<CategoryResponseDto> {
     try {
       const category = await this.getCategoryByIdUseCase.execute(id);
       return this.toResponse(category);
@@ -97,7 +110,7 @@ export class CategoriesController {
 
   @Patch(':id')
   async update(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateCategoryDto,
   ): Promise<CategoryResponseDto> {
     try {
@@ -110,6 +123,13 @@ export class CategoriesController {
       });
       return this.toResponse(category);
     } catch (e) {
+      if (
+        e instanceof InvalidCategoryNameException ||
+        e instanceof InvalidCategoryColorException ||
+        e instanceof InvalidCategoryIconException
+      ) {
+        throw new BadRequestException(e.message);
+      }
       if (e instanceof CategoryNotFoundException) {
         throw new NotFoundException(e.message);
       }
@@ -119,12 +139,15 @@ export class CategoriesController {
 
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
-  async delete(@Param('id') id: string): Promise<void> {
+  async delete(@Param('id', ParseUUIDPipe) id: string): Promise<void> {
     try {
       await this.deleteCategoryUseCase.execute(id);
     } catch (e) {
       if (e instanceof CategoryNotFoundException) {
         throw new NotFoundException(e.message);
+      }
+      if (e instanceof CategoryInUseException) {
+        throw new ConflictException(e.message);
       }
       throw e;
     }

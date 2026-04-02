@@ -3,7 +3,10 @@ import {
   PrimaryColumn,
   Column,
   CreateDateColumn,
+  ManyToOne,
+  JoinColumn,
 } from 'typeorm';
+import { CategoryOrmEntity } from '../../../categories/infrastructure/persistence/category.orm.entity';
 
 // Entidad TypeORM — completamente separada de la entidad de dominio.
 // Sin updatedAt: las transacciones son registros inmutables (ver notas.md).
@@ -21,6 +24,16 @@ export class TransactionOrmEntity {
 
   @Column({ name: 'category_id' })
   categoryId: string;
+
+  // FK constraint hacia categories — onDelete: RESTRICT impide eliminar una categoría con transacciones.
+  // synchronize: true crea el constraint automáticamente al arrancar.
+  @ManyToOne(() => CategoryOrmEntity, {
+    onDelete: 'RESTRICT',
+    nullable: false,
+    createForeignKeyConstraints: true,
+  })
+  @JoinColumn({ name: 'category_id' })
+  category?: CategoryOrmEntity;
 
   // 'income' o 'expense' — el VO TransactionNature valida esto en el dominio
   @Column({ length: 20 })
