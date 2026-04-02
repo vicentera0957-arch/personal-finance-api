@@ -23,5 +23,11 @@ export abstract class ITransactionRepository {
     transaction: Transaction,
     queryRunner?: QueryRunner,
   ): Promise<Transaction>;
+  abstract sumExpenseAmountByUserCategoryAndPeriod(
+    userId: string,
+    categoryId: string,
+    month: number,
+    year: number,
+  ): Promise<number>;
   abstract delete(id: string, queryRunner?: QueryRunner): Promise<void>;
 }

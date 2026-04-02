@@ -75,6 +75,28 @@ export class TransactionRepositoryImpl extends ITransactionRepository {
     return this.mapper.toDomain(saved);
   }
 
+  async sumExpenseAmountByUserCategoryAndPeriod(
+    userId: string,
+    categoryId: string,
+    month: number,
+    year: number,
+  ): Promise<number> {
+    const periodStart = new Date(year, month - 1, 1);
+    const periodEnd = new Date(year, month, 1);
+
+    const raw = await this.ormRepository
+      .createQueryBuilder('transaction')
+      .select('COALESCE(SUM(transaction.amount), 0)', 'total')
+      .where('transaction.userId = :userId', { userId })
+      .andWhere('transaction.categoryId = :categoryId', { categoryId })
+      .andWhere('transaction.nature = :nature', { nature: 'expense' })
+      .andWhere('transaction.transactionDate >= :periodStart', { periodStart })
+      .andWhere('transaction.transactionDate < :periodEnd', { periodEnd })
+      .getRawOne<{ total: string }>();
+
+    return Number(raw?.total ?? 0);
+  }
+
   async delete(id: string, queryRunner?: QueryRunner): Promise<void> {
     if (queryRunner) {
       await queryRunner.manager.delete(TransactionOrmEntity, id);

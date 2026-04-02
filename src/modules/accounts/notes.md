@@ -129,33 +129,28 @@ Puerto de salida definido como clase abstracta. Métodos:
 | `DeleteAccountUseCase` | Verifica existencia → elimina → retorna `void` |
 | `UpdateAccountBalanceUseCase` | Recupera cuenta → aplica inflow/outflow via VO → persiste con QueryRunner opcional (atómico) |
 
-### `UpdateAccountBalanceUseCase` — Diseño atómico
+### `UpdateAccountBalanceUseCase` — Herramienta standalone
 
 **Archivo:** `application/use-cases/update-account-balance.use-case.ts`
 
-Este use case es el punto central para modificar el balance de una cuenta. Recibe:
+Use case que modifica el balance de una cuenta de forma independiente. Recibe:
 - `accountId: string` — id de la cuenta a modificar
 - `amount: number` — monto positivo a aplicar
 - `type: 'inflow' | 'outflow'` — operación a realizar
-- `queryRunner?: QueryRunner` — parámetro opcional de TypeORM (si se proporciona, la operación ocurre dentro de una transacción de BD)
+- `queryRunner?: QueryRunner` — parámetro opcional para participar en una transacción de BD externa
 
 **Flujo:**
 1. Recupera la cuenta via `IAccountRepository.findById(accountId)` — lanza `AccountNotFoundException` si no existe
 2. Crea un VO `Balance` con el monto (valida via `Balance.create()`)
 3. Llama `account.inflow()` o `account.outflow()` según el tipo
-   - `inflow` puede lanzar `ZeroAmountInflowException`
-   - `outflow` puede lanzar `ZeroAmountOutflowException` o `InsufficientFundsException`
 4. Persiste la cuenta modificada via `IAccountRepository.save(account, queryRunner)`
 
-**Atomicidad:**
-- Si se llama sin `queryRunner`: la operación es individual (aislada), pero no está envuelta en una transacción de BD
-- Si se llama con `queryRunner` (desde otro use case como `CreateTransactionUseCase`): todos los cambios dentro de esa transacción ocurren juntos o se revierten juntos en caso de error
+**Estado en V1:** Disponible como herramienta de uso futuro — no es consumido por el módulo `transactions`.
+Los use cases de transacciones gestionan las mutaciones de balance directamente sobre la entidad `Account`
+cargada en memoria, para mantener cohesión de la operación y evitar cargas redundantes a la DB.
 
-**Uso desde otros módulos:**
-El módulo `transactions` importa este use case para mantener la integridad: cuando se crea o elimina una transacción, delega la mutación del balance aquí. Esto garantiza:
-- Una única fuente de verdad para la lógica de inflow/outflow
-- Reusabilidad: si en el futuro necesitas ajustes manuales de balance, ya tienes el mecanismo
-- Testabilidad: `UpdateAccountBalanceUseCase` puede testearse independientemente
+> **Para cuándo sirve:** ajustes manuales de balance (correcciones administrativas, reconciliaciones),
+> operaciones batch que necesiten modificar balances sin registrar una transacción contable.
 
 ---
 
@@ -250,16 +245,54 @@ Mapeo de excepciones de dominio a HTTP:
     { provide: IAccountRepository, useClass: AccountRepositoryImpl },
   ],
   exports: [
-    GetAccountByIdUseCase,           // consumido por el módulo transactions
-    GetAccountsByUserIdUseCase,      // consumido por el módulo transactions
-    UpdateAccountBalanceUseCase,     // consumido por el módulo transactions para mutaciones atómicas
+    GetAccountByIdUseCase,        // consumido por el módulo transactions
+    GetAccountsByUserIdUseCase,   // consumido por el módulo transactions
+    UpdateAccountBalanceUseCase,  // disponible para módulos futuros (ajustes, reconciliaciones)
+    IAccountRepository,           // consumido por el módulo transactions para saves atómicos
   ],
 })
 export class AccountsModule {}
 ```
 
-> **Nota sobre exports desde V1 final:**
-> `UpdateAccountBalanceUseCase` es exportado (así como `IAccountRepository` fue removido de exports) porque el módulo `transactions` lo inyecta directamente. Tanto `CreateTransactionUseCase` como `DeleteTransactionUseCase` lo usan para garantizar que toda mutación de balance pase por el mismo punto de control y con soporte para QueryRunner de BD.
+---
+
+## Consideraciones arquitectónicas
+
+### `UpdateAccountBalanceUseCase` — Herramienta futura, no dependencia interna
+
+El use case `UpdateAccountBalanceUseCase` existe en V1 pero **no es consumido por el módulo `transactions`**. Está disponible para casos de uso futuros que necesiten mutar el balance de forma aislada:
+
+- **Ajustes manuales:** Correcciones administrativas por auditoría o errores en datos históricos
+- **Reconciliación:** Sincronizar balance con banco externo
+- **Cálculo de intereses:** Acumular intereses sin crear transacciones contables
+- **Operaciones batch:** Actualizar balances de múltiples cuentas bajo criterios específicos
+
+**Por qué no se usa en `CreateTransactionUseCase`:**
+
+La decisión de mantener la lógica de inflow/outflow inline en CreateTransaction responde a estos principios:
+
+1. **Cohesión operacional:** Registrar una transacción y actualizar el balance son inseparables en el dominio — son la misma operación de negocio
+2. **Eficiencia:** La cuenta se carga una sola vez y se muta en memoria, evitando un segundo query a la BD
+3. **Simplicidad:** Abstraer innecesariamente añade complejidad (N+1, indirección) sin beneficio claro aún
+4. **Claridad del flujo:** El lector ve exactamente qué pasa: load → mutate → persist, todo en un use case
+
+**Cuándo usarías `UpdateAccountBalanceUseCase`:**
+
+```typescript
+// Escenario: ajustar balance por auditoría (módulo futuro de corrections)
+const correctionUseCase = new ApplyBalanceCorrectionUseCase(
+  updateAccountBalanceUseCase,  // ← lo inyectaría como dependencia
+  correctionRepository,
+);
+
+await correctionUseCase.execute({
+  accountId: '123',
+  reason: 'Auditoría: reversión de transacción duplicada',
+  adjustment: -500,  // outflow
+});
+```
+
+En ese contexto, el use case es la herramienta correcta porque la operación está por sí sola desacoplada de la contabilidad normal.
 
 ---
 

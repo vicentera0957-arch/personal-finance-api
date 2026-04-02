@@ -30,6 +30,11 @@ import {
   CannotDeleteTransactionException,
   IncompatibleCategoryNatureException,
 } from '../../../domain/exceptions/transaction.exceptions';
+import {
+  BudgetLimitExceededException,
+  BudgetRequiredForExpenseTransactionException,
+  CategoryNotBudgetableForBudgetException,
+} from '../../../../budgets/domain/exceptions/budget.exceptions';
 // Excepciones de módulos vecinos (mapeadas aquí)
 import { AccountNotFoundException } from '../../../../accounts/domain/exceptions/account.exceptions';
 import { InsufficientFundsException } from '../../../../accounts/domain/exceptions/account.exceptions';
@@ -84,6 +89,15 @@ export class TransactionsController {
       }
       if (e instanceof IncompatibleCategoryNatureException) {
         throw new BadRequestException(e.message);
+      }
+      if (
+        e instanceof BudgetRequiredForExpenseTransactionException ||
+        e instanceof CategoryNotBudgetableForBudgetException
+      ) {
+        throw new ConflictException(e.message);
+      }
+      if (e instanceof BudgetLimitExceededException) {
+        throw new UnprocessableEntityException(e.message);
       }
       if (e instanceof InsufficientFundsException) {
         throw new UnprocessableEntityException(e.message);

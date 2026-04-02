@@ -101,19 +101,17 @@ Puerto de salida como clase abstracta. Métodos:
 4. Verifica que la categoría existe via `GetCategoryByIdUseCase` (importado de categories)
 5. Valida que `category.getNature()` coincida con la naturaleza de la transacción (R7) — lanza error de dominio si no coincide
 6. Crea la entidad `Transaction` con `Transaction.create()`
-7. Abre una transacción de BD con `DataSource.createQueryRunner()` — todo o nada
-8. Delega la actualización del balance a `UpdateAccountBalanceUseCase.execute()` dentro de la transacción:
-   - `income` → `updateAccountBalanceUseCase.execute(accountId, amount, 'inflow', qr)`
-   - `expense` → `updateAccountBalanceUseCase.execute(accountId, amount, 'outflow', qr)` — puede lanzar `InsufficientFundsException`
-9. Persiste la transacción via `ITransactionRepository.save(transaction, qr)` dentro de la misma transacción
-10. Confirma la transacción con `qr.commitTransaction()` — ambos cambios se hacen permanentes juntos
-11. Retorna la transacción creada
+7. Aplica el efecto en el balance en memoria — sin tocar la DB todavía:
+   - `income` → `account.inflow(Balance.create(amount.getValue()))`
+   - `expense` → `account.outflow(Balance.create(amount.getValue()))` — puede lanzar `InsufficientFundsException` antes de abrir la transacción DB
+8. Persiste cuenta + transacción de forma atómica via `DataSource.createQueryRunner()`
+9. Retorna la transacción creada
 
-> **Decisión: Atomicidad con QueryRunner**
-> Desde V1 final, la creación de transacciones es atómica: tanto la actualización del balance como la persistencia de la transacción ocurren juntos. Si una falla, ambas se revierten. Esto elimina la posibilidad de inconsistencia entre el balance de la cuenta y la transacción registrada.
+> **Decisión: mutación en memoria antes del QueryRunner**
+> El `outflow` se aplica sobre el objeto `account` en memoria antes de abrir la transacción de BD. Si hay fondos insuficientes, la excepción se lanza antes de crear el QueryRunner — sin costo de conexión a DB. Solo si la mutación en memoria tiene éxito, se abre la transacción y se persiste.
 
-> **Decisión: Usar `UpdateAccountBalanceUseCase` en lugar de acceso directo a `IAccountRepository`**
-> El use case no toca directamente `IAccountRepository` — delega la mutación del balance a `UpdateAccountBalanceUseCase`. Esto garantiza que toda modificación de balance pasa por el mismo punto de control (validaciones de dominio) y que el balance nunca se modifica sin las validaciones de la entidad `Account`. El `UpdateAccountBalanceUseCase` recibe el `queryRunner` para que la persistencia ocurra dentro de la misma transacción de BD.
+> **Decisión: importar `IAccountRepository` y `GetAccountByIdUseCase` del módulo accounts**
+> El use case necesita tanto leer la cuenta (para validar existencia y obtener el objeto a mutar) como guardarla (después de modificar el balance). Se importa `GetAccountByIdUseCase` para la lectura (encapsula el 404) y `IAccountRepository` directamente para el save atómico con QueryRunner. El módulo `accounts` exporta ambos.
 
 ### 2.2 `GetTransactionByIdUseCase`
 
@@ -141,23 +139,19 @@ Puerto de salida como clase abstracta. Métodos:
 
 **Archivo:** `application/use-cases/delete-transaction.use-case.ts`
 
-1. Recupera la transacción via `GetTransactionByIdUseCase` (lanza `TransactionNotFoundException` si no existe)
-2. Verifica que la cuenta existe via `GetAccountByIdUseCase` (lanza `AccountNotFoundException` si no existe)
-3. Calcula la operación inversa para revertir el balance:
-   - Si era `income` → `outflow`
-   - Si era `expense` → `inflow`
-4. Abre una transacción de BD con `DataSource.createQueryRunner()`
-5. Delega la reversa del balance a `UpdateAccountBalanceUseCase.execute()` dentro de la transacción:
-   - `updateAccountBalanceUseCase.execute(accountId, amount, reverseType, qr)` — puede lanzar `InsufficientFundsException` (ej: si se gasta el balance de un income después de crearlo, no se puede revertir)
-6. Elimina la transacción via `ITransactionRepository.delete(id, qr)` dentro de la misma transacción
-7. Confirma con `qr.commitTransaction()` — ambos cambios (balance y eliminación) son permanentes juntos
-8. Si ocurre `InsufficientFundsException` durante el reverso, se mapea a `CannotDeleteTransactionException` para claridad al usuario
+1. Recupera la transacción via `GetTransactionByIdUseCase`
+2. Recupera la cuenta via `GetAccountByIdUseCase`
+3. Intenta revertir el efecto en la cuenta en memoria — sin tocar la DB todavía:
+   - Si era `income`: intenta `account.outflow(balance)` — puede fallar si el balance es insuficiente
+   - Si era `expense`: hace `account.inflow(balance)` — siempre funciona (sumar nunca falla)
+4. Si el outflow falla (balance insuficiente), lanza `CannotDeleteTransactionException`
+5. Persiste la cuenta actualizada + elimina la transacción de forma atómica via `DataSource.createQueryRunner()`
 
-> **Decisión: Revertir en orden inverso**
-> La naturaleza de la operación se invierte: un income requiere outflow para revertirse, un expense requiere inflow. Esta es la única forma matemáticamente consistente de deshacerlo.
+> **Decisión: mutación en memoria antes del QueryRunner**
+> Igual que en CreateTransaction, la validación de fondos ocurre sobre el objeto en memoria antes de abrir la transacción de BD. Solo si la reversión en memoria tiene éxito se incurre en el costo de la transacción de BD.
 
-> **Decisión: Error específico `CannotDeleteTransactionException`**
-> Si el usuario crea un income de $1000, gasta $500 en otra transacción (balance es ahora $500), luego intenta eliminar el income, el sistema intenta hacer outflow de $1000 pero solo hay $500. `InsufficientFundsException` es técnica; `CannotDeleteTransactionException` es clara para el usuario: "No se puede eliminar porque revertiría el balance a negativo."
+> **Decisión: `CannotDeleteTransactionException`**
+> Si el usuario creó un income de $1000, gastó $800 después, intenta eliminar el income: el outflow reverso de $1000 fallaría con `InsufficientFundsException` (técnica). Se mapea a `CannotDeleteTransactionException` que es semánticamente clara para el usuario: "No se puede eliminar porque revertiría el balance a negativo."
 
 ---
 
@@ -236,7 +230,7 @@ Mapeo de excepciones:
 @Module({
   imports: [
     TypeOrmModule.forFeature([TransactionOrmEntity]),
-    AccountsModule,    // provee GetAccountByIdUseCase + UpdateAccountBalanceUseCase
+    AccountsModule,    // provee GetAccountByIdUseCase + IAccountRepository
     CategoriesModule,  // provee GetCategoryByIdUseCase
   ],
   controllers: [TransactionsController],
@@ -256,24 +250,296 @@ Mapeo de excepciones:
 export class TransactionsModule {}
 ```
 
-### 4.2 Inyecciones en `CreateTransactionUseCase` y `DeleteTransactionUseCase`
+### 4.2 Actualizar `AccountsModule`
 
-Ambos reciben:
-- `GetAccountByIdUseCase` — para verificar que la cuenta existe
-- `UpdateAccountBalanceUseCase` — para aplicar el cambio de balance de forma atómica (con QueryRunner compartido)
-- `DataSource` — para manejar la transacción de BD
-- `GetCategoryByIdUseCase` — (solo en CreateTransaction) para validar compatibilidad de naturaleza
+Exportar `GetAccountByIdUseCase` y `IAccountRepository` para que `TransactionsModule` pueda inyectarlos.
 
-### 4.3 Actualizar `AccountsModule` (ya hecho)
+### 4.3 Actualizar `CategoriesModule`
 
-Exporta:
-- `GetAccountByIdUseCase`
-- `GetAccountsByUserIdUseCase`
-- `UpdateAccountBalanceUseCase` — nuevo en V1 final
+Exportar `GetCategoryByIdUseCase` para que `TransactionsModule` pueda validar la compatibilidad de naturaleza.
 
-### 4.4 Actualizar `CategoriesModule`
+---
 
-Exporta `GetCategoryByIdUseCase` para que `TransactionsModule` valide compatibilidad de naturaleza.
+## Paso 4.5 — Consideraciones de infraestructura — Abstracción futura
+
+### Por qué abstraemos la infraestructura
+
+En la arquitectura de capas, la capa de **aplicación** (donde viven los use cases) debe ser agnóstica a la infraestructura. Actualmente hay dos dependencias que rompen esta regla:
+
+1. **Dependencia del módulo `crypto`** — genera IDs
+2. **Dependencia de TypeORM.DataSource** — gestiona transacciones de BD
+
+Ambas son dependencias de infraestructura que quedan hardcodeadas en la lógica de negocio. En V1 esto es aceptable por practicidad, pero lo correcto según DDD y Clean Architecture es:
+
+```
+Dominio (entidades, VOs, puertos)
+  ↓
+Aplicación (use cases, DTOs) — NO DEBE CONOCER tecnologías específicas
+  ↓
+Infraestructura (ORM, HTTP, generadores, etc.) — aquí viven las dependencias
+```
+
+### TODO: Abstraer librerías de infra — Roadmap V2
+
+En la implementación actual, los use cases de transacciones tienen dependencias explícitas de infraestructura que deberían abstraerse:
+
+#### 1. **Generador de IDs: `crypto.randomUUID()`**
+
+**Ubicación actual:**
+- `CreateTransactionUseCase` usa `randomUUID()` directamente (import de `crypto`)
+- Mismo patrón en `CreateAccountUseCase` y `CreateCategoryUseCase`
+
+**Problema:**
+- **Acoplamiento:** El use case depende de la librería específica `crypto` del runtime Node.js
+- **Testing:** Es imposible mockear o controlar el generador de IDs en tests sin hacerlo de forma invasiva
+- **Flexibilidad:** Si necesitas cambiar a NanoID (más corto, mejor para URLs) o a Snowflake (para sistemas distribuidos), requiere cambios en múltiples use cases
+- **Auditoría de IDs:** No puedes saber cuántos IDs se han generado, detectar colisiones secuenciales, o implementar estrategias de prefijo por módulo
+
+**Patrón actual (V1):**
+```typescript
+import { randomUUID } from 'crypto';  // ← acoplamiento directo
+
+const transaction = Transaction.create({
+  id: randomUUID(),  // ← llamada directa
+  ...
+});
+```
+
+**Solución (V2):** Patrón de puerto (interfaz) + adapters
+
+**1. Definir el puerto en el dominio/aplicación (lo que el use case necesita):**
+```typescript
+// infrastructure/ports/id-generator.port.ts
+export interface IIdGenerator {
+  generate(): string;
+}
+```
+
+**2. Implementaciones en infraestructura (estrategias intercambiables):**
+```typescript
+// infrastructure/adapters/uuid-v4.generator.ts
+export class UUIDv4Generator implements IIdGenerator {
+  generate(): string {
+    return randomUUID();
+  }
+}
+
+// infrastructure/adapters/nanoid.generator.ts
+export class NanoIdGenerator implements IIdGenerator {
+  generate(): string {
+    return customAlphabet('abcdefghijklmnopqrstuvwxyz0123456789', 12)();
+  }
+}
+
+// Para testing: mock que genera IDs predecibles
+export class MockIdGenerator implements IIdGenerator {
+  constructor(private sequence = 0) {}
+  generate(): string {
+    return `mock-id-${++this.sequence}`;
+  }
+}
+```
+
+**3. Inyectar en el use case:**
+```typescript
+export class CreateTransactionUseCase {
+  constructor(
+    private readonly transactionRepository: ITransactionRepository,
+    private readonly getAccountByIdUseCase: GetAccountByIdUseCase,
+    private readonly idGenerator: IIdGenerator,  // ← abstracción, no implementación
+    // ... otros
+  ) {}
+
+  async execute(command: CreateTransactionCommand): Promise<Transaction> {
+    const transaction = Transaction.create({
+      id: this.idGenerator.generate(),  // ← agnóstico a la implementación
+      // ...
+    });
+  }
+}
+```
+
+**4. Wiring en el módulo:**
+```typescript
+@Module({
+  providers: [
+    CreateTransactionUseCase,
+    {
+      provide: IIdGenerator,
+      useClass: UUIDv4Generator,  // ← elegir implementación aquí
+      // useClass: NanoIdGenerator para cambiar globalmente
+    },
+  ],
+})
+export class TransactionsModule {}
+```
+
+**Beneficios:**
+- ️✅ **Testabilidad:** El test inyecta `MockIdGenerator` y controla exactamente qué IDs se generan
+- ✅ **Flexibilidad:** Cambiar a NanoID = una línea en el módulo, el use case no se entera
+- ✅ **Reutilización:** `accounts`, `categories`, `budgets` usan el mismo generador
+- ✅ **Evolución:** En V3 necesitas Snowflake IDs para sharding — cambias solo la implementación
+
+#### 2. **Gestor de transacciones: `TypeORM.DataSource`**
+
+**Ubicación actual:**
+- `CreateTransactionUseCase` y `DeleteTransactionUseCase` inyectan `DataSource` directamente
+- Llaman a `dataSource.createQueryRunner()`, `startTransaction()`, `commitTransaction()`, `rollbackTransaction()`, `release()`
+- Patrón duplicado en ambos use cases (try/catch/finally idéntico)
+
+**Problema:**
+- **Acoplamiento fuerte:** El use case conoce la API específica de TypeORM (`QueryRunner`, métodos de transacción)
+- **Migrabilidad:** Si necesitas cambiar a Prisma (que tiene API diferente) o Mikro-ORM, reprogramas ambos use cases
+- **Duplicación:** El mismo patrón try/catch/finally aparece en múltiples lugares — si cambias la estrategia de transacciones, cambias en 5+ lugares
+- **Testabilidad:** Mockear transacciones de BD requiere mockear la API completa de TypeORM, es complejo
+
+**Patrón actual (V1):**
+```typescript
+import { DataSource } from 'typeorm';  // ← acoplamiento a TypeORM
+
+const qr = this.dataSource.createQueryRunner();  // ← API TypeORM específica
+await qr.connect();
+await qr.startTransaction();
+try {
+  // operaciones
+  await qr.commitTransaction();
+} catch (err) {
+  await qr.rollbackTransaction();
+} finally {
+  await qr.release();
+}
+```
+
+**Solución (V2):** Patrón de puerto + adapters
+
+**1. Definir el puerto (lo que el use case necesita — agnóstico de ORM):**
+```typescript
+// infrastructure/ports/transaction-manager.port.ts
+export interface ITransaction {
+  commit(): Promise<void>;
+  rollback(): Promise<void>;
+  release(): Promise<void>;
+}
+
+export interface ITransactionManager {
+  begin(): Promise<ITransaction>;
+}
+```
+
+**2. Implementación en infraestructura:**
+```typescript
+// infrastructure/adapters/typeorm-transaction-manager.ts
+export class TypeOrmTransactionManager implements ITransactionManager {
+  constructor(private dataSource: DataSource) {}
+
+  async begin(): Promise<ITransaction> {
+    const qr = this.dataSource.createQueryRunner();
+    await qr.connect();
+    await qr.startTransaction();
+
+    return {
+      commit: async () => {
+        await qr.commitTransaction();
+        await qr.release();
+      },
+      rollback: async () => {
+        await qr.rollbackTransaction();
+        await qr.release();
+      },
+      release: async () => {
+        // ya está incluido en commit/rollback, pero por simetría
+        await qr.release();
+      },
+    };
+  }
+}
+
+// Para Prisma (V3, si migramos)
+export class PrismaTransactionManager implements ITransactionManager {
+  constructor(private prisma: PrismaClient) {}
+
+  async begin(): Promise<ITransaction> {
+    // Las transacciones de Prisma funcionan diferente — aquí va la adaptación
+    const transactionFn = this.prisma.$transaction;
+
+    return {
+      commit: async () => { /* ... */ },
+      rollback: async () => { /* ... */ },
+      release: async () => { /* ... */ },
+    };
+  }
+}
+```
+
+**3. Usar en el use case:**
+```typescript
+export class CreateTransactionUseCase {
+  constructor(
+    private readonly transactionManager: ITransactionManager,  // ← abstracción
+    // ...
+  ) {}
+
+  async execute(command: CreateTransactionCommand): Promise<Transaction> {
+    // ... validaciones
+    
+    const tx = await this.transactionManager.begin();  // ← agnóstico de ORM
+    try {
+      await this.accountRepository.save(account, tx);
+      const saved = await this.transactionRepository.save(transaction, tx);
+      await tx.commit();
+      return saved;
+    } catch (err) {
+      await tx.rollback();
+      throw err;
+    } finally {
+      await tx.release();
+    }
+  }
+}
+```
+
+**4. Wiring en el módulo:**
+```typescript
+@Module({
+  providers: [
+    CreateTransactionUseCase,
+    DeleteTransactionUseCase,
+    {
+      provide: ITransactionManager,
+      useClass: TypeOrmTransactionManager,  // ← implementación actual
+      // cambiar a PrismaTransactionManager en V3
+    },
+  ],
+})
+export class TransactionsModule {}
+```
+
+**5. Cambio de ORM (V3, ejemplo):**
+Si necesitas migrar de TypeORM a Prisma:
+- Solo cambias la línea del módulo: `useClass: PrismaTransactionManager`
+- Los use cases no se tocan
+- El patrón de transacciones es consistente en toda la app
+
+**Beneficios de la abstracción:**
+- ✅ **Independencia del ORM:** Cambiar a Prisma/Mikro-ORM = cambiar una clase, los use cases no se enteran
+- ✅ **DRY (Don't Repeat Yourself):** El patrón try/catch/finally se escribe una sola vez
+- ✅ **Testabilidad:** Puedes inyectar un `MockTransactionManager` que no toca BD
+- ✅ **Evolución:** Si necesitas enriquecer transacciones (savepoints, timeouts), lo haces en un lugar
+- ✅ **Multipersistencia:** Si en el futuro necesitas soportar múltiples BDs, puedes tener múltiples implementaciones
+
+### Por qué estas abstracciones están en V2, no en V1
+
+La decisión de mantener `randomUUID` e `ITransactionRepository.save()` sin abstraer en V1 responde a:
+
+1. **Acoplamiento aceptable en V1:** Para un prototipo/MVP, es pragmático usar TypeORM directamente. La abstracción agrega complejidad sin dolor real aún (solo tienes 1 ORM).
+
+2. **Validación de hipótesis:** Necesitas entender si el patrón de transacciones atómicas con QueryRunner es realmente la solución antes de abstraerlo. Si en V2 encuentras que Prisma es mejor, habrás validado con V1 cuál es la inversión real.
+
+3. **Cambio concentrado:** Es más fácil abstraer después de que el código está escrito y probado. Abstraer con código especulativo es hacer work twice.
+
+4. **Costo de abstracción:** Crear `IIdGenerator`, `ITransactionManager`, wiring en módulos = 300+ líneas de código nuevo. En V1 no vale la pena para 2 use cases.
+
+5. **Lecciones aprendidas:** Implementar V1 te muestra exactamente qué parte de TypeORM necesitas abstraer. En V2 la abstracción será más precisa porque sabes qué duele.
 
 ---
 

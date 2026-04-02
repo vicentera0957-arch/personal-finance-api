@@ -22,12 +22,14 @@ import { DeleteTransactionUseCase } from './application/use-cases/delete-transac
 // Módulos vecinos — transactions necesita operar sobre cuentas y validar categorías
 import { AccountsModule } from '../accounts/accounts.module';
 import { CategoriesModule } from '../categories/categories.module';
+import { BudgetsModule } from '../budgets/budgets.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([TransactionOrmEntity]),
     AccountsModule,    // provee GetAccountByIdUseCase + IAccountRepository
     CategoriesModule,  // provee GetCategoryByIdUseCase
+    BudgetsModule,     // provee GetBudgetByUserCategoryPeriodUseCase
   ],
   controllers: [TransactionsController],
   providers: [
