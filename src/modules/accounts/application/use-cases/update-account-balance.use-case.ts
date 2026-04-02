@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { QueryRunner } from 'typeorm';
 import { IAccountRepository } from '../../domain/repository/accounts.repository';
 import { Balance } from '../../domain/value-objects/balance.vo';
 import { Account } from '../../domain/entities/account.entity';
@@ -12,6 +13,7 @@ export class UpdateAccountBalanceUseCase {
     accountId: string,
     amount: number,
     type: 'inflow' | 'outflow',
+    queryRunner?: QueryRunner,
   ): Promise<Account> {
     const account = await this.accountRepository.findById(accountId);
 
@@ -28,6 +30,6 @@ export class UpdateAccountBalanceUseCase {
       account.outflow(balance);
     }
 
-    return this.accountRepository.save(account);
+    return this.accountRepository.save(account, queryRunner);
   }
 }

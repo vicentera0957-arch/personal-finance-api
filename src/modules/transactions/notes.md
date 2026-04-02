@@ -101,18 +101,19 @@ Puerto de salida como clase abstracta. Métodos:
 4. Verifica que la categoría existe via `GetCategoryByIdUseCase` (importado de categories)
 5. Valida que `category.getNature()` coincida con la naturaleza de la transacción (R7) — lanza error de dominio si no coincide
 6. Crea la entidad `Transaction` con `Transaction.create()`
-7. Convierte `Amount` a `Balance` y aplica el efecto en la cuenta:
-   - `income` → `account.inflow(Balance.create(amount.getValue()))`
-   - `expense` → `account.outflow(Balance.create(amount.getValue()))` — puede lanzar `InsufficientFundsException`
-8. Persiste la cuenta actualizada via `IAccountRepository.save()`
-9. Persiste la transacción via `ITransactionRepository.save()`
-10. Retorna la transacción creada
+7. Abre una transacción de BD con `DataSource.createQueryRunner()` — todo o nada
+8. Delega la actualización del balance a `UpdateAccountBalanceUseCase.execute()` dentro de la transacción:
+   - `income` → `updateAccountBalanceUseCase.execute(accountId, amount, 'inflow', qr)`
+   - `expense` → `updateAccountBalanceUseCase.execute(accountId, amount, 'outflow', qr)` — puede lanzar `InsufficientFundsException`
+9. Persiste la transacción via `ITransactionRepository.save(transaction, qr)` dentro de la misma transacción
+10. Confirma la transacción con `qr.commitTransaction()` — ambos cambios se hacen permanentes juntos
+11. Retorna la transacción creada
 
-> **Decisión: orden de persistencia — cuenta primero, luego transacción**
-> Si guardamos la transacción primero y falla guardar la cuenta, tenemos una transacción sin efecto en el balance (inconsistencia). Si guardamos la cuenta primero y falla la transacción, el balance cambió pero no hay registro. En ambos casos hay inconsistencia potencial sin transacción de BD. Para V1 confiamos en que TypeORM + PostgreSQL son confiables. Una V2 con `QueryRunner` de TypeORM podría envolver ambas operaciones en una transacción de BD atómica.
+> **Decisión: Atomicidad con QueryRunner**
+> Desde V1 final, la creación de transacciones es atómica: tanto la actualización del balance como la persistencia de la transacción ocurren juntos. Si una falla, ambas se revierten. Esto elimina la posibilidad de inconsistencia entre el balance de la cuenta y la transacción registrada.
 
-> **Decisión: importar `IAccountRepository` y `GetAccountByIdUseCase` del módulo accounts**
-> El use case necesita tanto leer la cuenta (para validar existencia y obtener el objeto a mutar) como guardarla (después de modificar el balance). Se importa `GetAccountByIdUseCase` para la lectura (encapsula el 404) y `IAccountRepository` directamente para el save. El módulo `accounts` exporta ambos.
+> **Decisión: Usar `UpdateAccountBalanceUseCase` en lugar de acceso directo a `IAccountRepository`**
+> El use case no toca directamente `IAccountRepository` — delega la mutación del balance a `UpdateAccountBalanceUseCase`. Esto garantiza que toda modificación de balance pasa por el mismo punto de control (validaciones de dominio) y que el balance nunca se modifica sin las validaciones de la entidad `Account`. El `UpdateAccountBalanceUseCase` recibe el `queryRunner` para que la persistencia ocurra dentro de la misma transacción de BD.
 
 ### 2.2 `GetTransactionByIdUseCase`
 
@@ -140,14 +141,23 @@ Puerto de salida como clase abstracta. Métodos:
 
 **Archivo:** `application/use-cases/delete-transaction.use-case.ts`
 
-1. Recupera la transacción via `GetTransactionByIdUseCase`
-2. Recupera la cuenta via `GetAccountByIdUseCase`
-3. Intenta revertir el efecto en la cuenta:
-   - Si era `income`: intenta `account.outflow(balance)` — puede fallar si el balance es insuficiente
-   - Si era `expense`: hace `account.inflow(balance)` — siempre funciona (sumar nunca falla)
-4. Si el outflow falla (balance insuficiente), lanza `CannotDeleteTransactionException`
-5. Persiste la cuenta actualizada via `IAccountRepository.save()`
-6. Elimina la transacción via `ITransactionRepository.delete()`
+1. Recupera la transacción via `GetTransactionByIdUseCase` (lanza `TransactionNotFoundException` si no existe)
+2. Verifica que la cuenta existe via `GetAccountByIdUseCase` (lanza `AccountNotFoundException` si no existe)
+3. Calcula la operación inversa para revertir el balance:
+   - Si era `income` → `outflow`
+   - Si era `expense` → `inflow`
+4. Abre una transacción de BD con `DataSource.createQueryRunner()`
+5. Delega la reversa del balance a `UpdateAccountBalanceUseCase.execute()` dentro de la transacción:
+   - `updateAccountBalanceUseCase.execute(accountId, amount, reverseType, qr)` — puede lanzar `InsufficientFundsException` (ej: si se gasta el balance de un income después de crearlo, no se puede revertir)
+6. Elimina la transacción via `ITransactionRepository.delete(id, qr)` dentro de la misma transacción
+7. Confirma con `qr.commitTransaction()` — ambos cambios (balance y eliminación) son permanentes juntos
+8. Si ocurre `InsufficientFundsException` durante el reverso, se mapea a `CannotDeleteTransactionException` para claridad al usuario
+
+> **Decisión: Revertir en orden inverso**
+> La naturaleza de la operación se invierte: un income requiere outflow para revertirse, un expense requiere inflow. Esta es la única forma matemáticamente consistente de deshacerlo.
+
+> **Decisión: Error específico `CannotDeleteTransactionException`**
+> Si el usuario crea un income de $1000, gasta $500 en otra transacción (balance es ahora $500), luego intenta eliminar el income, el sistema intenta hacer outflow de $1000 pero solo hay $500. `InsufficientFundsException` es técnica; `CannotDeleteTransactionException` es clara para el usuario: "No se puede eliminar porque revertiría el balance a negativo."
 
 ---
 
@@ -226,7 +236,7 @@ Mapeo de excepciones:
 @Module({
   imports: [
     TypeOrmModule.forFeature([TransactionOrmEntity]),
-    AccountsModule,    // provee GetAccountByIdUseCase + IAccountRepository
+    AccountsModule,    // provee GetAccountByIdUseCase + UpdateAccountBalanceUseCase
     CategoriesModule,  // provee GetCategoryByIdUseCase
   ],
   controllers: [TransactionsController],
@@ -246,13 +256,24 @@ Mapeo de excepciones:
 export class TransactionsModule {}
 ```
 
-### 4.2 Actualizar `AccountsModule`
+### 4.2 Inyecciones en `CreateTransactionUseCase` y `DeleteTransactionUseCase`
 
-Exportar `GetAccountByIdUseCase` y `IAccountRepository` para que `TransactionsModule` pueda inyectarlos.
+Ambos reciben:
+- `GetAccountByIdUseCase` — para verificar que la cuenta existe
+- `UpdateAccountBalanceUseCase` — para aplicar el cambio de balance de forma atómica (con QueryRunner compartido)
+- `DataSource` — para manejar la transacción de BD
+- `GetCategoryByIdUseCase` — (solo en CreateTransaction) para validar compatibilidad de naturaleza
 
-### 4.3 Actualizar `CategoriesModule`
+### 4.3 Actualizar `AccountsModule` (ya hecho)
 
-Exportar `GetCategoryByIdUseCase` para que `TransactionsModule` pueda validar la compatibilidad de naturaleza.
+Exporta:
+- `GetAccountByIdUseCase`
+- `GetAccountsByUserIdUseCase`
+- `UpdateAccountBalanceUseCase` — nuevo en V1 final
+
+### 4.4 Actualizar `CategoriesModule`
+
+Exporta `GetCategoryByIdUseCase` para que `TransactionsModule` valide compatibilidad de naturaleza.
 
 ---
 

@@ -8,8 +8,7 @@ import { Amount } from '../../domain/value-objects/amount.vo';
 import { IncompatibleCategoryNatureException } from '../../domain/exceptions/transaction.exceptions';
 // Importados desde los módulos vecinos via sus exports
 import { GetAccountByIdUseCase } from '../../../accounts/application/use-cases/get-account-by-id.use-case';
-import { IAccountRepository } from '../../../accounts/domain/repository/accounts.repository';
-import { Balance } from '../../../accounts/domain/value-objects/balance.vo';
+import { UpdateAccountBalanceUseCase } from '../../../accounts/application/use-cases/update-account-balance.use-case';
 import { GetCategoryByIdUseCase } from '../../../categories/application/use-cases/get-category-by-id.use-case';
 
 interface CreateTransactionCommand {
@@ -27,7 +26,7 @@ export class CreateTransactionUseCase {
   constructor(
     private readonly transactionRepository: ITransactionRepository,
     private readonly getAccountByIdUseCase: GetAccountByIdUseCase,
-    private readonly accountRepository: IAccountRepository,
+    private readonly updateAccountBalanceUseCase: UpdateAccountBalanceUseCase,
     private readonly getCategoryByIdUseCase: GetCategoryByIdUseCase,
     private readonly dataSource: DataSource,
   ) {}
@@ -67,22 +66,20 @@ export class CreateTransactionUseCase {
       transactionDate: command.transactionDate,
     });
 
-    // 6. Aplica el efecto en el balance (dominio puro — sin tocar la DB todavía).
-    // outflow puede lanzar InsufficientFundsException antes de abrir la transacción DB.
-    const balanceAmount = Balance.create(amount.getValue());
-    if (nature.isIncome()) {
-      account.inflow(balanceAmount);
-    } else {
-      account.outflow(balanceAmount);
-    }
-
-    // 7. Persiste cuenta + transacción de forma atómica.
+    // 6. Persiste cuenta + transacción de forma atómica.
     // Si alguno falla, ambos se revierten (ROLLBACK).
     const qr = this.dataSource.createQueryRunner();
     await qr.connect();
     await qr.startTransaction();
     try {
-      await this.accountRepository.save(account, qr);
+      // Delega la actualización del balance a UpdateAccountBalanceUseCase
+      // outflow puede lanzar InsufficientFundsException antes de persistir
+      await this.updateAccountBalanceUseCase.execute(
+        account.id,
+        amount.getValue(),
+        nature.isIncome() ? 'inflow' : 'outflow',
+        qr,
+      );
       const saved = await this.transactionRepository.save(transaction, qr);
       await qr.commitTransaction();
       return saved;

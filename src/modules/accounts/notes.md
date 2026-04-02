@@ -127,6 +127,35 @@ Puerto de salida definido como clase abstracta. Métodos:
 | `ArchiveAccountUseCase` | Recupera cuenta → llama `account.archive()` → persiste |
 | `UnarchiveAccountUseCase` | Recupera cuenta → llama `account.unarchive()` → persiste |
 | `DeleteAccountUseCase` | Verifica existencia → elimina → retorna `void` |
+| `UpdateAccountBalanceUseCase` | Recupera cuenta → aplica inflow/outflow via VO → persiste con QueryRunner opcional (atómico) |
+
+### `UpdateAccountBalanceUseCase` — Diseño atómico
+
+**Archivo:** `application/use-cases/update-account-balance.use-case.ts`
+
+Este use case es el punto central para modificar el balance de una cuenta. Recibe:
+- `accountId: string` — id de la cuenta a modificar
+- `amount: number` — monto positivo a aplicar
+- `type: 'inflow' | 'outflow'` — operación a realizar
+- `queryRunner?: QueryRunner` — parámetro opcional de TypeORM (si se proporciona, la operación ocurre dentro de una transacción de BD)
+
+**Flujo:**
+1. Recupera la cuenta via `IAccountRepository.findById(accountId)` — lanza `AccountNotFoundException` si no existe
+2. Crea un VO `Balance` con el monto (valida via `Balance.create()`)
+3. Llama `account.inflow()` o `account.outflow()` según el tipo
+   - `inflow` puede lanzar `ZeroAmountInflowException`
+   - `outflow` puede lanzar `ZeroAmountOutflowException` o `InsufficientFundsException`
+4. Persiste la cuenta modificada via `IAccountRepository.save(account, queryRunner)`
+
+**Atomicidad:**
+- Si se llama sin `queryRunner`: la operación es individual (aislada), pero no está envuelta en una transacción de BD
+- Si se llama con `queryRunner` (desde otro use case como `CreateTransactionUseCase`): todos los cambios dentro de esa transacción ocurren juntos o se revierten juntos en caso de error
+
+**Uso desde otros módulos:**
+El módulo `transactions` importa este use case para mantener la integridad: cuando se crea o elimina una transacción, delega la mutación del balance aquí. Esto garantiza:
+- Una única fuente de verdad para la lógica de inflow/outflow
+- Reusabilidad: si en el futuro necesitas ajustes manuales de balance, ya tienes el mecanismo
+- Testabilidad: `UpdateAccountBalanceUseCase` puede testearse independientemente
 
 ---
 
@@ -217,12 +246,20 @@ Mapeo de excepciones de dominio a HTTP:
     ArchiveAccountUseCase,
     UnarchiveAccountUseCase,
     DeleteAccountUseCase,
+    UpdateAccountBalanceUseCase,
     { provide: IAccountRepository, useClass: AccountRepositoryImpl },
   ],
-  exports: [GetAccountByIdUseCase], // consumido por el módulo transactions
+  exports: [
+    GetAccountByIdUseCase,           // consumido por el módulo transactions
+    GetAccountsByUserIdUseCase,      // consumido por el módulo transactions
+    UpdateAccountBalanceUseCase,     // consumido por el módulo transactions para mutaciones atómicas
+  ],
 })
 export class AccountsModule {}
 ```
+
+> **Nota sobre exports desde V1 final:**
+> `UpdateAccountBalanceUseCase` es exportado (así como `IAccountRepository` fue removido de exports) porque el módulo `transactions` lo inyecta directamente. Tanto `CreateTransactionUseCase` como `DeleteTransactionUseCase` lo usan para garantizar que toda mutación de balance pase por el mismo punto de control y con soporte para QueryRunner de BD.
 
 ---
 
