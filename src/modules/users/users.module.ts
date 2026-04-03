@@ -39,6 +39,6 @@ import { DeleteUserUseCase } from './application/use-cases/delete-user.use-case'
       useClass: UserRepositoryImpl,
     },
   ],
-  exports: [GetUserByEmailUseCase],
+  exports: [GetUserByEmailUseCase, CreateUserUseCase],
 })
 export class UsersModule {}
