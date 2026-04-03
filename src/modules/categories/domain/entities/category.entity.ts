@@ -94,12 +94,6 @@ export class Category {
     this.updatedAt = new Date();
   }
 
-  // Controla si la categoría puede ser objetivo de un presupuesto.
-  setBudgetable(value: boolean): void {
-    this.isBudgetable = value;
-    this.updatedAt = new Date();
-  }
-
   // ============================================
   // Getters
   // ============================================

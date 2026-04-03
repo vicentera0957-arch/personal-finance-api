@@ -28,6 +28,7 @@ export abstract class ITransactionRepository {
     categoryId: string,
     month: number,
     year: number,
+    queryRunner?: QueryRunner,
   ): Promise<number>;
   abstract delete(id: string, queryRunner?: QueryRunner): Promise<void>;
 }

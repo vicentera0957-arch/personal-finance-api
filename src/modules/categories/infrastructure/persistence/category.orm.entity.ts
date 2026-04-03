@@ -6,7 +6,10 @@ import {
   UpdateDateColumn,
   Unique,
   Index,
+  ManyToOne,
+  JoinColumn,
 } from 'typeorm';
+import { UserOrmEntity } from '../../../users/infrastructure/persistence/user.orm.entity';
 
 // Entidad TypeORM — completamente separada de la entidad de dominio.
 // El mapper es el único que traduce entre las dos representaciones.
@@ -20,6 +23,14 @@ export class CategoryOrmEntity {
   @Index()
   @Column({ name: 'user_id' })
   userId: string;
+
+  @ManyToOne(() => UserOrmEntity, {
+    onDelete: 'CASCADE',
+    nullable: false,
+    createForeignKeyConstraints: true,
+  })
+  @JoinColumn({ name: 'user_id' })
+  user?: UserOrmEntity;
 
   @Column({ length: 80 })
   name: string;

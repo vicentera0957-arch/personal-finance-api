@@ -80,20 +80,30 @@ export class TransactionRepositoryImpl extends ITransactionRepository {
     categoryId: string,
     month: number,
     year: number,
+    queryRunner?: QueryRunner,
   ): Promise<number> {
     const periodStart = new Date(year, month - 1, 1);
     const periodEnd = new Date(year, month, 1);
 
-    const raw = await this.ormRepository
+    const repo = queryRunner
+      ? queryRunner.manager.getRepository(TransactionOrmEntity)
+      : this.ormRepository;
+
+    const qb = repo
       .createQueryBuilder('transaction')
       .select('COALESCE(SUM(transaction.amount), 0)', 'total')
       .where('transaction.userId = :userId', { userId })
       .andWhere('transaction.categoryId = :categoryId', { categoryId })
       .andWhere('transaction.nature = :nature', { nature: 'expense' })
       .andWhere('transaction.transactionDate >= :periodStart', { periodStart })
-      .andWhere('transaction.transactionDate < :periodEnd', { periodEnd })
-      .getRawOne<{ total: string }>();
+      .andWhere('transaction.transactionDate < :periodEnd', { periodEnd });
 
+    // Pessimistic lock: serializa lecturas concurrentes dentro de la transacción DB
+    if (queryRunner) {
+      qb.setLock('pessimistic_write');
+    }
+
+    const raw = await qb.getRawOne<{ total: string }>();
     return Number(raw?.total ?? 0);
   }
 

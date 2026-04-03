@@ -11,6 +11,7 @@ import {
   NotFoundException,
   ConflictException,
   BadRequestException,
+  ParseUUIDPipe,
 } from '@nestjs/common';
 // Use cases
 import { CreateAccountUseCase } from '../../../application/use-cases/create-account.use-case';
@@ -34,6 +35,7 @@ import {
   NoTypeProvidedException,
   InvalidAccountTypeException,
   InvalidBalanceException,
+  AccountInUseException,
 } from '../../../domain/exceptions/account.exceptions';
 
 @Controller('accounts')
@@ -85,7 +87,9 @@ export class AccountsController {
   }
 
   @Get(':id')
-  async findById(@Param('id') id: string): Promise<AccountResponseDto> {
+  async findById(
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<AccountResponseDto> {
     try {
       const account = await this.getAccountByIdUseCase.execute({ id });
       return this.toResponse(account);
@@ -99,7 +103,7 @@ export class AccountsController {
 
   @Get('user/:userId')
   async findByUserId(
-    @Param('userId') userId: string,
+    @Param('userId', ParseUUIDPipe) userId: string,
   ): Promise<AccountResponseDto[]> {
     const accounts = await this.getAccountsByUserIdUseCase.execute({ userId });
     return accounts.map((a) => this.toResponse(a));
@@ -107,7 +111,7 @@ export class AccountsController {
 
   @Patch(':id/name')
   async rename(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: RenameAccountDto,
   ): Promise<AccountResponseDto> {
     try {
@@ -128,7 +132,9 @@ export class AccountsController {
   }
 
   @Patch(':id/archive')
-  async archive(@Param('id') id: string): Promise<AccountResponseDto> {
+  async archive(
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<AccountResponseDto> {
     try {
       const account = await this.archiveAccountUseCase.execute({ id });
       return this.toResponse(account);
@@ -144,7 +150,9 @@ export class AccountsController {
   }
 
   @Patch(':id/unarchive')
-  async unarchive(@Param('id') id: string): Promise<AccountResponseDto> {
+  async unarchive(
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<AccountResponseDto> {
     try {
       const account = await this.unarchiveAccountUseCase.execute({ id });
       return this.toResponse(account);
@@ -161,12 +169,15 @@ export class AccountsController {
 
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
-  async delete(@Param('id') id: string): Promise<void> {
+  async delete(@Param('id', ParseUUIDPipe) id: string): Promise<void> {
     try {
       await this.deleteAccountUseCase.execute({ id });
     } catch (e) {
       if (e instanceof AccountNotFoundException) {
         throw new NotFoundException(e.message);
+      }
+      if (e instanceof AccountInUseException) {
+        throw new ConflictException(e.message);
       }
       throw e;
     }

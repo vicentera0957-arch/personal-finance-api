@@ -2,11 +2,11 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 // ORM Entity
-import { AccountOrmEntity } from './infrastructure/persistance/account.orm.entity';
+import { AccountOrmEntity } from './infrastructure/persistence/account.orm.entity';
 
 // Infrastructure
-import { AccountRepositoryImpl } from './infrastructure/persistance/account.repo.implement';
-import { AccountMapper } from './infrastructure/persistance/account.mapper';
+import { AccountRepositoryImpl } from './infrastructure/persistence/account.repo.implement';
+import { AccountMapper } from './infrastructure/persistence/account.mapper';
 import { AccountsController } from './infrastructure/http/accounts-controller/accounts.controller';
 
 // Domain
@@ -49,7 +49,6 @@ import { UpdateAccountBalanceUseCase } from './application/use-cases/update-acco
     GetAccountByIdUseCase,
     GetAccountsByUserIdUseCase,
     UpdateAccountBalanceUseCase,
-    IAccountRepository,
   ],
 })
 export class AccountsModule {}

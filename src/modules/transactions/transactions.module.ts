@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 // ORM Entity
@@ -11,6 +11,8 @@ import { TransactionsController } from './infrastructure/http/transactions-contr
 
 // Domain
 import { ITransactionRepository } from './domain/repository/transaction.repository';
+import { IExpenseChecker } from '../budgets/domain/repository/expense-checker.port';
+import { ExpenseCheckerImpl } from './infrastructure/persistence/expense-checker.implement';
 
 // Use Cases
 import { CreateTransactionUseCase } from './application/use-cases/create-transaction.use-case';
@@ -27,9 +29,9 @@ import { BudgetsModule } from '../budgets/budgets.module';
 @Module({
   imports: [
     TypeOrmModule.forFeature([TransactionOrmEntity]),
-    AccountsModule,    // provee GetAccountByIdUseCase + IAccountRepository
-    CategoriesModule,  // provee GetCategoryByIdUseCase
-    BudgetsModule,     // provee GetBudgetByUserCategoryPeriodUseCase
+    AccountsModule, // provee GetAccountByIdUseCase + IAccountRepository
+    CategoriesModule, // provee GetCategoryByIdUseCase
+    forwardRef(() => BudgetsModule), // provee GetBudgetByUserCategoryPeriodUseCase
   ],
   controllers: [TransactionsController],
   providers: [
@@ -48,6 +50,11 @@ import { BudgetsModule } from '../budgets/budgets.module';
       provide: ITransactionRepository,
       useClass: TransactionRepositoryImpl,
     },
+    {
+      provide: IExpenseChecker,
+      useClass: ExpenseCheckerImpl,
+    },
   ],
+  exports: [IExpenseChecker],
 })
 export class TransactionsModule {}

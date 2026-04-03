@@ -4,7 +4,10 @@ import {
   Column,
   CreateDateColumn,
   UpdateDateColumn,
+  ManyToOne,
+  JoinColumn,
 } from 'typeorm';
+import { UserOrmEntity } from '../../../users/infrastructure/persistence/user.orm.entity';
 
 @Entity('accounts')
 export class AccountOrmEntity {
@@ -13,6 +16,14 @@ export class AccountOrmEntity {
 
   @Column({ name: 'user_id' })
   userId: string;
+
+  @ManyToOne(() => UserOrmEntity, {
+    onDelete: 'CASCADE',
+    nullable: false,
+    createForeignKeyConstraints: true,
+  })
+  @JoinColumn({ name: 'user_id' })
+  user?: UserOrmEntity;
 
   @Column()
   name: string;

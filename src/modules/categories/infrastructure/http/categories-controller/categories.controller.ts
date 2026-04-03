@@ -26,6 +26,7 @@ import { CategoryResponseDto } from '../dto/category-response.dto';
 // Dominio
 import { Category } from '../../../domain/entities/category.entity';
 import {
+  CategoryBudgetableImmutableException,
   CategoryNotFoundException,
   CategoryInUseException,
   DuplicateCategoryException,
@@ -90,13 +91,14 @@ export class CategoriesController {
   async findByUserId(
     @Param('userId', ParseUUIDPipe) userId: string,
   ): Promise<CategoryResponseDto[]> {
-    const categories =
-      await this.getCategoriesByUserIdUseCase.execute(userId);
+    const categories = await this.getCategoriesByUserIdUseCase.execute(userId);
     return categories.map((c) => this.toResponse(c));
   }
 
   @Get(':id')
-  async findById(@Param('id', ParseUUIDPipe) id: string): Promise<CategoryResponseDto> {
+  async findById(
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<CategoryResponseDto> {
     try {
       const category = await this.getCategoryByIdUseCase.execute(id);
       return this.toResponse(category);
@@ -132,6 +134,9 @@ export class CategoriesController {
       }
       if (e instanceof CategoryNotFoundException) {
         throw new NotFoundException(e.message);
+      }
+      if (e instanceof CategoryBudgetableImmutableException) {
+        throw new ConflictException(e.message);
       }
       throw e;
     }

@@ -5,6 +5,7 @@ import { IAccountRepository } from '../../domain/repository/accounts.repository'
 import { Account } from '../../domain/entities/account.entity';
 import { AccountOrmEntity } from './account.orm.entity';
 import { AccountMapper } from './account.mapper';
+import { AccountInUseException } from '../../domain/exceptions/account.exceptions';
 
 @Injectable()
 export class AccountRepositoryImpl extends IAccountRepository {
@@ -40,6 +41,13 @@ export class AccountRepositoryImpl extends IAccountRepository {
   }
 
   async delete(id: string): Promise<void> {
-    await this.ormRepository.delete(id);
+    try {
+      await this.ormRepository.delete(id);
+    } catch (err: unknown) {
+      if (err instanceof Object && 'code' in err && err.code === '23503') {
+        throw new AccountInUseException(id);
+      }
+      throw err;
+    }
   }
 }

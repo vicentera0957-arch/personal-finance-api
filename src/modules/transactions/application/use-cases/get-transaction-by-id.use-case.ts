@@ -5,9 +5,7 @@ import { TransactionNotFoundException } from '../../domain/exceptions/transactio
 
 @Injectable()
 export class GetTransactionByIdUseCase {
-  constructor(
-    private readonly transactionRepository: ITransactionRepository,
-  ) {}
+  constructor(private readonly transactionRepository: ITransactionRepository) {}
 
   async execute(id: string): Promise<Transaction> {
     const transaction = await this.transactionRepository.findById(id);

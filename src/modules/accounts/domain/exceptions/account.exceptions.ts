@@ -82,3 +82,11 @@ export class NoTypeProvidedException extends AccountException {
     super('El tipo de cuenta es requerido');
   }
 }
+
+export class AccountInUseException extends AccountException {
+  constructor(id: string) {
+    super(
+      `No se puede eliminar la cuenta ${id} porque tiene transacciones asociadas`,
+    );
+  }
+}

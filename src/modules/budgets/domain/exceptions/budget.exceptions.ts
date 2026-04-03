@@ -22,3 +22,63 @@ export class InvalidBudgetYearException extends BudgetException {
     super(`Anio de presupuesto invalido: ${year}. Debe ser un entero positivo`);
   }
 }
+
+export class BudgetNotFoundException extends BudgetException {
+  constructor(id: string) {
+    super(`Presupuesto no encontrado: ${id}`);
+  }
+}
+
+export class BudgetAlreadyExistsException extends BudgetException {
+  constructor(userId: string, categoryId: string, month: number, year: number) {
+    super(
+      `Ya existe un presupuesto para user=${userId}, category=${categoryId}, periodo=${month}/${year}`,
+    );
+  }
+}
+
+export class BudgetCategoryMustBeExpenseException extends BudgetException {
+  constructor(categoryId: string, nature: string) {
+    super(
+      `La categoria ${categoryId} tiene naturaleza ${nature}. Solo se permite presupuesto para categorias expense`,
+    );
+  }
+}
+
+export class CategoryNotBudgetableForBudgetException extends BudgetException {
+  constructor(categoryId: string) {
+    super(
+      `La categoria ${categoryId} no es presupuestable y no puede asociarse a un presupuesto`,
+    );
+  }
+}
+
+export class BudgetRequiredForExpenseTransactionException extends BudgetException {
+  constructor(categoryId: string, month: number, year: number) {
+    super(
+      `No existe presupuesto mensual para la categoria ${categoryId} en el periodo ${month}/${year}`,
+    );
+  }
+}
+
+export class BudgetHasTransactionsInPeriodException extends BudgetException {
+  constructor(id: string, month: number, year: number) {
+    super(
+      `No se puede eliminar el presupuesto ${id} porque existen transacciones de gasto en el periodo ${month}/${year}`,
+    );
+  }
+}
+
+export class BudgetLimitExceededException extends BudgetException {
+  constructor(
+    categoryId: string,
+    month: number,
+    year: number,
+    limit: number,
+    projectedSpent: number,
+  ) {
+    super(
+      `Limite de presupuesto excedido para categoria ${categoryId} en ${month}/${year}. Limite=${limit}, gasto proyectado=${projectedSpent}`,
+    );
+  }
+}
