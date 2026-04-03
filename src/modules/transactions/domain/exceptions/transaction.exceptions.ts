@@ -31,3 +31,27 @@ export class IncompatibleCategoryNatureException extends TransactionException {
     );
   }
 }
+
+// ============================================
+// Value Object Exceptions
+// ============================================
+
+export class InvalidAmountException extends TransactionException {
+  constructor(message: string) {
+    super(`Monto inválido: ${message}`);
+  }
+}
+
+export class EmptyTransactionNatureException extends TransactionException {
+  constructor() {
+    super('La naturaleza de la transacción no puede estar vacía');
+  }
+}
+
+export class InvalidTransactionNatureException extends TransactionException {
+  constructor(value: string) {
+    super(
+      `Naturaleza de transacción inválida: "${value}". Valores válidos: income | expense`,
+    );
+  }
+}

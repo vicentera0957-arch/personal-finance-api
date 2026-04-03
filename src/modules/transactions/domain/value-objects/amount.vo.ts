@@ -1,8 +1,7 @@
+import { InvalidAmountException } from '../exceptions/transaction.exceptions';
+
 // VO que encapsula el monto de una transacción en CLP.
-// Diferencias con Balance (accounts):
-//   - Amount > 0 estrictamente (R4: el monto debe ser positivo)
-//   - Balance >= 0 (puede ser cero)
-// Ver notas.md para la justificación de mantener VOs separados.
+// Amount > 0 estrictamente (R4). Balance (accounts) >= 0.
 export class Amount {
   private readonly value: number;
 
@@ -12,13 +11,15 @@ export class Amount {
 
   static create(amount: number): Amount {
     if (!Number.isFinite(amount)) {
-      throw new Error('El monto debe ser un número finito');
+      throw new InvalidAmountException('debe ser un número finito');
     }
     if (!Number.isInteger(amount)) {
-      throw new Error('El monto debe ser un número entero (CLP sin decimales)');
+      throw new InvalidAmountException(
+        'debe ser un número entero (CLP sin decimales)',
+      );
     }
     if (amount <= 0) {
-      throw new Error('El monto debe ser mayor a cero (R4)');
+      throw new InvalidAmountException('debe ser mayor a cero');
     }
     return new Amount(amount);
   }

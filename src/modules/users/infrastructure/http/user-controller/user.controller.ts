@@ -12,6 +12,7 @@ import {
   NotFoundException,
   ConflictException,
   BadRequestException,
+  ParseUUIDPipe,
 } from '@nestjs/common';
 //use cases
 import { CreateUserUseCase } from '../../../application/use-cases/create-user.use-case';
@@ -34,17 +35,13 @@ import {
 @Controller('users')
 export class UsersController {
   constructor(
-    //inyectamos los casos de uso necesarios para las operaciones del controlador
     private readonly createUserUseCase: CreateUserUseCase,
     private readonly getUserByIdUseCase: GetUserByIdUseCase,
     private readonly updateUserProfileUseCase: UpdateUserProfileUseCase,
     private readonly deleteUserUseCase: DeleteUserUseCase,
   ) {}
 
-  // Convierte la entidad User a UserResponseDto
-  // Método privado porque solo el controlador necesita hacer esta conversión
   private toResponse(user: User): UserResponseDto {
-    // Se usa para validar la salida
     const dto = new UserResponseDto();
     dto.id = user.id;
     dto.email = user.email.getValue();
@@ -58,7 +55,6 @@ export class UsersController {
   async create(@Body() dto: CreateUserDto): Promise<UserResponseDto> {
     try {
       const user = await this.createUserUseCase.execute({
-        // pide el objeto dto con los datos necesarios para crear el usuario, el use case se encarga de validar y manipular esos datos usando los value objects y la logica de negocio, y devuelve la entidad User creada, que el controlador convierte a UserResponseDto para devolver al cliente. El controlador no conoce la logica de negocio ni la implementacion concreta del repo ni del vo, solo conoce las interfaces y los DTOs.
         email: dto.email,
         password: dto.password,
         name: dto.name,
@@ -79,7 +75,7 @@ export class UsersController {
   }
 
   @Get(':id')
-  async findById(@Param('id') id: string): Promise<UserResponseDto> {
+  async findById(@Param('id', ParseUUIDPipe) id: string): Promise<UserResponseDto> {
     try {
       const user = await this.getUserByIdUseCase.execute({ id });
       return this.toResponse(user);
@@ -93,7 +89,7 @@ export class UsersController {
 
   @Patch(':id/profile')
   async updateProfile(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateUserProfileDto,
   ): Promise<UserResponseDto> {
     try {
@@ -115,7 +111,7 @@ export class UsersController {
 
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT) // 204 — delete exitoso no devuelve body
-  async delete(@Param('id') id: string): Promise<void> {
+  async delete(@Param('id', ParseUUIDPipe) id: string): Promise<void> {
     try {
       await this.deleteUserUseCase.execute({ id });
     } catch (e) {

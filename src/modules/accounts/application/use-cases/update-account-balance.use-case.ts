@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { QueryRunner } from 'typeorm';
+import { QueryRunner } from 'typeorm'; // TODO(tech-debt): abstraer con IUnitOfWork
 import { IAccountRepository } from '../../domain/repository/accounts.repository';
 import { Balance } from '../../domain/value-objects/balance.vo';
 import { Account } from '../../domain/entities/account.entity';

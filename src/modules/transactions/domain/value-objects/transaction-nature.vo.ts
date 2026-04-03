@@ -1,6 +1,10 @@
-// VO que encapsula la naturaleza de una transacción: income o expense.
-// VO separado de CategoryNature — ver notas.md para la justificación de la duplicación.
-// No incluye 'transfer' porque las transferencias son una tabla/entidad aparte.
+import {
+  EmptyTransactionNatureException,
+  InvalidTransactionNatureException,
+} from '../exceptions/transaction.exceptions';
+
+// VO: naturaleza de transacción (income | expense).
+// Separado de CategoryNature — ver notas.md.
 export class TransactionNature {
   private readonly value: string;
 
@@ -16,15 +20,13 @@ export class TransactionNature {
 
   static create(value: string): TransactionNature {
     if (!value || value.trim().length === 0) {
-      throw new Error('La naturaleza de la transacción no puede estar vacía');
+      throw new EmptyTransactionNatureException();
     }
 
     const normalizado = value.trim().toLowerCase();
 
     if (!this.valoresValidos.includes(normalizado)) {
-      throw new Error(
-        `La naturaleza de la transacción debe ser: ${this.valoresValidos.join(' | ')}`,
-      );
+      throw new InvalidTransactionNatureException(value);
     }
 
     return new TransactionNature(normalizado);

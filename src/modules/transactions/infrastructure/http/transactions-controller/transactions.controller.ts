@@ -12,6 +12,7 @@ import {
   ConflictException,
   UnprocessableEntityException,
   BadRequestException,
+  ParseUUIDPipe,
 } from '@nestjs/common';
 // Use cases
 import { CreateTransactionUseCase } from '../../../application/use-cases/create-transaction.use-case';
@@ -29,6 +30,9 @@ import {
   TransactionNotFoundException,
   CannotDeleteTransactionException,
   IncompatibleCategoryNatureException,
+  InvalidAmountException,
+  EmptyTransactionNatureException,
+  InvalidTransactionNatureException,
 } from '../../../domain/exceptions/transaction.exceptions';
 import {
   BudgetLimitExceededException,
@@ -36,8 +40,11 @@ import {
   CategoryNotBudgetableForBudgetException,
 } from '../../../../budgets/domain/exceptions/budget.exceptions';
 // Excepciones de módulos vecinos (mapeadas aquí)
-import { AccountNotFoundException } from '../../../../accounts/domain/exceptions/account.exceptions';
-import { InsufficientFundsException } from '../../../../accounts/domain/exceptions/account.exceptions';
+import {
+  AccountNotFoundException,
+  InsufficientFundsException,
+  CannotOperateOnArchivedAccountException,
+} from '../../../../accounts/domain/exceptions/account.exceptions';
 import { CategoryNotFoundException } from '../../../../categories/domain/exceptions/category.exceptions';
 
 @Controller('transactions')
@@ -87,6 +94,13 @@ export class TransactionsController {
       if (e instanceof CategoryNotFoundException) {
         throw new NotFoundException(e.message);
       }
+      if (
+        e instanceof InvalidAmountException ||
+        e instanceof EmptyTransactionNatureException ||
+        e instanceof InvalidTransactionNatureException
+      ) {
+        throw new BadRequestException(e.message);
+      }
       if (e instanceof IncompatibleCategoryNatureException) {
         throw new BadRequestException(e.message);
       }
@@ -102,13 +116,16 @@ export class TransactionsController {
       if (e instanceof InsufficientFundsException) {
         throw new UnprocessableEntityException(e.message);
       }
+      if (e instanceof CannotOperateOnArchivedAccountException) {
+        throw new ConflictException(e.message);
+      }
       throw e;
     }
   }
 
   @Get('user/:userId')
   async findByUserId(
-    @Param('userId') userId: string,
+    @Param('userId', ParseUUIDPipe) userId: string,
     @Query() query: GetTransactionsQueryDto,
   ): Promise<TransactionResponseDto[]> {
     const offset =
@@ -127,7 +144,7 @@ export class TransactionsController {
 
   @Get('account/:accountId')
   async findByAccountId(
-    @Param('accountId') accountId: string,
+    @Param('accountId', ParseUUIDPipe) accountId: string,
     @Query() query: GetTransactionsQueryDto,
   ): Promise<TransactionResponseDto[]> {
     const offset =
@@ -145,7 +162,9 @@ export class TransactionsController {
   }
 
   @Get(':id')
-  async findById(@Param('id') id: string): Promise<TransactionResponseDto> {
+  async findById(
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<TransactionResponseDto> {
     try {
       const transaction = await this.getTransactionByIdUseCase.execute(id);
       return this.toResponse(transaction);
@@ -159,7 +178,7 @@ export class TransactionsController {
 
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
-  async delete(@Param('id') id: string): Promise<void> {
+  async delete(@Param('id', ParseUUIDPipe) id: string): Promise<void> {
     try {
       await this.deleteTransactionUseCase.execute(id);
     } catch (e) {
@@ -170,6 +189,9 @@ export class TransactionsController {
         throw new NotFoundException(e.message);
       }
       if (e instanceof CannotDeleteTransactionException) {
+        throw new ConflictException(e.message);
+      }
+      if (e instanceof CannotOperateOnArchivedAccountException) {
         throw new ConflictException(e.message);
       }
       throw e;
