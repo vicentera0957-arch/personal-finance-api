@@ -23,11 +23,7 @@ import { JwtAuthGuard } from './infrastructure/guards/jwt-auth.guard';
 import { AuthController } from './infrastructure/http/auth-controller/auth.controller';
 
 @Module({
-  imports: [
-    UsersModule,
-    PassportModule,
-    JwtModule.register({}),
-  ],
+  imports: [UsersModule, PassportModule, JwtModule.register({})],
   controllers: [AuthController],
   providers: [
     // Use cases

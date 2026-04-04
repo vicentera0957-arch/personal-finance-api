@@ -1,6 +1,10 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
-import { ITokenProvider, TokenPair } from '../../domain/ports/token-provider.port';
+import {
+  ITokenProvider,
+  TokenPair,
+} from '../../domain/ports/token-provider.port';
 
 interface JwtPayload {
   sub: string;
@@ -9,18 +13,27 @@ interface JwtPayload {
 
 @Injectable()
 export class JwtTokenProvider extends ITokenProvider {
-  constructor(private readonly jwtService: JwtService) {
+  private readonly jwtSecret: string;
+  private readonly jwtRefreshSecret: string;
+
+  constructor(
+    private readonly jwtService: JwtService,
+    configService: ConfigService,
+  ) {
     super();
+    this.jwtSecret = configService.getOrThrow<string>('JWT_SECRET');
+    this.jwtRefreshSecret =
+      configService.getOrThrow<string>('JWT_REFRESH_SECRET');
   }
 
   async generateTokens(payload: JwtPayload): Promise<TokenPair> {
     const [accessToken, refreshToken] = await Promise.all([
       this.jwtService.signAsync(payload, {
-        secret: process.env.JWT_SECRET,
+        secret: this.jwtSecret,
         expiresIn: '15m',
       }),
       this.jwtService.signAsync(payload, {
-        secret: process.env.JWT_REFRESH_SECRET,
+        secret: this.jwtRefreshSecret,
         expiresIn: '7d',
       }),
     ]);
@@ -30,7 +43,7 @@ export class JwtTokenProvider extends ITokenProvider {
   async verifyAccessToken(token: string): Promise<JwtPayload> {
     try {
       return await this.jwtService.verifyAsync<JwtPayload>(token, {
-        secret: process.env.JWT_SECRET,
+        secret: this.jwtSecret,
       });
     } catch {
       throw new UnauthorizedException('Invalid or expired access token');
@@ -40,7 +53,7 @@ export class JwtTokenProvider extends ITokenProvider {
   async verifyRefreshToken(token: string): Promise<JwtPayload> {
     try {
       return await this.jwtService.verifyAsync<JwtPayload>(token, {
-        secret: process.env.JWT_REFRESH_SECRET,
+        secret: this.jwtRefreshSecret,
       });
     } catch {
       throw new UnauthorizedException('Invalid or expired refresh token');

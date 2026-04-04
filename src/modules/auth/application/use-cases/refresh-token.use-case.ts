@@ -1,5 +1,8 @@
 import { Injectable } from '@nestjs/common';
-import { ITokenProvider, TokenPair } from '../../domain/ports/token-provider.port';
+import {
+  ITokenProvider,
+  TokenPair,
+} from '../../domain/ports/token-provider.port';
 
 @Injectable()
 export class RefreshTokenUseCase {

@@ -8,6 +8,10 @@ export abstract class ITokenProvider {
     sub: string;
     email: string;
   }): Promise<TokenPair>;
-  abstract verifyAccessToken(token: string): Promise<{ sub: string; email: string }>;
-  abstract verifyRefreshToken(token: string): Promise<{ sub: string; email: string }>;
+  abstract verifyAccessToken(
+    token: string,
+  ): Promise<{ sub: string; email: string }>;
+  abstract verifyRefreshToken(
+    token: string,
+  ): Promise<{ sub: string; email: string }>;
 }

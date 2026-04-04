@@ -1,6 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import { CreateUserUseCase } from '../../../users/application/use-cases/create-user.use-case';
-import { ITokenProvider, TokenPair } from '../../domain/ports/token-provider.port';
+import {
+  ITokenProvider,
+  TokenPair,
+} from '../../domain/ports/token-provider.port';
 
 export interface RegisterDto {
   name: string;
