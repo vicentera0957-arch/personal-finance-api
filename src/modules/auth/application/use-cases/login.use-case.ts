@@ -1,11 +1,11 @@
 import { Injectable } from '@nestjs/common';
-import { GetUserByEmailUseCase } from '../../../users/application/use-cases/get-user-by-email.use-case';
+import { GetUserByEmailUseCase } from '../../../users/application/use-cases/get-user-by-email.use-case'; // auth depends on users — intentional. auth is always above users in the hierarchy.
 import { IPasswordHasher } from '../../domain/ports/password-hasher.port';
 import {
   ITokenProvider,
   TokenPair,
 } from '../../domain/ports/token-provider.port';
-import { InvalidCredentialsException } from '../../../users/domain/exceptions/user.exceptions';
+import { InvalidCredentialsException } from '../../domain/exceptions/auth.exceptions';
 
 export interface LoginDto {
   email: string;

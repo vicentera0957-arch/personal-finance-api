@@ -22,12 +22,6 @@ export class UserAlreadyExistsException extends UserException {
   }
 }
 
-export class InvalidCredentialsException extends UserException {
-  constructor() {
-    super('Las credenciales proporcionadas son inválidas');
-  }
-}
-
 // ============================================
 // Value Object Exceptions
 // ============================================

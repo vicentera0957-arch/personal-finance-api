@@ -1,7 +1,6 @@
 // users.controller.ts
 import {
   Controller,
-  Post,
   Get,
   Patch,
   Delete,
@@ -10,32 +9,25 @@ import {
   HttpCode,
   HttpStatus,
   NotFoundException,
-  ConflictException,
   BadRequestException,
   ParseUUIDPipe,
 } from '@nestjs/common';
 //use cases
-import { CreateUserUseCase } from '../../../application/use-cases/create-user.use-case';
 import { GetUserByIdUseCase } from '../../../application/use-cases/get-user-by-id.use-case';
 import { UpdateUserProfileUseCase } from '../../../application/use-cases/update-user-profile.use-case';
 import { DeleteUserUseCase } from '../../../application/use-cases/delete-user.use-case';
-import { CreateUserDto } from '../dto/create-user.dto';
 import { UpdateUserProfileDto } from '../dto/update-user-profile.dto';
 import { UserResponseDto } from '../dto/user-response.dto';
 // Dominio
 import { User } from '../../../domain/entities/user.entity';
 import {
   UserNotFoundException,
-  UserAlreadyExistsException,
-  InvalidEmailFormatException,
-  EmptyEmailException,
   InvalidNameException,
 } from '../../../domain/exceptions/user.exceptions';
 
 @Controller('users')
 export class UsersController {
   constructor(
-    private readonly createUserUseCase: CreateUserUseCase,
     private readonly getUserByIdUseCase: GetUserByIdUseCase,
     private readonly updateUserProfileUseCase: UpdateUserProfileUseCase,
     private readonly deleteUserUseCase: DeleteUserUseCase,
@@ -51,31 +43,10 @@ export class UsersController {
     return dto;
   }
 
-  @Post()
-  async create(@Body() dto: CreateUserDto): Promise<UserResponseDto> {
-    try {
-      const user = await this.createUserUseCase.execute({
-        email: dto.email,
-        password: dto.password,
-        name: dto.name,
-      });
-      return this.toResponse(user);
-    } catch (e) {
-      if (e instanceof UserAlreadyExistsException) {
-        throw new ConflictException(e.message); // 409
-      }
-      if (
-        e instanceof InvalidEmailFormatException ||
-        e instanceof EmptyEmailException
-      ) {
-        throw new BadRequestException(e.message); // 400
-      }
-      throw e;
-    }
-  }
-
   @Get(':id')
-  async findById(@Param('id', ParseUUIDPipe) id: string): Promise<UserResponseDto> {
+  async findById(
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<UserResponseDto> {
     try {
       const user = await this.getUserByIdUseCase.execute({ id });
       return this.toResponse(user);

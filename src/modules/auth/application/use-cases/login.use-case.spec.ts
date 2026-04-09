@@ -4,10 +4,8 @@ import { IPasswordHasher } from '../../domain/ports/password-hasher.port';
 import { ITokenProvider } from '../../domain/ports/token-provider.port';
 import { User } from '../../../users/domain/entities/user.entity';
 import { Email } from '../../../users/domain/value-objects/email.vo';
-import {
-  InvalidCredentialsException,
-  UserNotFoundException,
-} from '../../../users/domain/exceptions/user.exceptions';
+import { InvalidCredentialsException } from '../../domain/exceptions/auth.exceptions';
+import { UserNotFoundException } from '../../../users/domain/exceptions/user.exceptions';
 
 describe('LoginUseCase', () => {
   let loginUseCase: LoginUseCase;

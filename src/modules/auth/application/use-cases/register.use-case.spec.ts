@@ -1,5 +1,6 @@
 import { RegisterUseCase } from './register.use-case';
 import { CreateUserUseCase } from '../../../users/application/use-cases/create-user.use-case';
+import { IPasswordHasher } from '../../domain/ports/password-hasher.port';
 import { ITokenProvider } from '../../domain/ports/token-provider.port';
 import { User } from '../../../users/domain/entities/user.entity';
 import { Email } from '../../../users/domain/value-objects/email.vo';
@@ -8,6 +9,7 @@ import { UserAlreadyExistsException } from '../../../users/domain/exceptions/use
 describe('RegisterUseCase', () => {
   let registerUseCase: RegisterUseCase;
   let createUser: jest.Mocked<CreateUserUseCase>;
+  let passwordHasher: jest.Mocked<IPasswordHasher>;
   let tokenProvider: jest.Mocked<ITokenProvider>;
 
   const mockUser = User.reconstitute({
@@ -29,13 +31,18 @@ describe('RegisterUseCase', () => {
       execute: jest.fn(),
     } as unknown as jest.Mocked<CreateUserUseCase>;
 
+    passwordHasher = {
+      hash: jest.fn().mockResolvedValue('hashed-password'),
+      compare: jest.fn(),
+    };
+
     tokenProvider = {
       generateTokens: jest.fn(),
       verifyAccessToken: jest.fn(),
       verifyRefreshToken: jest.fn(),
     };
 
-    registerUseCase = new RegisterUseCase(createUser, tokenProvider);
+    registerUseCase = new RegisterUseCase(createUser, passwordHasher, tokenProvider);
   });
 
   it('should create user and return tokens', async () => {
@@ -49,10 +56,11 @@ describe('RegisterUseCase', () => {
     });
 
     expect(result).toEqual(mockTokenPair);
+    expect(passwordHasher.hash).toHaveBeenCalledWith('secure-password');
     expect(createUser.execute).toHaveBeenCalledWith({
       name: 'New User',
       email: 'new@example.com',
-      password: 'secure-password',
+      passwordHash: 'hashed-password',
     });
     expect(tokenProvider.generateTokens).toHaveBeenCalledWith({
       sub: 'user-uuid',

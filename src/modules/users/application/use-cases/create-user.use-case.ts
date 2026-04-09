@@ -3,12 +3,11 @@ import { IUserRepository } from '../../domain/repository/user.repository';
 import { User } from '../../domain/entities/user.entity';
 import { Email } from '../../domain/value-objects/email.vo';
 import { UserAlreadyExistsException } from '../../domain/exceptions/user.exceptions';
-import * as bcrypt from 'bcrypt';
 import { randomUUID } from 'crypto';
 
 interface CreateUserDto {
   email: string;
-  password: string;
+  passwordHash: string;
   name: string;
 }
 
@@ -25,13 +24,10 @@ export class CreateUserUseCase {
       throw new UserAlreadyExistsException(email.getValue());
     }
 
-    // TODO(tech-debt): abstraer bcrypt con IPasswordHasher
-    const passwordHash = await bcrypt.hash(dto.password, 10);
-
     const user = User.create({
       id: randomUUID(),
       email,
-      passwordHash,
+      passwordHash: dto.passwordHash,
       name: dto.name,
     });
 

@@ -13,10 +13,10 @@ import { RegisterDto } from '../dto/register.dto';
 import { RefreshTokenDto } from '../dto/refresh-token.dto';
 import { Public } from '../../decorators/public.decorator';
 import {
-  InvalidCredentialsException,
   UserAlreadyExistsException,
   UserNotFoundException,
 } from '../../../../users/domain/exceptions/user.exceptions';
+import { InvalidCredentialsException } from '../../../domain/exceptions/auth.exceptions';
 
 @Controller('auth')
 export class AuthController {

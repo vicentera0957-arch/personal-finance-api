@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { CreateUserUseCase } from '../../../users/application/use-cases/create-user.use-case';
+import { IPasswordHasher } from '../../domain/ports/password-hasher.port';
 import {
   ITokenProvider,
   TokenPair,
@@ -15,14 +16,17 @@ export interface RegisterDto {
 export class RegisterUseCase {
   constructor(
     private readonly createUser: CreateUserUseCase,
+    private readonly passwordHasher: IPasswordHasher,
     private readonly tokenProvider: ITokenProvider,
   ) {}
 
   async execute(dto: RegisterDto): Promise<TokenPair> {
+    const passwordHash = await this.passwordHasher.hash(dto.password);
+
     const user = await this.createUser.execute({
       name: dto.name,
       email: dto.email,
-      password: dto.password,
+      passwordHash,
     });
 
     return this.tokenProvider.generateTokens({
