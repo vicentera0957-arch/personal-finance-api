@@ -10,6 +10,7 @@ interface UpdateCategoryCommand {
   isBudgetable?: boolean;
   color?: string;
   icon?: string;
+  requestUserId: string;
 }
 
 @Injectable()
@@ -20,7 +21,10 @@ export class UpdateCategoryUseCase {
   ) {}
 
   async execute(command: UpdateCategoryCommand): Promise<Category> {
-    const category = await this.getCategoryByIdUseCase.execute(command.id);
+    const category = await this.getCategoryByIdUseCase.execute(
+      command.id,
+      command.requestUserId,
+    );
 
     // Solo aplica el método si el campo fue enviado en la petición
     if (command.name !== undefined) {

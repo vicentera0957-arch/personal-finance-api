@@ -10,8 +10,11 @@ import {
   HttpStatus,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
   ParseUUIDPipe,
 } from '@nestjs/common';
+import { CurrentUser } from '../../../../auth/infrastructure/decorators/current-user.decorator';
+import type { AuthenticatedUser } from '../../../../auth/infrastructure/decorators/current-user.decorator';
 //use cases
 import { GetUserByIdUseCase } from '../../../application/use-cases/get-user-by-id.use-case';
 import { UpdateUserProfileUseCase } from '../../../application/use-cases/update-user-profile.use-case';
@@ -24,6 +27,7 @@ import {
   UserNotFoundException,
   InvalidNameException,
 } from '../../../domain/exceptions/user.exceptions';
+import { ResourceOwnershipException } from '../../../../../shared/domain/exceptions/resource-ownership.exception';
 
 @Controller('users')
 export class UsersController {
@@ -46,13 +50,20 @@ export class UsersController {
   @Get(':id')
   async findById(
     @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: AuthenticatedUser,
   ): Promise<UserResponseDto> {
     try {
-      const user = await this.getUserByIdUseCase.execute({ id });
-      return this.toResponse(user);
+      const foundUser = await this.getUserByIdUseCase.execute({
+        id,
+        requestUserId: user.userId,
+      });
+      return this.toResponse(foundUser);
     } catch (e) {
       if (e instanceof UserNotFoundException) {
         throw new NotFoundException(e.message); // 404
+      }
+      if (e instanceof ResourceOwnershipException) {
+        throw new ForbiddenException(e.message); // 403
       }
       throw e;
     }
@@ -62,16 +73,21 @@ export class UsersController {
   async updateProfile(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateUserProfileDto,
+    @CurrentUser() user: AuthenticatedUser,
   ): Promise<UserResponseDto> {
     try {
-      const user = await this.updateUserProfileUseCase.execute({
+      const updatedUser = await this.updateUserProfileUseCase.execute({
         id,
         name: dto.name,
+        requestUserId: user.userId,
       });
-      return this.toResponse(user);
+      return this.toResponse(updatedUser);
     } catch (e) {
       if (e instanceof UserNotFoundException) {
         throw new NotFoundException(e.message); // 404
+      }
+      if (e instanceof ResourceOwnershipException) {
+        throw new ForbiddenException(e.message); // 403
       }
       if (e instanceof InvalidNameException) {
         throw new BadRequestException(e.message); // 400
@@ -82,12 +98,21 @@ export class UsersController {
 
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT) // 204 — delete exitoso no devuelve body
-  async delete(@Param('id', ParseUUIDPipe) id: string): Promise<void> {
+  async delete(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<void> {
     try {
-      await this.deleteUserUseCase.execute({ id });
+      await this.deleteUserUseCase.execute({
+        id,
+        requestUserId: user.userId,
+      });
     } catch (e) {
       if (e instanceof UserNotFoundException) {
         throw new NotFoundException(e.message); // 404
+      }
+      if (e instanceof ResourceOwnershipException) {
+        throw new ForbiddenException(e.message); // 403
       }
       throw e;
     }

@@ -11,8 +11,11 @@ import {
   BadRequestException,
   NotFoundException,
   ConflictException,
+  ForbiddenException,
   ParseUUIDPipe,
 } from '@nestjs/common';
+import { CurrentUser } from '../../../../auth/infrastructure/decorators/current-user.decorator';
+import type { AuthenticatedUser } from '../../../../auth/infrastructure/decorators/current-user.decorator';
 // Use cases
 import { CreateCategoryUseCase } from '../../../application/use-cases/create-category.use-case';
 import { GetCategoryByIdUseCase } from '../../../application/use-cases/get-category-by-id.use-case';
@@ -34,6 +37,7 @@ import {
   InvalidCategoryColorException,
   InvalidCategoryIconException,
 } from '../../../domain/exceptions/category.exceptions';
+import { ResourceOwnershipException } from '../../../../../shared/domain/exceptions/resource-ownership.exception';
 
 @Controller('categories')
 export class CategoriesController {
@@ -61,10 +65,13 @@ export class CategoriesController {
   }
 
   @Post()
-  async create(@Body() dto: CreateCategoryDto): Promise<CategoryResponseDto> {
+  async create(
+    @Body() dto: CreateCategoryDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<CategoryResponseDto> {
     try {
       const category = await this.createCategoryUseCase.execute({
-        userId: dto.userId,
+        userId: user.userId,
         name: dto.name,
         nature: dto.nature,
         isBudgetable: dto.isBudgetable,
@@ -87,24 +94,33 @@ export class CategoriesController {
     }
   }
 
-  @Get('user/:userId')
+  @Get()
   async findByUserId(
-    @Param('userId', ParseUUIDPipe) userId: string,
+    @CurrentUser() user: AuthenticatedUser,
   ): Promise<CategoryResponseDto[]> {
-    const categories = await this.getCategoriesByUserIdUseCase.execute(userId);
+    const categories = await this.getCategoriesByUserIdUseCase.execute(
+      user.userId,
+    );
     return categories.map((c) => this.toResponse(c));
   }
 
   @Get(':id')
   async findById(
     @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: AuthenticatedUser,
   ): Promise<CategoryResponseDto> {
     try {
-      const category = await this.getCategoryByIdUseCase.execute(id);
+      const category = await this.getCategoryByIdUseCase.execute(
+        id,
+        user.userId,
+      );
       return this.toResponse(category);
     } catch (e) {
       if (e instanceof CategoryNotFoundException) {
         throw new NotFoundException(e.message);
+      }
+      if (e instanceof ResourceOwnershipException) {
+        throw new ForbiddenException(e.message);
       }
       throw e;
     }
@@ -114,6 +130,7 @@ export class CategoriesController {
   async update(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateCategoryDto,
+    @CurrentUser() user: AuthenticatedUser,
   ): Promise<CategoryResponseDto> {
     try {
       const category = await this.updateCategoryUseCase.execute({
@@ -122,6 +139,7 @@ export class CategoriesController {
         isBudgetable: dto.isBudgetable,
         color: dto.color,
         icon: dto.icon,
+        requestUserId: user.userId,
       });
       return this.toResponse(category);
     } catch (e) {
@@ -135,6 +153,9 @@ export class CategoriesController {
       if (e instanceof CategoryNotFoundException) {
         throw new NotFoundException(e.message);
       }
+      if (e instanceof ResourceOwnershipException) {
+        throw new ForbiddenException(e.message);
+      }
       if (e instanceof CategoryBudgetableImmutableException) {
         throw new ConflictException(e.message);
       }
@@ -144,12 +165,18 @@ export class CategoriesController {
 
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
-  async delete(@Param('id', ParseUUIDPipe) id: string): Promise<void> {
+  async delete(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<void> {
     try {
-      await this.deleteCategoryUseCase.execute(id);
+      await this.deleteCategoryUseCase.execute(id, user.userId);
     } catch (e) {
       if (e instanceof CategoryNotFoundException) {
         throw new NotFoundException(e.message);
+      }
+      if (e instanceof ResourceOwnershipException) {
+        throw new ForbiddenException(e.message);
       }
       if (e instanceof CategoryInUseException) {
         throw new ConflictException(e.message);

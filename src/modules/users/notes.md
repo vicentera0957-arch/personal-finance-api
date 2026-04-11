@@ -182,7 +182,6 @@ export class UsersModule {}
 
 ## Checklist de verificación
 
-- [ ] `POST /users` crea usuario y retorna `UserResponseDto` sin `passwordHash`
 - [ ] `POST /users` con email duplicado → `409 Conflict`
 - [ ] `POST /users` con email inválido → `400 Bad Request`
 - [ ] `GET /users/:id` retorna el usuario

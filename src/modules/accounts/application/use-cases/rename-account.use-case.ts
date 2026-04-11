@@ -6,6 +6,7 @@ import { GetAccountByIdUseCase } from './get-account-by-id.use-case';
 interface RenameAccountDto {
   id: string;
   name: string;
+  requestUserId: string;
 }
 
 @Injectable()
@@ -16,7 +17,10 @@ export class RenameAccountUseCase {
   ) {}
 
   async execute(dto: RenameAccountDto): Promise<Account> {
-    const account = await this.getAccountByIdUseCase.execute({ id: dto.id });
+    const account = await this.getAccountByIdUseCase.execute({
+      id: dto.id,
+      requestUserId: dto.requestUserId,
+    });
     account.rename(dto.name); // la entidad lanza AccountArchivedException si está archivada
     return this.accountRepository.save(account);
   }

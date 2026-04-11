@@ -9,9 +9,9 @@ export class DeleteCategoryUseCase {
     private readonly getCategoryByIdUseCase: GetCategoryByIdUseCase,
   ) {}
 
-  async execute(id: string): Promise<void> {
+  async execute(id: string, requestUserId: string): Promise<void> {
     // Verifica que la categoría existe antes de intentar borrarla (retorna 404 si no)
-    await this.getCategoryByIdUseCase.execute(id);
+    await this.getCategoryByIdUseCase.execute(id, requestUserId);
     await this.categoryRepository.delete(id);
   }
 }

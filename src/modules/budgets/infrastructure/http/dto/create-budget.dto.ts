@@ -3,10 +3,6 @@ import { IsInt, IsNotEmpty, IsUUID, Max, Min } from 'class-validator';
 export class CreateBudgetDto {
   @IsUUID()
   @IsNotEmpty()
-  userId: string;
-
-  @IsUUID()
-  @IsNotEmpty()
   categoryId: string;
 
   @IsInt()

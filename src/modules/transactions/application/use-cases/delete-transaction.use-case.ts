@@ -15,9 +15,12 @@ export class DeleteTransactionUseCase {
     private readonly dataSource: DataSource,
   ) {}
 
-  async execute(id: string): Promise<void> {
+  async execute(id: string, requestUserId: string): Promise<void> {
     // 1. Verifica que la transacción existe
-    const transaction = await this.getTransactionByIdUseCase.execute(id);
+    const transaction = await this.getTransactionByIdUseCase.execute(
+      id,
+      requestUserId,
+    );
 
     // 2. Revierte el efecto en balance de forma atómica
     const qr = this.dataSource.createQueryRunner();

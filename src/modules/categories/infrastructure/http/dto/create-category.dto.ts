@@ -4,16 +4,11 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
-  IsUUID,
   MaxLength,
   MinLength,
 } from 'class-validator';
 
 export class CreateCategoryDto {
-  @IsUUID()
-  @IsNotEmpty()
-  userId: string;
-
   @IsString()
   @IsNotEmpty()
   @MinLength(2)

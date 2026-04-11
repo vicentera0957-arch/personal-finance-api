@@ -28,6 +28,7 @@ export class CreateBudgetUseCase {
   async execute(command: CreateBudgetCommand): Promise<Budget> {
     const category = await this.getCategoryByIdUseCase.execute(
       command.categoryId,
+      command.userId,
     );
 
     if (category.nature.getValue() !== 'expense') {

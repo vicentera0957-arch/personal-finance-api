@@ -4,6 +4,7 @@ import {
   ConflictException,
   Controller,
   Delete,
+  ForbiddenException,
   Get,
   HttpCode,
   HttpStatus,
@@ -14,6 +15,8 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
+import { CurrentUser } from '../../../../auth/infrastructure/decorators/current-user.decorator';
+import type { AuthenticatedUser } from '../../../../auth/infrastructure/decorators/current-user.decorator';
 import { CreateBudgetUseCase } from '../../../application/use-cases/create-budget.use-case';
 import { GetBudgetByIdUseCase } from '../../../application/use-cases/get-budget-by-id.use-case';
 import { GetBudgetsByUserIdUseCase } from '../../../application/use-cases/get-budgets-by-user-id.use-case';
@@ -34,6 +37,7 @@ import {
   InvalidBudgetYearException,
 } from '../../../domain/exceptions/budget.exceptions';
 import { CategoryNotFoundException } from '../../../../categories/domain/exceptions/category.exceptions';
+import { ResourceOwnershipException } from '../../../../../shared/domain/exceptions/resource-ownership.exception';
 import { GetBudgetsQueryDto } from '../dto/get-budgets-query.dto';
 
 @Controller('budgets')
@@ -60,10 +64,13 @@ export class BudgetsController {
   }
 
   @Post()
-  async create(@Body() dto: CreateBudgetDto): Promise<BudgetResponseDto> {
+  async create(
+    @Body() dto: CreateBudgetDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<BudgetResponseDto> {
     try {
       const budget = await this.createBudgetUseCase.execute({
-        userId: dto.userId,
+        userId: user.userId,
         categoryId: dto.categoryId,
         month: dto.month,
         year: dto.year,
@@ -84,7 +91,8 @@ export class BudgetsController {
       if (
         e instanceof BudgetAlreadyExistsException ||
         e instanceof BudgetCategoryMustBeExpenseException ||
-        e instanceof CategoryNotBudgetableForBudgetException
+        e instanceof CategoryNotBudgetableForBudgetException ||
+        e instanceof ResourceOwnershipException
       ) {
         throw new ConflictException(e.message);
       }
@@ -92,47 +100,56 @@ export class BudgetsController {
     }
   }
 
-  @Get(':id')
-  async findById(
-    @Param('id', ParseUUIDPipe) id: string,
-  ): Promise<BudgetResponseDto> {
-    try {
-      const budget = await this.getBudgetByIdUseCase.execute(id);
-      return this.toResponse(budget);
-    } catch (e) {
-      if (e instanceof BudgetNotFoundException) {
-        throw new NotFoundException(e.message);
-      }
-      throw e;
-    }
-  }
-
-  @Get('user/:userId')
+  @Get()
   async findByUserId(
-    @Param('userId', ParseUUIDPipe) userId: string,
+    @CurrentUser() user: AuthenticatedUser,
     @Query() query: GetBudgetsQueryDto,
   ): Promise<BudgetResponseDto[]> {
-    const budgets = await this.getBudgetsByUserIdUseCase.execute(userId, {
+    const budgets = await this.getBudgetsByUserIdUseCase.execute(user.userId, {
       month: query.month,
       year: query.year,
     });
     return budgets.map((budget) => this.toResponse(budget));
   }
 
+  @Get(':id')
+  async findById(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<BudgetResponseDto> {
+    try {
+      const budget = await this.getBudgetByIdUseCase.execute(id, user.userId);
+      return this.toResponse(budget);
+    } catch (e) {
+      if (e instanceof BudgetNotFoundException) {
+        throw new NotFoundException(e.message);
+      }
+      if (e instanceof ResourceOwnershipException) {
+        throw new ForbiddenException(e.message);
+      }
+      throw e;
+    }
+  }
+
   @Patch(':id/limit')
   async updateLimit(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateBudgetLimitDto,
+    @CurrentUser() user: AuthenticatedUser,
   ): Promise<BudgetResponseDto> {
     try {
       const budget = await this.updateBudgetLimitUseCase.execute({
         id,
         limit: dto.limit,
+        requestUserId: user.userId,
       });
       return this.toResponse(budget);
     } catch (e) {
       if (e instanceof BudgetNotFoundException) {
         throw new NotFoundException(e.message);
+      }
+      if (e instanceof ResourceOwnershipException) {
+        throw new ForbiddenException(e.message);
       }
       if (e instanceof InvalidAmountLimitException) {
         throw new BadRequestException(e.message);
@@ -143,12 +160,18 @@ export class BudgetsController {
 
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
-  async delete(@Param('id', ParseUUIDPipe) id: string): Promise<void> {
+  async delete(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<void> {
     try {
-      await this.deleteBudgetUseCase.execute(id);
+      await this.deleteBudgetUseCase.execute(id, user.userId);
     } catch (e) {
       if (e instanceof BudgetNotFoundException) {
         throw new NotFoundException(e.message);
+      }
+      if (e instanceof ResourceOwnershipException) {
+        throw new ForbiddenException(e.message);
       }
       if (e instanceof BudgetHasTransactionsInPeriodException) {
         throw new ConflictException(e.message);

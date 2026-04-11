@@ -3,17 +3,12 @@ import {
   IsInt,
   IsNotEmpty,
   IsString,
-  IsUUID,
   MaxLength,
   Min,
   MinLength,
 } from 'class-validator';
 
 export class CreateAccountDto {
-  @IsUUID()
-  @IsNotEmpty()
-  userId: string;
-
   @IsString()
   @IsNotEmpty()
   @MinLength(2)

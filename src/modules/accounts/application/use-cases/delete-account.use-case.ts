@@ -4,6 +4,7 @@ import { GetAccountByIdUseCase } from './get-account-by-id.use-case';
 
 interface DeleteAccountDto {
   id: string;
+  requestUserId: string;
 }
 
 @Injectable()
@@ -14,7 +15,10 @@ export class DeleteAccountUseCase {
   ) {}
 
   async execute(dto: DeleteAccountDto): Promise<void> {
-    await this.getAccountByIdUseCase.execute({ id: dto.id }); // verifica que existe
+    await this.getAccountByIdUseCase.execute({
+      id: dto.id,
+      requestUserId: dto.requestUserId,
+    }); // verifica que existe
     await this.accountRepository.delete(dto.id);
   }
 }

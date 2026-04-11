@@ -12,8 +12,11 @@ import {
   ConflictException,
   UnprocessableEntityException,
   BadRequestException,
+  ForbiddenException,
   ParseUUIDPipe,
 } from '@nestjs/common';
+import { CurrentUser } from '../../../../auth/infrastructure/decorators/current-user.decorator';
+import type { AuthenticatedUser } from '../../../../auth/infrastructure/decorators/current-user.decorator';
 // Use cases
 import { CreateTransactionUseCase } from '../../../application/use-cases/create-transaction.use-case';
 import { GetTransactionByIdUseCase } from '../../../application/use-cases/get-transaction-by-id.use-case';
@@ -46,6 +49,7 @@ import {
   CannotOperateOnArchivedAccountException,
 } from '../../../../accounts/domain/exceptions/account.exceptions';
 import { CategoryNotFoundException } from '../../../../categories/domain/exceptions/category.exceptions';
+import { ResourceOwnershipException } from '../../../../../shared/domain/exceptions/resource-ownership.exception';
 
 @Controller('transactions')
 export class TransactionsController {
@@ -75,10 +79,11 @@ export class TransactionsController {
   @Post()
   async create(
     @Body() dto: CreateTransactionDto,
+    @CurrentUser() user: AuthenticatedUser,
   ): Promise<TransactionResponseDto> {
     try {
       const transaction = await this.createTransactionUseCase.execute({
-        userId: dto.userId,
+        userId: user.userId,
         accountId: dto.accountId,
         categoryId: dto.categoryId,
         nature: dto.nature,
@@ -88,50 +93,47 @@ export class TransactionsController {
       });
       return this.toResponse(transaction);
     } catch (e) {
-      if (e instanceof AccountNotFoundException) {
-        throw new NotFoundException(e.message);
-      }
-      if (e instanceof CategoryNotFoundException) {
+      if (
+        e instanceof AccountNotFoundException ||
+        e instanceof CategoryNotFoundException
+      ) {
         throw new NotFoundException(e.message);
       }
       if (
         e instanceof InvalidAmountException ||
         e instanceof EmptyTransactionNatureException ||
-        e instanceof InvalidTransactionNatureException
+        e instanceof InvalidTransactionNatureException ||
+        e instanceof IncompatibleCategoryNatureException
       ) {
-        throw new BadRequestException(e.message);
-      }
-      if (e instanceof IncompatibleCategoryNatureException) {
         throw new BadRequestException(e.message);
       }
       if (
         e instanceof BudgetRequiredForExpenseTransactionException ||
-        e instanceof CategoryNotBudgetableForBudgetException
+        e instanceof CategoryNotBudgetableForBudgetException ||
+        e instanceof CannotOperateOnArchivedAccountException ||
+        e instanceof ResourceOwnershipException
       ) {
         throw new ConflictException(e.message);
       }
-      if (e instanceof BudgetLimitExceededException) {
+      if (
+        e instanceof BudgetLimitExceededException ||
+        e instanceof InsufficientFundsException
+      ) {
         throw new UnprocessableEntityException(e.message);
-      }
-      if (e instanceof InsufficientFundsException) {
-        throw new UnprocessableEntityException(e.message);
-      }
-      if (e instanceof CannotOperateOnArchivedAccountException) {
-        throw new ConflictException(e.message);
       }
       throw e;
     }
   }
 
-  @Get('user/:userId')
+  @Get()
   async findByUserId(
-    @Param('userId', ParseUUIDPipe) userId: string,
+    @CurrentUser() user: AuthenticatedUser,
     @Query() query: GetTransactionsQueryDto,
   ): Promise<TransactionResponseDto[]> {
     const offset =
       query.page && query.limit ? (query.page - 1) * query.limit : undefined;
     const transactions = await this.getTransactionsByUserIdUseCase.execute(
-      userId,
+      user.userId,
       {
         limit: query.limit,
         offset,
@@ -145,12 +147,14 @@ export class TransactionsController {
   @Get('account/:accountId')
   async findByAccountId(
     @Param('accountId', ParseUUIDPipe) accountId: string,
+    @CurrentUser() user: AuthenticatedUser,
     @Query() query: GetTransactionsQueryDto,
   ): Promise<TransactionResponseDto[]> {
     const offset =
       query.page && query.limit ? (query.page - 1) * query.limit : undefined;
     const transactions = await this.getTransactionsByAccountIdUseCase.execute(
       accountId,
+      user.userId,
       {
         limit: query.limit,
         offset,
@@ -164,13 +168,20 @@ export class TransactionsController {
   @Get(':id')
   async findById(
     @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: AuthenticatedUser,
   ): Promise<TransactionResponseDto> {
     try {
-      const transaction = await this.getTransactionByIdUseCase.execute(id);
+      const transaction = await this.getTransactionByIdUseCase.execute(
+        id,
+        user.userId,
+      );
       return this.toResponse(transaction);
     } catch (e) {
       if (e instanceof TransactionNotFoundException) {
         throw new NotFoundException(e.message);
+      }
+      if (e instanceof ResourceOwnershipException) {
+        throw new ForbiddenException(e.message);
       }
       throw e;
     }
@@ -178,20 +189,24 @@ export class TransactionsController {
 
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
-  async delete(@Param('id', ParseUUIDPipe) id: string): Promise<void> {
+  async delete(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<void> {
     try {
-      await this.deleteTransactionUseCase.execute(id);
+      await this.deleteTransactionUseCase.execute(id, user.userId);
     } catch (e) {
-      if (e instanceof TransactionNotFoundException) {
+      if (
+        e instanceof TransactionNotFoundException ||
+        e instanceof AccountNotFoundException
+      ) {
         throw new NotFoundException(e.message);
       }
-      if (e instanceof AccountNotFoundException) {
-        throw new NotFoundException(e.message);
-      }
-      if (e instanceof CannotDeleteTransactionException) {
-        throw new ConflictException(e.message);
-      }
-      if (e instanceof CannotOperateOnArchivedAccountException) {
+      if (
+        e instanceof CannotDeleteTransactionException ||
+        e instanceof CannotOperateOnArchivedAccountException ||
+        e instanceof ResourceOwnershipException
+      ) {
         throw new ConflictException(e.message);
       }
       throw e;

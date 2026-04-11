@@ -6,6 +6,7 @@ import { User } from '../../domain/entities/user.entity';
 interface UpdateUserProfileDto {
   id: string;
   name?: string;
+  requestUserId: string;
 }
 
 // Actualiza campos editables del perfil (por ahora solo name)
@@ -18,7 +19,10 @@ export class UpdateUserProfileUseCase {
 
   async execute(dto: UpdateUserProfileDto): Promise<User> {
     // Delega búsqueda a GetUserByIdUseCase (lanza si no existe)
-    const user = await this.getUserByIdUseCase.execute({ id: dto.id });
+    const user = await this.getUserByIdUseCase.execute({
+      id: dto.id,
+      requestUserId: dto.requestUserId,
+    });
 
     if (dto.name !== undefined) {
       user.updateProfile(dto.name);

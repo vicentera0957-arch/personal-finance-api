@@ -5,6 +5,7 @@ import { GetAccountByIdUseCase } from './get-account-by-id.use-case';
 
 interface UnarchiveAccountDto {
   id: string;
+  requestUserId: string;
 }
 
 @Injectable()
@@ -15,7 +16,10 @@ export class UnarchiveAccountUseCase {
   ) {}
 
   async execute(dto: UnarchiveAccountDto): Promise<Account> {
-    const account = await this.getAccountByIdUseCase.execute({ id: dto.id });
+    const account = await this.getAccountByIdUseCase.execute({
+      id: dto.id,
+      requestUserId: dto.requestUserId,
+    });
     account.unarchive(); // la entidad lanza error si no está archivada
     return this.accountRepository.save(account);
   }

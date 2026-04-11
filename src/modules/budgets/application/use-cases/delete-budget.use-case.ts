@@ -12,8 +12,8 @@ export class DeleteBudgetUseCase {
     private readonly expenseChecker: IExpenseChecker,
   ) {}
 
-  async execute(id: string): Promise<void> {
-    const budget = await this.getBudgetByIdUseCase.execute(id);
+  async execute(id: string, requestUserId: string): Promise<void> {
+    const budget = await this.getBudgetByIdUseCase.execute(id, requestUserId);
 
     // Valida que no existan transacciones de gasto en el periodo del presupuesto
     const hasExpenses = await this.expenseChecker.hasExpensesInPeriod(

@@ -11,8 +11,11 @@ import {
   NotFoundException,
   ConflictException,
   BadRequestException,
+  ForbiddenException,
   ParseUUIDPipe,
 } from '@nestjs/common';
+import { CurrentUser } from '../../../../auth/infrastructure/decorators/current-user.decorator';
+import type { AuthenticatedUser } from '../../../../auth/infrastructure/decorators/current-user.decorator';
 // Use cases
 import { CreateAccountUseCase } from '../../../application/use-cases/create-account.use-case';
 import { GetAccountByIdUseCase } from '../../../application/use-cases/get-account-by-id.use-case';
@@ -37,6 +40,7 @@ import {
   InvalidBalanceException,
   AccountInUseException,
 } from '../../../domain/exceptions/account.exceptions';
+import { ResourceOwnershipException } from '../../../../../shared/domain/exceptions/resource-ownership.exception';
 
 @Controller('accounts')
 export class AccountsController {
@@ -65,10 +69,13 @@ export class AccountsController {
   }
 
   @Post()
-  async create(@Body() dto: CreateAccountDto): Promise<AccountResponseDto> {
+  async create(
+    @Body() dto: CreateAccountDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<AccountResponseDto> {
     try {
       const account = await this.createAccountUseCase.execute({
-        userId: dto.userId,
+        userId: user.userId,
         name: dto.name,
         type: dto.type,
         initialBalance: dto.initialBalance,
@@ -82,6 +89,9 @@ export class AccountsController {
       ) {
         throw new BadRequestException(e.message);
       }
+      if (e instanceof ResourceOwnershipException) {
+        throw new ForbiddenException(e.message);
+      }
       throw e;
     }
   }
@@ -89,23 +99,32 @@ export class AccountsController {
   @Get(':id')
   async findById(
     @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: AuthenticatedUser,
   ): Promise<AccountResponseDto> {
     try {
-      const account = await this.getAccountByIdUseCase.execute({ id });
+      const account = await this.getAccountByIdUseCase.execute({
+        id,
+        requestUserId: user.userId,
+      });
       return this.toResponse(account);
     } catch (e) {
       if (e instanceof AccountNotFoundException) {
         throw new NotFoundException(e.message);
       }
+      if (e instanceof ResourceOwnershipException) {
+        throw new ForbiddenException(e.message);
+      }
       throw e;
     }
   }
 
-  @Get('user/:userId')
+  @Get()
   async findByUserId(
-    @Param('userId', ParseUUIDPipe) userId: string,
+    @CurrentUser() user: AuthenticatedUser,
   ): Promise<AccountResponseDto[]> {
-    const accounts = await this.getAccountsByUserIdUseCase.execute({ userId });
+    const accounts = await this.getAccountsByUserIdUseCase.execute({
+      userId: user.userId,
+    });
     return accounts.map((a) => this.toResponse(a));
   }
 
@@ -113,16 +132,21 @@ export class AccountsController {
   async rename(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: RenameAccountDto,
+    @CurrentUser() user: AuthenticatedUser,
   ): Promise<AccountResponseDto> {
     try {
       const account = await this.renameAccountUseCase.execute({
         id,
         name: dto.name,
+        requestUserId: user.userId,
       });
       return this.toResponse(account);
     } catch (e) {
       if (e instanceof AccountNotFoundException) {
         throw new NotFoundException(e.message);
+      }
+      if (e instanceof ResourceOwnershipException) {
+        throw new ForbiddenException(e.message);
       }
       if (e instanceof CannotOperateOnArchivedAccountException) {
         throw new ConflictException(e.message);
@@ -134,13 +158,20 @@ export class AccountsController {
   @Patch(':id/archive')
   async archive(
     @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: AuthenticatedUser,
   ): Promise<AccountResponseDto> {
     try {
-      const account = await this.archiveAccountUseCase.execute({ id });
+      const account = await this.archiveAccountUseCase.execute({
+        id,
+        requestUserId: user.userId,
+      });
       return this.toResponse(account);
     } catch (e) {
       if (e instanceof AccountNotFoundException) {
         throw new NotFoundException(e.message);
+      }
+      if (e instanceof ResourceOwnershipException) {
+        throw new ForbiddenException(e.message);
       }
       if (e instanceof AccountAlreadyArchivedDomainException) {
         throw new ConflictException(e.message);
@@ -152,13 +183,20 @@ export class AccountsController {
   @Patch(':id/unarchive')
   async unarchive(
     @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: AuthenticatedUser,
   ): Promise<AccountResponseDto> {
     try {
-      const account = await this.unarchiveAccountUseCase.execute({ id });
+      const account = await this.unarchiveAccountUseCase.execute({
+        id,
+        requestUserId: user.userId,
+      });
       return this.toResponse(account);
     } catch (e) {
       if (e instanceof AccountNotFoundException) {
         throw new NotFoundException(e.message);
+      }
+      if (e instanceof ResourceOwnershipException) {
+        throw new ForbiddenException(e.message);
       }
       if (e instanceof AccountNotArchivedDomainException) {
         throw new ConflictException(e.message);
@@ -169,12 +207,21 @@ export class AccountsController {
 
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
-  async delete(@Param('id', ParseUUIDPipe) id: string): Promise<void> {
+  async delete(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<void> {
     try {
-      await this.deleteAccountUseCase.execute({ id });
+      await this.deleteAccountUseCase.execute({
+        id,
+        requestUserId: user.userId,
+      });
     } catch (e) {
       if (e instanceof AccountNotFoundException) {
         throw new NotFoundException(e.message);
+      }
+      if (e instanceof ResourceOwnershipException) {
+        throw new ForbiddenException(e.message);
       }
       if (e instanceof AccountInUseException) {
         throw new ConflictException(e.message);

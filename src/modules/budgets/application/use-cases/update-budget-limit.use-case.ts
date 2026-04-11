@@ -7,6 +7,7 @@ import { GetBudgetByIdUseCase } from './get-budget-by-id.use-case';
 interface UpdateBudgetLimitCommand {
   id: string;
   limit: number;
+  requestUserId: string;
 }
 
 @Injectable()
@@ -17,7 +18,10 @@ export class UpdateBudgetLimitUseCase {
   ) {}
 
   async execute(command: UpdateBudgetLimitCommand): Promise<Budget> {
-    const budget = await this.getBudgetByIdUseCase.execute(command.id);
+    const budget = await this.getBudgetByIdUseCase.execute(
+      command.id,
+      command.requestUserId,
+    );
 
     const limit = AmountLimit.create(command.limit);
     budget.updateLimit(limit);

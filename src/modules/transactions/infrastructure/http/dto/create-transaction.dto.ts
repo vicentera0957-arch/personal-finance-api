@@ -14,10 +14,6 @@ import { Type } from 'class-transformer';
 export class CreateTransactionDto {
   @IsUUID()
   @IsNotEmpty()
-  userId: string;
-
-  @IsUUID()
-  @IsNotEmpty()
   accountId: string;
 
   @IsUUID()

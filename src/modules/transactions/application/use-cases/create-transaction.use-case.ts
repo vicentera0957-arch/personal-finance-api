@@ -45,11 +45,13 @@ export class CreateTransactionUseCase {
     // 2. Verifica que la cuenta existe (lanza AccountNotFoundException si no)
     await this.getAccountByIdUseCase.execute({
       id: command.accountId,
+      requestUserId: command.userId,
     });
 
     // 3. Verifica que la categoría existe (lanza CategoryNotFoundException si no)
     const category = await this.getCategoryByIdUseCase.execute(
       command.categoryId,
+      command.userId,
     );
 
     // 4. Valida compatibilidad de naturaleza (R7)
