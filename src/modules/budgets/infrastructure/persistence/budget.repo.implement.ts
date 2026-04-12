@@ -6,6 +6,7 @@ import {
   IBudgetRepository,
 } from '../../domain/repository/budgets.repository';
 import { Budget } from '../../domain/budget.entity';
+import { BudgetAlreadyExistsException } from '../../domain/exceptions/budget.exceptions';
 import { BudgetOrmEntity } from './budget.orm.entity';
 import { BudgetMapper } from './budget.mapper';
 
@@ -71,8 +72,21 @@ export class BudgetRepositoryImpl extends IBudgetRepository {
 
   async save(budget: Budget): Promise<Budget> {
     const orm = this.mapper.toOrm(budget);
-    const saved = await this.ormRepository.save(orm);
-    return this.mapper.toDomain(saved);
+    try {
+      const saved = await this.ormRepository.save(orm);
+      return this.mapper.toDomain(saved);
+    } catch (error) {
+      // PostgreSQL unique constraint violation on (userId, categoryId, month, year)
+      if ((error as any)?.code === '23505') {
+        throw new BudgetAlreadyExistsException(
+          budget.userId,
+          budget.categoryId,
+          budget.month,
+          budget.year,
+        );
+      }
+      throw error;
+    }
   }
 
   async delete(id: string): Promise<void> {
