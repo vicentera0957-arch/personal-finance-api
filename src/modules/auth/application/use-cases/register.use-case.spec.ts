@@ -1,25 +1,16 @@
 import { RegisterUseCase } from './register.use-case';
 import { CreateUserUseCase } from '../../../users/application/use-cases/create-user.use-case';
+import { InMemoryUserRepository } from '../../../users/infrastructure/persistence/__fakes__/in-memory-user.repository';
 import { IPasswordHasher } from '../../domain/ports/password-hasher.port';
 import { ITokenProvider } from '../../domain/ports/token-provider.port';
-import { User } from '../../../users/domain/entities/user.entity';
-import { Email } from '../../../users/domain/value-objects/email.vo';
 import { UserAlreadyExistsException } from '../../../users/domain/exceptions/user.exceptions';
+import { makeUser } from '../../../../test-support/factories';
 
 describe('RegisterUseCase', () => {
   let registerUseCase: RegisterUseCase;
-  let createUser: jest.Mocked<CreateUserUseCase>;
+  let userRepo: InMemoryUserRepository;
   let passwordHasher: jest.Mocked<IPasswordHasher>;
   let tokenProvider: jest.Mocked<ITokenProvider>;
-
-  const mockUser = User.reconstitute({
-    id: 'user-uuid',
-    email: Email.create('new@example.com'),
-    passwordHash: 'hashed-password',
-    name: 'New User',
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  });
 
   const mockTokenPair = {
     accessToken: 'access-token',
@@ -27,9 +18,7 @@ describe('RegisterUseCase', () => {
   };
 
   beforeEach(() => {
-    createUser = {
-      execute: jest.fn(),
-    } as unknown as jest.Mocked<CreateUserUseCase>;
+    userRepo = new InMemoryUserRepository();
 
     passwordHasher = {
       hash: jest.fn().mockResolvedValue('hashed-password'),
@@ -37,48 +26,51 @@ describe('RegisterUseCase', () => {
     };
 
     tokenProvider = {
-      generateTokens: jest.fn(),
+      generateTokens: jest.fn().mockResolvedValue(mockTokenPair),
       verifyAccessToken: jest.fn(),
       verifyRefreshToken: jest.fn(),
     };
 
-    registerUseCase = new RegisterUseCase(createUser, passwordHasher, tokenProvider);
-  });
-
-  it('should create user and return tokens', async () => {
-    createUser.execute.mockResolvedValue(mockUser);
-    tokenProvider.generateTokens.mockResolvedValue(mockTokenPair);
-
-    const result = await registerUseCase.execute({
-      name: 'New User',
-      email: 'new@example.com',
-      password: 'secure-password',
-    });
-
-    expect(result).toEqual(mockTokenPair);
-    expect(passwordHasher.hash).toHaveBeenCalledWith('secure-password');
-    expect(createUser.execute).toHaveBeenCalledWith({
-      name: 'New User',
-      email: 'new@example.com',
-      passwordHash: 'hashed-password',
-    });
-    expect(tokenProvider.generateTokens).toHaveBeenCalledWith({
-      sub: 'user-uuid',
-      email: 'new@example.com',
-    });
-  });
-
-  it('should propagate UserAlreadyExistsException', async () => {
-    createUser.execute.mockRejectedValue(
-      new UserAlreadyExistsException('new@example.com'),
+    registerUseCase = new RegisterUseCase(
+      new CreateUserUseCase(userRepo),
+      passwordHasher,
+      tokenProvider,
     );
+  });
 
-    await expect(
-      registerUseCase.execute({
+  describe('execute', () => {
+    it('should hash password, persist user and return token pair', async () => {
+      const result = await registerUseCase.execute({
         name: 'New User',
         email: 'new@example.com',
         password: 'secure-password',
-      }),
-    ).rejects.toThrow(UserAlreadyExistsException);
+      });
+
+      expect(result).toEqual(mockTokenPair);
+      expect(passwordHasher.hash).toHaveBeenCalledWith('secure-password');
+      expect(userRepo.size()).toBe(1);
+
+      const persisted = await userRepo.findByEmail('new@example.com');
+      expect(persisted?.passwordHash).toBe('hashed-password');
+      expect(tokenProvider.generateTokens).toHaveBeenCalledWith({
+        sub: persisted!.id,
+        email: 'new@example.com',
+      });
+    });
+
+    it('should propagate UserAlreadyExistsException when email is taken', async () => {
+      userRepo.seed([makeUser({ email: 'new@example.com' })]);
+
+      await expect(
+        registerUseCase.execute({
+          name: 'New User',
+          email: 'new@example.com',
+          password: 'secure-password',
+        }),
+      ).rejects.toThrow(UserAlreadyExistsException);
+
+      expect(tokenProvider.generateTokens).not.toHaveBeenCalled();
+      expect(userRepo.size()).toBe(1);
+    });
   });
 });

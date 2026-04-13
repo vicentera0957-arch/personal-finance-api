@@ -1,26 +1,17 @@
 import { LoginUseCase } from './login.use-case';
 import { GetUserByEmailUseCase } from '../../../users/application/use-cases/get-user-by-email.use-case';
+import { InMemoryUserRepository } from '../../../users/infrastructure/persistence/__fakes__/in-memory-user.repository';
 import { IPasswordHasher } from '../../domain/ports/password-hasher.port';
 import { ITokenProvider } from '../../domain/ports/token-provider.port';
-import { User } from '../../../users/domain/entities/user.entity';
-import { Email } from '../../../users/domain/value-objects/email.vo';
 import { InvalidCredentialsException } from '../../domain/exceptions/auth.exceptions';
 import { UserNotFoundException } from '../../../users/domain/exceptions/user.exceptions';
+import { makeUser } from '../../../../test-support/factories';
 
 describe('LoginUseCase', () => {
   let loginUseCase: LoginUseCase;
-  let getUserByEmail: jest.Mocked<GetUserByEmailUseCase>;
+  let userRepo: InMemoryUserRepository;
   let passwordHasher: jest.Mocked<IPasswordHasher>;
   let tokenProvider: jest.Mocked<ITokenProvider>;
-
-  const mockUser = User.reconstitute({
-    id: 'user-uuid',
-    email: Email.create('test@example.com'),
-    passwordHash: 'hashed-password',
-    name: 'Test User',
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  });
 
   const mockTokenPair = {
     accessToken: 'access-token',
@@ -28,9 +19,7 @@ describe('LoginUseCase', () => {
   };
 
   beforeEach(() => {
-    getUserByEmail = {
-      execute: jest.fn(),
-    } as unknown as jest.Mocked<GetUserByEmailUseCase>;
+    userRepo = new InMemoryUserRepository();
 
     passwordHasher = {
       hash: jest.fn(),
@@ -44,14 +33,14 @@ describe('LoginUseCase', () => {
     };
 
     loginUseCase = new LoginUseCase(
-      getUserByEmail,
+      new GetUserByEmailUseCase(userRepo),
       passwordHasher,
       tokenProvider,
     );
   });
 
   it('should return tokens when credentials are valid', async () => {
-    getUserByEmail.execute.mockResolvedValue(mockUser);
+    userRepo.seed([makeUser({ email: 'test@example.com', passwordHash: 'hashed-password' })]);
     passwordHasher.compare.mockResolvedValue(true);
     tokenProvider.generateTokens.mockResolvedValue(mockTokenPair);
 
@@ -61,21 +50,18 @@ describe('LoginUseCase', () => {
     });
 
     expect(result).toEqual(mockTokenPair);
-    expect(getUserByEmail.execute).toHaveBeenCalledWith({
-      email: 'test@example.com',
-    });
     expect(passwordHasher.compare).toHaveBeenCalledWith(
       'correct-password',
       'hashed-password',
     );
     expect(tokenProvider.generateTokens).toHaveBeenCalledWith({
-      sub: 'user-uuid',
+      sub: 'user-1',
       email: 'test@example.com',
     });
   });
 
   it('should throw InvalidCredentialsException when password is wrong', async () => {
-    getUserByEmail.execute.mockResolvedValue(mockUser);
+    userRepo.seed([makeUser({ email: 'test@example.com', passwordHash: 'hashed-password' })]);
     passwordHasher.compare.mockResolvedValue(false);
 
     await expect(
@@ -89,10 +75,7 @@ describe('LoginUseCase', () => {
   });
 
   it('should propagate UserNotFoundException when user does not exist', async () => {
-    getUserByEmail.execute.mockRejectedValue(
-      new UserNotFoundException('test@example.com'),
-    );
-
+    // repo vacío → GetUserByEmailUseCase lanza UserNotFoundException real
     await expect(
       loginUseCase.execute({
         email: 'test@example.com',
