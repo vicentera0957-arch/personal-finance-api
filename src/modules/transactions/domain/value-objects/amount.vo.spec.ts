@@ -99,18 +99,19 @@ describe('Amount', () => {
       expect(amount1.equals(amount2)).toBe(false);
     });
 
+    it('should not be the same instance but still equal if values are the same', () => {
+      const amount1 = Amount.create(2000);
+      const amount2 = Amount.create(2000);
+
+      expect(amount1).not.toBe(amount2); // different instances
+      expect(amount1.equals(amount2)).toBe(true); // but equal in value
+    });
+
     it('should return true comparing created and reconstituted with same value', () => {
       const created = Amount.create(2000);
       const reconstituted = Amount.reconstitute(2000);
 
       expect(created.equals(reconstituted)).toBe(true);
-    });
-
-    it('should return false for different values', () => {
-      const amount1 = Amount.create(1);
-      const amount2 = Amount.create(2);
-
-      expect(amount1.equals(amount2)).toBe(false);
     });
   });
 
