@@ -74,7 +74,7 @@ describe('Budgets (integration)', () => {
         .expect(409);
     });
 
-    it('rechaza categoría de tipo income con 422', async () => {
+    it('rechaza categoría de tipo income con 409', async () => {
       const incomeCat = await request(app.getHttpServer())
         .post('/categories')
         .set('Authorization', `Bearer ${accessToken}`)
@@ -84,7 +84,7 @@ describe('Budgets (integration)', () => {
         .post('/budgets')
         .set('Authorization', `Bearer ${accessToken}`)
         .send({ categoryId: incomeCat.body.id, limit: 100, month, year })
-        .expect(422);
+        .expect(409); // BudgetCategoryMustBeExpenseException → ConflictException (409)
     });
 
     it('devuelve 401 sin token', async () => {
@@ -174,7 +174,78 @@ describe('Budgets (integration)', () => {
       await request(app.getHttpServer())
         .delete(`/budgets/${budgetId}`)
         .set('Authorization', `Bearer ${accessToken}`)
-        .expect(200);
+        .expect(204);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Cross-module: budget deletion bloqueado por transacciones
+  // -----------------------------------------------------------------------
+  describe('Cross-module: budget deletion bloqueado por transacciones', () => {
+    it('rechaza eliminar budget con transacciones en el período con 409', async () => {
+      // Crear cuenta para poder crear transacciones
+      const accountRes = await request(app.getHttpServer())
+        .post('/accounts')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ name: 'Cuenta test', type: 'corriente', initialBalance: 5000 })
+        .expect(201);
+      const accountId = accountRes.body.id;
+
+      // Crear transacción expense usando la categoría y budget del beforeEach
+      await request(app.getHttpServer())
+        .post('/transactions')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({
+          accountId,
+          categoryId,
+          amount: 100,
+          nature: 'expense',
+          transactionDate: new Date().toISOString(),
+          description: 'Gasto de prueba',
+        })
+        .expect(201);
+
+      // Intentar eliminar el budget → debe fallar porque hay transacciones en el período
+      await request(app.getHttpServer())
+        .delete(`/budgets/${budgetId}`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(409);
+    });
+
+    it('permite eliminar budget después de remover todas las transacciones del período', async () => {
+      // Crear cuenta y transacción
+      const accountRes = await request(app.getHttpServer())
+        .post('/accounts')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ name: 'Cuenta test 2', type: 'corriente', initialBalance: 5000 })
+        .expect(201);
+      const accountId = accountRes.body.id;
+
+      const txRes = await request(app.getHttpServer())
+        .post('/transactions')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({
+          accountId,
+          categoryId,
+          amount: 100,
+          nature: 'expense',
+          transactionDate: new Date().toISOString(),
+          description: 'Gasto temporal',
+        })
+        .expect(201);
+      const transactionId = txRes.body.id;
+
+      // Eliminar la transacción primero
+      await request(app.getHttpServer())
+        .delete(`/transactions/${transactionId}`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(204);
+
+      // Ahora sí se puede eliminar el budget
+      await request(app.getHttpServer())
+        .delete(`/budgets/${budgetId}`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(204);
     });
   });
 });
