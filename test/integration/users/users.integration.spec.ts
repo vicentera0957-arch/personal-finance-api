@@ -100,7 +100,7 @@ describe('Users (integration)', () => {
       await request(app.getHttpServer())
         .delete(`/users/${userId}`)
         .set('Authorization', `Bearer ${accessToken}`)
-        .expect(200);
+        .expect(204);
     });
 
     it('devuelve 403 intentando eliminar a otro usuario', async () => {
