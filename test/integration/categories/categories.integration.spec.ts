@@ -124,7 +124,7 @@ describe('Categories (integration)', () => {
         .patch(`/categories/${categoryId}`)
         .set('Authorization', `Bearer ${accessToken}`)
         .send({ isBudgetable: false })
-        .expect(422); // CategoryBudgetableImmutableException → 422
+        .expect(409); // CategoryBudgetableImmutableException → ConflictException (409)
     });
   });
 
@@ -136,7 +136,111 @@ describe('Categories (integration)', () => {
       await request(app.getHttpServer())
         .delete(`/categories/${categoryId}`)
         .set('Authorization', `Bearer ${accessToken}`)
-        .expect(200);
+        .expect(204);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Cross-module: category deletion bloqueada por uso
+  // -----------------------------------------------------------------------
+  describe('Cross-module: category deletion bloqueada por uso', () => {
+    const now = new Date();
+    const month = now.getMonth() + 1;
+    const year = now.getFullYear();
+
+    it('rechaza eliminar categoría con transacciones asociadas con 409', async () => {
+      // Crear cuenta y budget necesarios para la transacción
+      const accountRes = await request(app.getHttpServer())
+        .post('/accounts')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ name: 'Cuenta test', type: 'corriente', initialBalance: 5000 })
+        .expect(201);
+      const accountId = accountRes.body.id;
+
+      await request(app.getHttpServer())
+        .post('/budgets')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ categoryId, limit: 1000, month, year })
+        .expect(201);
+
+      await request(app.getHttpServer())
+        .post('/transactions')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({
+          accountId,
+          categoryId,
+          amount: 100,
+          nature: 'expense',
+          transactionDate: now.toISOString(),
+          description: 'Compra',
+        })
+        .expect(201);
+
+      // Intentar eliminar la categoría → falla por FK con transacciones
+      await request(app.getHttpServer())
+        .delete(`/categories/${categoryId}`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(409);
+    });
+
+    it('rechaza eliminar categoría con budget asociado con 409', async () => {
+      // Solo crear budget (sin transacción)
+      await request(app.getHttpServer())
+        .post('/budgets')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ categoryId, limit: 500, month, year })
+        .expect(201);
+
+      // Intentar eliminar la categoría → falla por FK con budget
+      await request(app.getHttpServer())
+        .delete(`/categories/${categoryId}`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(409);
+    });
+
+    it('permite eliminar categoría después de remover transacciones y budget', async () => {
+      const accountRes = await request(app.getHttpServer())
+        .post('/accounts')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ name: 'Cuenta limpieza', type: 'corriente', initialBalance: 5000 })
+        .expect(201);
+      const accountId = accountRes.body.id;
+
+      const budgetRes = await request(app.getHttpServer())
+        .post('/budgets')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ categoryId, limit: 1000, month, year })
+        .expect(201);
+      const budgetId = budgetRes.body.id;
+
+      const txRes = await request(app.getHttpServer())
+        .post('/transactions')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({
+          accountId,
+          categoryId,
+          amount: 100,
+          nature: 'expense',
+          transactionDate: now.toISOString(),
+        })
+        .expect(201);
+      const transactionId = txRes.body.id;
+
+      // Eliminar en orden: transacción → budget → categoría
+      await request(app.getHttpServer())
+        .delete(`/transactions/${transactionId}`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(204);
+
+      await request(app.getHttpServer())
+        .delete(`/budgets/${budgetId}`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(204);
+
+      await request(app.getHttpServer())
+        .delete(`/categories/${categoryId}`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(204);
     });
   });
 });
