@@ -151,7 +151,7 @@ describe('Accounts (integration)', () => {
       await request(app.getHttpServer())
         .delete(`/accounts/${accountId}`)
         .set('Authorization', `Bearer ${accessToken}`)
-        .expect(200);
+        .expect(204);
     });
 
     it('devuelve 403 al intentar eliminar cuenta ajena', async () => {
@@ -163,6 +163,129 @@ describe('Accounts (integration)', () => {
         .delete(`/accounts/${accountId}`)
         .set('Authorization', `Bearer ${other.body.accessToken}`)
         .expect(403);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Cross-module: account deletion bloqueada por transacciones
+  // -----------------------------------------------------------------------
+  describe('Cross-module: account deletion bloqueada por transacciones', () => {
+    const now = new Date();
+    const month = now.getMonth() + 1;
+    const year = now.getFullYear();
+
+    it('rechaza eliminar cuenta con transacciones asociadas con 409', async () => {
+      // Crear categoría expense budgetable y budget
+      const catRes = await request(app.getHttpServer())
+        .post('/categories')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ name: 'Alimentación', nature: 'expense', isBudgetable: true })
+        .expect(201);
+      const categoryId = catRes.body.id;
+
+      await request(app.getHttpServer())
+        .post('/budgets')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ categoryId, limit: 1000, month, year })
+        .expect(201);
+
+      // Crear transacción en la cuenta
+      await request(app.getHttpServer())
+        .post('/transactions')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({
+          accountId,
+          categoryId,
+          amount: 100,
+          nature: 'expense',
+          transactionDate: now.toISOString(),
+          description: 'Compra test',
+        })
+        .expect(201);
+
+      // Intentar eliminar la cuenta → falla por FK con transacciones
+      await request(app.getHttpServer())
+        .delete(`/accounts/${accountId}`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(409);
+    });
+
+    it('permite eliminar cuenta después de remover todas las transacciones', async () => {
+      const catRes = await request(app.getHttpServer())
+        .post('/categories')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ name: 'Transporte', nature: 'expense', isBudgetable: true })
+        .expect(201);
+      const categoryId = catRes.body.id;
+
+      await request(app.getHttpServer())
+        .post('/budgets')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ categoryId, limit: 1000, month, year })
+        .expect(201);
+
+      const txRes = await request(app.getHttpServer())
+        .post('/transactions')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({
+          accountId,
+          categoryId,
+          amount: 100,
+          nature: 'expense',
+          transactionDate: now.toISOString(),
+        })
+        .expect(201);
+      const transactionId = txRes.body.id;
+
+      // Eliminar transacción primero
+      await request(app.getHttpServer())
+        .delete(`/transactions/${transactionId}`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(204);
+
+      // Ahora se puede eliminar la cuenta
+      await request(app.getHttpServer())
+        .delete(`/accounts/${accountId}`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(204);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Cross-module: operaciones bloqueadas en cuenta archivada
+  // -----------------------------------------------------------------------
+  describe('Cross-module: operaciones bloqueadas en cuenta archivada', () => {
+    it('rechaza rename en cuenta archivada con 409', async () => {
+      await request(app.getHttpServer())
+        .patch(`/accounts/${accountId}/archive`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(200);
+
+      await request(app.getHttpServer())
+        .patch(`/accounts/${accountId}/name`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ name: 'Nuevo nombre' })
+        .expect(409);
+    });
+
+    it('rechaza archivar cuenta ya archivada con 409', async () => {
+      await request(app.getHttpServer())
+        .patch(`/accounts/${accountId}/archive`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(200);
+
+      await request(app.getHttpServer())
+        .patch(`/accounts/${accountId}/archive`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(409);
+    });
+
+    it('rechaza desarchivar cuenta que no está archivada con 409', async () => {
+      // La cuenta en beforeEach no está archivada
+      await request(app.getHttpServer())
+        .patch(`/accounts/${accountId}/unarchive`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(409);
     });
   });
 });
