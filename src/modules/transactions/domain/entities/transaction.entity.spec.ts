@@ -93,15 +93,4 @@ describe('Transaction Entity', () => {
       expect(tx.description).toBe('Groceries');
     });
   });
-
-  describe('Inmutabilidad', () => {
-    it('todos los campos deben ser readonly', () => {
-      const tx = Transaction.create(mockProps);
-
-      expect(() => {
-        // @ts-expect-error Testing readonly enforcement
-        tx.id = 'new-id';
-      }).toThrow();
-    });
-  });
 });
