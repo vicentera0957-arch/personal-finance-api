@@ -1,9 +1,9 @@
 import { DeleteTransactionUseCase } from './delete-transaction.use-case';
 import { GetTransactionByIdUseCase } from './get-transaction-by-id.use-case';
-import { UpdateAccountBalanceUseCase } from '../../../accounts/application/use-cases/update-account-balance.use-case';
 
 import { InMemoryTransactionRepository } from '../../infrastructure/persistence/__fakes__/in-memory-transaction.repository';
 import { InMemoryAccountRepository } from '../../../accounts/infrastructure/persistence/__fakes__/in-memory-account.repository';
+import { InMemoryUnitOfWork } from '../../infrastructure/persistence/__fakes__/in-memory-unit-of-work';
 
 import { CannotDeleteTransactionException } from '../../domain/exceptions/transaction.exceptions';
 import { TransactionNotFoundException } from '../../domain/exceptions/transaction.exceptions';
@@ -12,24 +12,21 @@ import {
   makeAccount,
   makeTransaction,
 } from '../../../../test-support/factories';
-import { makeFakeDataSource } from '../../../../test-support/fake-data-source';
 
 describe('DeleteTransactionUseCase', () => {
   let txRepo: InMemoryTransactionRepository;
   let accountRepo: InMemoryAccountRepository;
+  let uow: InMemoryUnitOfWork;
   let useCase: DeleteTransactionUseCase;
-  let ds: ReturnType<typeof makeFakeDataSource>;
 
   beforeEach(() => {
     txRepo = new InMemoryTransactionRepository();
     accountRepo = new InMemoryAccountRepository();
-    ds = makeFakeDataSource();
+    uow = new InMemoryUnitOfWork(txRepo, accountRepo);
 
     useCase = new DeleteTransactionUseCase(
-      txRepo,
+      uow,
       new GetTransactionByIdUseCase(txRepo),
-      new UpdateAccountBalanceUseCase(accountRepo),
-      ds.dataSource,
     );
   });
 
@@ -57,7 +54,7 @@ describe('DeleteTransactionUseCase', () => {
     expect(txRepo.size()).toBe(0);
     const account = await accountRepo.findById('a1');
     expect(account?.getCurrentBalance().getValue()).toBe(1000);
-    expect(ds.commits()).toBe(1);
+    expect(uow.commits()).toBe(1);
   });
 
   it('should delete an income transaction and decrease the account balance', async () => {
@@ -109,7 +106,7 @@ describe('DeleteTransactionUseCase', () => {
     );
 
     expect(txRepo.size()).toBe(1);
-    expect(ds.rollbacks()).toBe(1);
+    expect(uow.rollbacks()).toBe(1);
   });
 
   it('should throw TransactionNotFoundException when the transaction is missing', async () => {

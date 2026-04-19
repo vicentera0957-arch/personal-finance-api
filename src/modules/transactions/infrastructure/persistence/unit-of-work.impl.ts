@@ -1,0 +1,186 @@
+import { Injectable, Scope } from '@nestjs/common';
+import { DataSource, EntityManager, QueryRunner, Between, MoreThanOrEqual, LessThanOrEqual } from 'typeorm';
+import { IUnitOfWork } from '../../domain/IUnitOfWork';
+import { ITransactionRepository, TransactionQueryOptions } from '../../domain/repository/transaction.repository';
+import { IAccountRepository } from '../../../accounts/domain/repository/accounts.repository';
+import { Transaction } from '../../domain/entities/transaction.entity';
+import { TransactionOrmEntity } from './transaction.orm.entity';
+import { TransactionMapper } from './transaction.mapper';
+import { AccountOrmEntity } from '../../../accounts/infrastructure/persistence/account.orm.entity';
+import { AccountMapper } from '../../../accounts/infrastructure/persistence/account.mapper';
+import { Account } from '../../../accounts/domain/entities/account.entity';
+import { FindOptionsWhere } from 'typeorm';
+
+// ── Repos escopados — privados a este archivo, solo el UoW los construye ─────
+
+class ScopedTransactionRepository extends ITransactionRepository {
+  constructor(
+    private readonly manager: EntityManager,
+    private readonly mapper: TransactionMapper,
+  ) {
+    super();
+  }
+
+  async findById(id: string): Promise<Transaction | null> {
+    const orm = await this.manager.findOne(TransactionOrmEntity, { where: { id } });
+    return orm ? this.mapper.toDomain(orm) : null;
+  }
+
+  async findByAccountId(
+    accountId: string,
+    options?: TransactionQueryOptions,
+  ): Promise<Transaction[]> {
+    const where: FindOptionsWhere<TransactionOrmEntity> = { accountId };
+    this.applyDateFilter(where, options);
+    const orms = await this.manager.find(TransactionOrmEntity, {
+      where,
+      skip: options?.offset,
+      take: options?.limit,
+      order: { transactionDate: 'DESC' },
+    });
+    return orms.map((orm) => this.mapper.toDomain(orm));
+  }
+
+  async findByUserId(
+    userId: string,
+    options?: TransactionQueryOptions,
+  ): Promise<Transaction[]> {
+    const where: FindOptionsWhere<TransactionOrmEntity> = { userId };
+    this.applyDateFilter(where, options);
+    const orms = await this.manager.find(TransactionOrmEntity, {
+      where,
+      skip: options?.offset,
+      take: options?.limit,
+      order: { transactionDate: 'DESC' },
+    });
+    return orms.map((orm) => this.mapper.toDomain(orm));
+  }
+
+  async save(transaction: Transaction): Promise<Transaction> {
+    const orm = this.mapper.toOrm(transaction);
+    const saved = await this.manager.save(TransactionOrmEntity, orm);
+    return this.mapper.toDomain(saved);
+  }
+
+  async sumExpenseAmountByUserCategoryAndPeriod(
+    userId: string,
+    categoryId: string,
+    month: number,
+    year: number,
+  ): Promise<number> {
+    const periodStart = new Date(year, month - 1, 1);
+    const periodEnd = new Date(year, month, 1);
+
+    const raw = await this.manager
+      .getRepository(TransactionOrmEntity)
+      .createQueryBuilder('transaction')
+      .select('COALESCE(SUM(transaction.amount), 0)', 'total')
+      .where('transaction.userId = :userId', { userId })
+      .andWhere('transaction.categoryId = :categoryId', { categoryId })
+      .andWhere('transaction.nature = :nature', { nature: 'expense' })
+      .andWhere('transaction.transactionDate >= :periodStart', { periodStart })
+      .andWhere('transaction.transactionDate < :periodEnd', { periodEnd })
+      .setLock('pessimistic_write')
+      .getRawOne<{ total: string }>();
+
+    return Number(raw?.total ?? 0);
+  }
+
+  async delete(id: string): Promise<void> {
+    await this.manager.delete(TransactionOrmEntity, id);
+  }
+
+  private applyDateFilter(
+    where: FindOptionsWhere<TransactionOrmEntity>,
+    options?: TransactionQueryOptions,
+  ): void {
+    if (options?.from && options?.to) {
+      where.transactionDate = Between(options.from, options.to);
+    } else if (options?.from) {
+      where.transactionDate = MoreThanOrEqual(options.from);
+    } else if (options?.to) {
+      where.transactionDate = LessThanOrEqual(options.to);
+    }
+  }
+}
+
+class ScopedAccountRepository extends IAccountRepository {
+  constructor(
+    private readonly manager: EntityManager,
+    private readonly mapper: AccountMapper,
+  ) {
+    super();
+  }
+
+  async findById(id: string): Promise<Account | null> {
+    const orm = await this.manager.findOne(AccountOrmEntity, { where: { id } });
+    return orm ? this.mapper.toDomain(orm) : null;
+  }
+
+  async findByUserId(userId: string): Promise<Account[]> {
+    const orms = await this.manager.find(AccountOrmEntity, { where: { userId } });
+    return orms.map((orm) => this.mapper.toDomain(orm));
+  }
+
+  async save(account: Account): Promise<Account> {
+    const orm = this.mapper.toOrm(account);
+    const saved = await this.manager.save(AccountOrmEntity, orm);
+    return this.mapper.toDomain(saved);
+  }
+
+  async delete(id: string): Promise<void> {
+    await this.manager.delete(AccountOrmEntity, id);
+  }
+}
+
+// ── Implementación del UoW ────────────────────────────────────────────────────
+
+@Injectable({ scope: Scope.REQUEST })
+export class TypeOrmUnitOfWorkImpl extends IUnitOfWork {
+  private queryRunner: QueryRunner | null = null;
+
+  constructor(
+    private readonly dataSource: DataSource,
+    private readonly transactionMapper: TransactionMapper,
+    private readonly accountMapper: AccountMapper,
+  ) {
+    super();
+  }
+
+  async begin(): Promise<void> {
+    this.queryRunner = this.dataSource.createQueryRunner();
+    await this.queryRunner.connect();
+    await this.queryRunner.startTransaction();
+  }
+
+  async commit(): Promise<void> {
+    await this.queryRunner?.commitTransaction();
+  }
+
+  async rollback(): Promise<void> {
+    await this.queryRunner?.rollbackTransaction();
+  }
+
+  async release(): Promise<void> {
+    await this.queryRunner?.release();
+    this.queryRunner = null;
+  }
+
+  isActive(): boolean {
+    return this.queryRunner !== null;
+  }
+
+  getTransactionRepository(): ITransactionRepository {
+    return new ScopedTransactionRepository(
+      this.queryRunner!.manager,
+      this.transactionMapper,
+    );
+  }
+
+  getAccountRepository(): IAccountRepository {
+    return new ScopedAccountRepository(
+      this.queryRunner!.manager,
+      this.accountMapper,
+    );
+  }
+}

@@ -2,7 +2,6 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import {
   Repository,
-  QueryRunner,
   FindOptionsWhere,
   Between,
   MoreThanOrEqual,
@@ -64,14 +63,9 @@ export class TransactionRepositoryImpl extends ITransactionRepository {
     return orms.map((orm) => this.mapper.toDomain(orm));
   }
 
-  async save(
-    transaction: Transaction,
-    queryRunner?: QueryRunner,
-  ): Promise<Transaction> {
+  async save(transaction: Transaction): Promise<Transaction> {
     const orm = this.mapper.toOrm(transaction);
-    const saved = queryRunner
-      ? await queryRunner.manager.save(TransactionOrmEntity, orm)
-      : await this.ormRepository.save(orm);
+    const saved = await this.ormRepository.save(orm);
     return this.mapper.toDomain(saved);
   }
 
@@ -80,39 +74,25 @@ export class TransactionRepositoryImpl extends ITransactionRepository {
     categoryId: string,
     month: number,
     year: number,
-    queryRunner?: QueryRunner,
   ): Promise<number> {
     const periodStart = new Date(year, month - 1, 1);
     const periodEnd = new Date(year, month, 1);
 
-    const repo = queryRunner
-      ? queryRunner.manager.getRepository(TransactionOrmEntity)
-      : this.ormRepository;
-
-    const qb = repo
+    const raw = await this.ormRepository
       .createQueryBuilder('transaction')
       .select('COALESCE(SUM(transaction.amount), 0)', 'total')
       .where('transaction.userId = :userId', { userId })
       .andWhere('transaction.categoryId = :categoryId', { categoryId })
       .andWhere('transaction.nature = :nature', { nature: 'expense' })
       .andWhere('transaction.transactionDate >= :periodStart', { periodStart })
-      .andWhere('transaction.transactionDate < :periodEnd', { periodEnd });
+      .andWhere('transaction.transactionDate < :periodEnd', { periodEnd })
+      .getRawOne<{ total: string }>();
 
-    // Pessimistic lock: serializa lecturas concurrentes dentro de la transacción DB
-    if (queryRunner) {
-      qb.setLock('pessimistic_write');
-    }
-
-    const raw = await qb.getRawOne<{ total: string }>();
     return Number(raw?.total ?? 0);
   }
 
-  async delete(id: string, queryRunner?: QueryRunner): Promise<void> {
-    if (queryRunner) {
-      await queryRunner.manager.delete(TransactionOrmEntity, id);
-    } else {
-      await this.ormRepository.delete(id);
-    }
+  async delete(id: string): Promise<void> {
+    await this.ormRepository.delete(id);
   }
 
   private applyDateFilter(

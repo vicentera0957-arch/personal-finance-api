@@ -1,7 +1,5 @@
 import { CreateTransactionUseCase } from './create-transaction.use-case';
-import { GetTransactionByIdUseCase } from './get-transaction-by-id.use-case';
 import { GetAccountByIdUseCase } from '../../../accounts/application/use-cases/get-account-by-id.use-case';
-import { UpdateAccountBalanceUseCase } from '../../../accounts/application/use-cases/update-account-balance.use-case';
 import { GetCategoryByIdUseCase } from '../../../categories/application/use-cases/get-category-by-id.use-case';
 import { GetBudgetByUserCategoryPeriodUseCase } from '../../../budgets/application/use-cases/get-budget-by-user-category-period.use-case';
 
@@ -9,6 +7,7 @@ import { InMemoryTransactionRepository } from '../../infrastructure/persistence/
 import { InMemoryAccountRepository } from '../../../accounts/infrastructure/persistence/__fakes__/in-memory-account.repository';
 import { InMemoryCategoryRepository } from '../../../categories/infrastructure/persistence/__fakes__/in-memory-category.repository';
 import { InMemoryBudgetRepository } from '../../../budgets/infrastructure/persistence/__fakes__/in-memory-budget.repository';
+import { InMemoryUnitOfWork } from '../../infrastructure/persistence/__fakes__/in-memory-unit-of-work';
 
 import { IncompatibleCategoryNatureException } from '../../domain/exceptions/transaction.exceptions';
 import {
@@ -23,15 +22,14 @@ import {
   makeCategory,
   makeTransaction,
 } from '../../../../test-support/factories';
-import { makeFakeDataSource } from '../../../../test-support/fake-data-source';
 
 describe('CreateTransactionUseCase', () => {
   let txRepo: InMemoryTransactionRepository;
   let accountRepo: InMemoryAccountRepository;
   let categoryRepo: InMemoryCategoryRepository;
   let budgetRepo: InMemoryBudgetRepository;
+  let uow: InMemoryUnitOfWork;
   let useCase: CreateTransactionUseCase;
-  let ds: ReturnType<typeof makeFakeDataSource>;
 
   const TX_DATE = new Date('2026-03-15T12:00:00Z');
 
@@ -40,15 +38,13 @@ describe('CreateTransactionUseCase', () => {
     accountRepo = new InMemoryAccountRepository();
     categoryRepo = new InMemoryCategoryRepository();
     budgetRepo = new InMemoryBudgetRepository();
-    ds = makeFakeDataSource();
+    uow = new InMemoryUnitOfWork(txRepo, accountRepo);
 
     useCase = new CreateTransactionUseCase(
-      txRepo,
+      uow,
       new GetAccountByIdUseCase(accountRepo),
-      new UpdateAccountBalanceUseCase(accountRepo),
       new GetCategoryByIdUseCase(categoryRepo),
       new GetBudgetByUserCategoryPeriodUseCase(budgetRepo),
-      ds.dataSource,
     );
   });
 
@@ -114,8 +110,8 @@ describe('CreateTransactionUseCase', () => {
 
     const account = await accountRepo.findById('a1');
     expect(account?.getCurrentBalance().getValue()).toBe(900);
-    expect(ds.commits()).toBe(1);
-    expect(ds.rollbacks()).toBe(0);
+    expect(uow.commits()).toBe(1);
+    expect(uow.rollbacks()).toBe(0);
   });
 
   it('should create an income transaction and increase balance', async () => {
@@ -235,7 +231,7 @@ describe('CreateTransactionUseCase', () => {
       }),
     ).rejects.toThrow(BudgetLimitExceededException);
 
-    expect(ds.rollbacks()).toBe(1);
-    expect(ds.commits()).toBe(0);
+    expect(uow.rollbacks()).toBe(1);
+    expect(uow.commits()).toBe(0);
   });
 });

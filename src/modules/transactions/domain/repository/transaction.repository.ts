@@ -1,4 +1,3 @@
-import { QueryRunner } from 'typeorm';
 import { Transaction } from '../entities/transaction.entity';
 
 export interface TransactionQueryOptions {
@@ -19,16 +18,12 @@ export abstract class ITransactionRepository {
     userId: string,
     options?: TransactionQueryOptions,
   ): Promise<Transaction[]>;
-  abstract save(
-    transaction: Transaction,
-    queryRunner?: QueryRunner,
-  ): Promise<Transaction>;
+  abstract save(transaction: Transaction): Promise<Transaction>;
   abstract sumExpenseAmountByUserCategoryAndPeriod(
     userId: string,
     categoryId: string,
     month: number,
     year: number,
-    queryRunner?: QueryRunner,
   ): Promise<number>;
-  abstract delete(id: string, queryRunner?: QueryRunner): Promise<void>;
+  abstract delete(id: string): Promise<void>;
 }

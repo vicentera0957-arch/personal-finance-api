@@ -1,4 +1,4 @@
-import { Repository, QueryRunner } from 'typeorm';
+import { Repository } from 'typeorm';
 import { AccountRepositoryImpl } from './account.repo.implement';
 import { AccountMapper } from './account.mapper';
 import { AccountOrmEntity } from './account.orm.entity';
@@ -68,25 +68,13 @@ describe('AccountRepositoryImpl', () => {
   });
 
   describe('save', () => {
-    it('should use ormRepository.save when no queryRunner is provided', async () => {
+    it('should save using ormRepository', async () => {
       ormRepo.save.mockImplementation(async (orm) => orm as AccountOrmEntity);
 
       const saved = await repo.save(makeAccount({ id: 'a1' }));
 
       expect(ormRepo.save).toHaveBeenCalledTimes(1);
       expect(saved.id).toBe('a1');
-    });
-
-    it('should use queryRunner.manager.save when provided', async () => {
-      const qrSave = jest.fn(async (_entity, orm) => orm as AccountOrmEntity);
-      const queryRunner = {
-        manager: { save: qrSave },
-      } as unknown as QueryRunner;
-
-      await repo.save(makeAccount({ id: 'a1' }), queryRunner);
-
-      expect(qrSave).toHaveBeenCalledWith(AccountOrmEntity, expect.any(AccountOrmEntity));
-      expect(ormRepo.save).not.toHaveBeenCalled();
     });
   });
 

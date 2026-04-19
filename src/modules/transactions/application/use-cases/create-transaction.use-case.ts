@@ -1,7 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { randomUUID } from 'crypto';
-import { DataSource } from 'typeorm'; // TODO(tech-debt): abstraer con IUnitOfWork
-import { ITransactionRepository } from '../../domain/repository/transaction.repository';
+import { IUnitOfWork } from '../../domain/IUnitOfWork';
 import { Transaction } from '../../domain/entities/transaction.entity';
 import { TransactionNature } from '../../domain/value-objects/transaction-nature.vo';
 import { Amount } from '../../domain/value-objects/amount.vo';
@@ -29,32 +28,26 @@ interface CreateTransactionCommand {
 @Injectable()
 export class CreateTransactionUseCase {
   constructor(
-    private readonly transactionRepository: ITransactionRepository,
+    private readonly uow: IUnitOfWork,
     private readonly getAccountByIdUseCase: GetAccountByIdUseCase,
-    private readonly updateAccountBalanceUseCase: UpdateAccountBalanceUseCase,
     private readonly getCategoryByIdUseCase: GetCategoryByIdUseCase,
     private readonly getBudgetByUserCategoryPeriodUseCase: GetBudgetByUserCategoryPeriodUseCase,
-    private readonly dataSource: DataSource,
   ) {}
 
   async execute(command: CreateTransactionCommand): Promise<Transaction> {
-    // 1. Valida naturaleza y monto en el dominio de transactions
     const nature = TransactionNature.create(command.nature);
     const amount = Amount.create(command.amount);
 
-    // 2. Verifica que la cuenta existe (lanza AccountNotFoundException si no)
     await this.getAccountByIdUseCase.execute({
       id: command.accountId,
       requestUserId: command.userId,
     });
 
-    // 3. Verifica que la categoría existe (lanza CategoryNotFoundException si no)
     const category = await this.getCategoryByIdUseCase.execute(
       command.categoryId,
       command.userId,
     );
 
-    // 4. Valida compatibilidad de naturaleza (R7)
     if (category.nature.getValue() !== nature.getValue()) {
       throw new IncompatibleCategoryNatureException(
         nature.getValue(),
@@ -62,7 +55,6 @@ export class CreateTransactionUseCase {
       );
     }
 
-    // Validaciones previas al budget (no requieren lock)
     if (nature.isExpense()) {
       if (!category.getIsBudgetable()) {
         throw new CategoryNotBudgetableForBudgetException(command.categoryId);
@@ -87,7 +79,6 @@ export class CreateTransactionUseCase {
       }
     }
 
-    // 5. Crea la entidad de transacción
     const transaction = Transaction.create({
       id: randomUUID(),
       userId: command.userId,
@@ -99,23 +90,22 @@ export class CreateTransactionUseCase {
       transactionDate: command.transactionDate,
     });
 
-    // 6. Persiste transacción + actualiza balance atómicamente (lock pesimista)
-    const qr = this.dataSource.createQueryRunner();
-    await qr.connect();
-    await qr.startTransaction();
+    await this.uow.begin();
     try {
-      // Validación de budget dentro de la transacción con lock pesimista
+      const txRepo = this.uow.getTransactionRepository();
+      const acctRepo = this.uow.getAccountRepository();
+      const updateBalance = new UpdateAccountBalanceUseCase(acctRepo);
+
       if (nature.isExpense()) {
         const month = command.transactionDate.getMonth() + 1;
         const year = command.transactionDate.getFullYear();
 
         const spentInPeriod =
-          await this.transactionRepository.sumExpenseAmountByUserCategoryAndPeriod(
+          await txRepo.sumExpenseAmountByUserCategoryAndPeriod(
             command.userId,
             command.categoryId,
             month,
             year,
-            qr,
           );
 
         const budget = await this.getBudgetByUserCategoryPeriodUseCase.execute({
@@ -139,20 +129,19 @@ export class CreateTransactionUseCase {
         }
       }
 
-      await this.updateAccountBalanceUseCase.execute(
+      await updateBalance.execute(
         command.accountId,
         amount.getValue(),
         nature.isIncome() ? 'inflow' : 'outflow',
-        qr,
       );
-      const saved = await this.transactionRepository.save(transaction, qr);
-      await qr.commitTransaction();
+      const saved = await txRepo.save(transaction);
+      await this.uow.commit();
       return saved;
     } catch (err) {
-      await qr.rollbackTransaction();
+      await this.uow.rollback();
       throw err;
     } finally {
-      await qr.release();
+      await this.uow.release();
     }
   }
 }

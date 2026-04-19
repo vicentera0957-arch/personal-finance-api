@@ -1,4 +1,4 @@
-import { Between, LessThanOrEqual, MoreThanOrEqual, QueryRunner, Repository } from 'typeorm';
+import { Between, LessThanOrEqual, MoreThanOrEqual, Repository } from 'typeorm';
 import { TransactionRepositoryImpl } from './transaction.repo.implement';
 import { TransactionMapper } from './transaction.mapper';
 import { TransactionOrmEntity } from './transaction.orm.entity';
@@ -114,23 +114,13 @@ describe('TransactionRepositoryImpl', () => {
   });
 
   describe('save', () => {
-    it('should use ormRepository.save when no queryRunner', async () => {
+    it('should save using ormRepository', async () => {
       ormRepo.save.mockImplementation(async (orm) => orm as TransactionOrmEntity);
 
       const saved = await repo.save(makeTransaction({ id: 't1' }));
 
       expect(ormRepo.save).toHaveBeenCalledTimes(1);
       expect(saved.id).toBe('t1');
-    });
-
-    it('should use queryRunner.manager.save when provided', async () => {
-      const qrSave = jest.fn(async (_e, orm) => orm as TransactionOrmEntity);
-      const queryRunner = { manager: { save: qrSave } } as unknown as QueryRunner;
-
-      await repo.save(makeTransaction({ id: 't1' }), queryRunner);
-
-      expect(qrSave).toHaveBeenCalledWith(TransactionOrmEntity, expect.any(TransactionOrmEntity));
-      expect(ormRepo.save).not.toHaveBeenCalled();
     });
   });
 
@@ -163,53 +153,15 @@ describe('TransactionRepositoryImpl', () => {
       expect(total).toBe(250);
     });
 
-    it('should apply pessimistic_write lock when queryRunner is provided', async () => {
-      const getRawOne = jest.fn().mockResolvedValue({ total: '0' });
-      const setLock = jest.fn().mockReturnThis();
-      const andWhere = jest.fn().mockReturnThis();
-      const where = jest.fn().mockReturnThis();
-      const select = jest.fn().mockReturnThis();
-
-      const qb: any = { select, where, andWhere, setLock, getRawOne };
-      const qrRepoCreateQb = jest.fn().mockReturnValue(qb);
-      const qrRepo = { createQueryBuilder: qrRepoCreateQb };
-      const queryRunner = {
-        manager: { getRepository: jest.fn().mockReturnValue(qrRepo) },
-      } as unknown as QueryRunner;
-
-      const total = await repo.sumExpenseAmountByUserCategoryAndPeriod(
-        'user-1',
-        'c1',
-        3,
-        2026,
-        queryRunner,
-      );
-
-      expect(qrRepoCreateQb).toHaveBeenCalled();
-      expect(setLock).toHaveBeenCalledWith('pessimistic_write');
-      expect(total).toBe(0);
-    });
   });
 
   describe('delete', () => {
-    it('should delegate to ormRepository.delete when no queryRunner', async () => {
+    it('should delegate to ormRepository.delete', async () => {
       ormRepo.delete.mockResolvedValue({ affected: 1, raw: [] } as never);
 
       await repo.delete('t1');
 
       expect(ormRepo.delete).toHaveBeenCalledWith('t1');
-    });
-
-    it('should use queryRunner.manager.delete when provided', async () => {
-      const qrDelete = jest.fn().mockResolvedValue({ affected: 1 });
-      const queryRunner = {
-        manager: { delete: qrDelete },
-      } as unknown as QueryRunner;
-
-      await repo.delete('t1', queryRunner);
-
-      expect(qrDelete).toHaveBeenCalledWith(TransactionOrmEntity, 't1');
-      expect(ormRepo.delete).not.toHaveBeenCalled();
     });
   });
 });

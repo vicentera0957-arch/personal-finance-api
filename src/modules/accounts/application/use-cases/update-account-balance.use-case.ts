@@ -1,5 +1,4 @@
 import { Injectable } from '@nestjs/common';
-import { QueryRunner } from 'typeorm'; // TODO(tech-debt): abstraer con IUnitOfWork
 import { IAccountRepository } from '../../domain/repository/accounts.repository';
 import { Balance } from '../../domain/value-objects/balance.vo';
 import { Account } from '../../domain/entities/account.entity';
@@ -13,7 +12,6 @@ export class UpdateAccountBalanceUseCase {
     accountId: string,
     amount: number,
     type: 'inflow' | 'outflow',
-    queryRunner?: QueryRunner,
   ): Promise<Account> {
     const account = await this.accountRepository.findById(accountId);
 
@@ -23,13 +21,12 @@ export class UpdateAccountBalanceUseCase {
 
     const balance = Balance.create(amount);
 
-    // Pasa por los métodos de la entidad — aplicar TODAS las validaciones
     if (type === 'inflow') {
       account.inflow(balance);
     } else if (type === 'outflow') {
       account.outflow(balance);
     }
 
-    return this.accountRepository.save(account, queryRunner);
+    return this.accountRepository.save(account);
   }
 }

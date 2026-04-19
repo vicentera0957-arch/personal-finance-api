@@ -46,6 +46,7 @@ import { UpdateAccountBalanceUseCase } from './application/use-cases/update-acco
     },
   ],
   exports: [
+    AccountMapper,
     GetAccountByIdUseCase,
     GetAccountsByUserIdUseCase,
     UpdateAccountBalanceUseCase,

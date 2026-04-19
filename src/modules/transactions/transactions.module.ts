@@ -1,4 +1,4 @@
-import { Module, forwardRef } from '@nestjs/common';
+import { Module, Scope, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 // ORM Entity
@@ -8,12 +8,12 @@ import { TransactionOrmEntity } from './infrastructure/persistence/transaction.o
 import { TransactionRepositoryImpl } from './infrastructure/persistence/transaction.repo.implement';
 import { TransactionMapper } from './infrastructure/persistence/transaction.mapper';
 import { TransactionsController } from './infrastructure/http/transactions-controller/transactions.controller';
-
+import { TypeOrmUnitOfWorkImpl } from './infrastructure/persistence/unit-of-work.impl';
 // Domain
 import { ITransactionRepository } from './domain/repository/transaction.repository';
 import { IExpenseChecker } from '../budgets/domain/repository/expense-checker.port';
 import { ExpenseCheckerImpl } from './infrastructure/persistence/expense-checker.implement';
-
+import { IUnitOfWork } from './domain/IUnitOfWork';
 // Use Cases
 import { CreateTransactionUseCase } from './application/use-cases/create-transaction.use-case';
 import { GetTransactionByIdUseCase } from './application/use-cases/get-transaction-by-id.use-case';
@@ -53,6 +53,11 @@ import { BudgetsModule } from '../budgets/budgets.module';
     {
       provide: IExpenseChecker,
       useClass: ExpenseCheckerImpl,
+    },
+    {
+      provide: IUnitOfWork,
+      useClass: TypeOrmUnitOfWorkImpl,
+      scope: Scope.REQUEST,
     },
   ],
   exports: [IExpenseChecker],

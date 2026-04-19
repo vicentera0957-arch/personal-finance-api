@@ -1,6 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { DataSource } from 'typeorm'; // TODO(tech-debt): abstraer con IUnitOfWork
-import { ITransactionRepository } from '../../domain/repository/transaction.repository';
+import { IUnitOfWork } from '../../domain/IUnitOfWork';
 import { GetTransactionByIdUseCase } from './get-transaction-by-id.use-case';
 import { CannotDeleteTransactionException } from '../../domain/exceptions/transaction.exceptions';
 import { UpdateAccountBalanceUseCase } from '../../../accounts/application/use-cases/update-account-balance.use-case';
@@ -9,41 +8,38 @@ import { InsufficientFundsException } from '../../../accounts/domain/exceptions/
 @Injectable()
 export class DeleteTransactionUseCase {
   constructor(
-    private readonly transactionRepository: ITransactionRepository,
+    private readonly uow: IUnitOfWork,
     private readonly getTransactionByIdUseCase: GetTransactionByIdUseCase,
-    private readonly updateAccountBalanceUseCase: UpdateAccountBalanceUseCase,
-    private readonly dataSource: DataSource,
   ) {}
 
   async execute(id: string, requestUserId: string): Promise<void> {
-    // 1. Verifica que la transacción existe
     const transaction = await this.getTransactionByIdUseCase.execute(
       id,
       requestUserId,
     );
 
-    // 2. Revierte el efecto en balance de forma atómica
-    const qr = this.dataSource.createQueryRunner();
-    await qr.connect();
-    await qr.startTransaction();
+    await this.uow.begin();
     try {
+      const txRepo = this.uow.getTransactionRepository();
+      const acctRepo = this.uow.getAccountRepository();
+      const updateBalance = new UpdateAccountBalanceUseCase(acctRepo);
+
       const reverseType = transaction.nature.isIncome() ? 'outflow' : 'inflow';
-      await this.updateAccountBalanceUseCase.execute(
+      await updateBalance.execute(
         transaction.accountId,
         transaction.amount.getValue(),
         reverseType,
-        qr,
       );
-      await this.transactionRepository.delete(id, qr);
-      await qr.commitTransaction();
+      await txRepo.delete(id);
+      await this.uow.commit();
     } catch (err) {
-      await qr.rollbackTransaction();
+      await this.uow.rollback();
       if (err instanceof InsufficientFundsException) {
         throw new CannotDeleteTransactionException(id);
       }
       throw err;
     } finally {
-      await qr.release();
+      await this.uow.release();
     }
   }
 }
