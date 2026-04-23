@@ -82,3 +82,9 @@ export class BudgetLimitExceededException extends BudgetException {
     );
   }
 }
+
+export class BudgetAccessDeniedException extends BudgetException {
+  constructor(budgetId: string) {
+    super(`No tienes acceso al presupuesto ${budgetId}`);
+  }
+}

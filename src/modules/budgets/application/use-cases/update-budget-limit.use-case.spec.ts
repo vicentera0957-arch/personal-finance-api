@@ -1,24 +1,37 @@
 import { UpdateBudgetLimitUseCase } from './update-budget-limit.use-case';
-import { GetBudgetByIdUseCase } from './get-budget-by-id.use-case';
+import { IUnitOfWork } from '../../../transactions/domain/IUnitOfWork';
+import { IBudgetRepository } from '../../domain/repository/budgets.repository';
 import { InMemoryBudgetRepository } from '../../infrastructure/persistence/__fakes__/in-memory-budget.repository';
 import {
   BudgetNotFoundException,
   InvalidAmountLimitException,
+  BudgetAccessDeniedException,
 } from '../../domain/exceptions/budget.exceptions';
-import { ResourceOwnershipException } from '../../../../shared/domain/exceptions/resource-ownership.exception';
 import { makeBudget } from '../../../../test-support/factories';
 
 describe('UpdateBudgetLimitUseCase', () => {
-  let repo: InMemoryBudgetRepository;
+  let budgetRepo: InMemoryBudgetRepository;
+  let mockUow: Partial<IUnitOfWork>;
   let useCase: UpdateBudgetLimitUseCase;
 
   beforeEach(() => {
-    repo = new InMemoryBudgetRepository();
-    useCase = new UpdateBudgetLimitUseCase(repo, new GetBudgetByIdUseCase(repo));
+    budgetRepo = new InMemoryBudgetRepository();
+    mockUow = {
+      begin: jest.fn().mockResolvedValue(undefined),
+      commit: jest.fn().mockResolvedValue(undefined),
+      rollback: jest.fn().mockResolvedValue(undefined),
+      release: jest.fn().mockResolvedValue(undefined),
+      isActive: jest.fn().mockReturnValue(true),
+      getBudgetRepository: jest.fn().mockReturnValue(budgetRepo),
+    };
+    useCase = new UpdateBudgetLimitUseCase(
+      mockUow as IUnitOfWork,
+      null as any, // getCategoryByIdUseCase not needed for these tests
+    );
   });
 
-  it('should update the budget limit', async () => {
-    repo.seed([makeBudget({ id: 'b1', userId: 'user-1', limit: 300 })]);
+  it('should update the budget limit within a transaction', async () => {
+    budgetRepo.seed([makeBudget({ id: 'b1', userId: 'user-1', limit: 300 })]);
 
     const result = await useCase.execute({
       id: 'b1',
@@ -27,27 +40,36 @@ describe('UpdateBudgetLimitUseCase', () => {
     });
 
     expect(result.getLimit().getValue()).toBe(800);
+    expect(mockUow.begin).toHaveBeenCalled();
+    expect(mockUow.commit).toHaveBeenCalled();
+    expect(mockUow.release).toHaveBeenCalled();
   });
 
   it('should throw InvalidAmountLimitException when limit is negative', async () => {
-    repo.seed([makeBudget({ id: 'b1', userId: 'user-1' })]);
+    budgetRepo.seed([makeBudget({ id: 'b1', userId: 'user-1' })]);
 
     await expect(
       useCase.execute({ id: 'b1', requestUserId: 'user-1', limit: -10 }),
     ).rejects.toThrow(InvalidAmountLimitException);
+
+    expect(mockUow.rollback).toHaveBeenCalled();
   });
 
-  it('should throw ResourceOwnershipException when owned by another user', async () => {
-    repo.seed([makeBudget({ id: 'b1', userId: 'user-1' })]);
+  it('should throw BudgetAccessDeniedException when owned by another user', async () => {
+    budgetRepo.seed([makeBudget({ id: 'b1', userId: 'user-1' })]);
 
     await expect(
       useCase.execute({ id: 'b1', requestUserId: 'user-2', limit: 500 }),
-    ).rejects.toThrow(ResourceOwnershipException);
+    ).rejects.toThrow(BudgetAccessDeniedException);
+
+    expect(mockUow.rollback).toHaveBeenCalled();
   });
 
   it('should throw BudgetNotFoundException when missing', async () => {
     await expect(
       useCase.execute({ id: 'ghost', requestUserId: 'user-1', limit: 500 }),
     ).rejects.toThrow(BudgetNotFoundException);
+
+    expect(mockUow.rollback).toHaveBeenCalled();
   });
 });

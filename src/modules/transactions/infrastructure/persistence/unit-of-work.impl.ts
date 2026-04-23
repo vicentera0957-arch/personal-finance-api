@@ -3,12 +3,16 @@ import { DataSource, EntityManager, QueryRunner, Between, MoreThanOrEqual, LessT
 import { IUnitOfWork } from '../../domain/IUnitOfWork';
 import { ITransactionRepository, TransactionQueryOptions } from '../../domain/repository/transaction.repository';
 import { IAccountRepository } from '../../../accounts/domain/repository/accounts.repository';
+import { IBudgetRepository } from '../../../budgets/domain/repository/budgets.repository';
 import { Transaction } from '../../domain/entities/transaction.entity';
 import { TransactionOrmEntity } from './transaction.orm.entity';
 import { TransactionMapper } from './transaction.mapper';
 import { AccountOrmEntity } from '../../../accounts/infrastructure/persistence/account.orm.entity';
 import { AccountMapper } from '../../../accounts/infrastructure/persistence/account.mapper';
 import { Account } from '../../../accounts/domain/entities/account.entity';
+import { BudgetOrmEntity } from '../../../budgets/infrastructure/persistence/budget.orm.entity';
+import { BudgetMapper } from '../../../budgets/infrastructure/persistence/budget.mapper';
+import { Budget } from '../../../budgets/domain/budget.entity';
 import { FindOptionsWhere } from 'typeorm';
 
 // ── Repos escopados — privados a este archivo, solo el UoW los construye ─────
@@ -133,6 +137,47 @@ class ScopedAccountRepository extends IAccountRepository {
   }
 }
 
+class ScopedBudgetRepository extends IBudgetRepository {
+  constructor(
+    private readonly manager: EntityManager,
+    private readonly mapper: BudgetMapper,
+  ) {
+    super();
+  }
+
+  async findById(id: string): Promise<Budget | null> {
+    const orm = await this.manager.findOne(BudgetOrmEntity, { where: { id } });
+    return orm ? this.mapper.toDomain(orm) : null;
+  }
+
+  async findByUserId(userId: string): Promise<Budget[]> {
+    const orms = await this.manager.find(BudgetOrmEntity, { where: { userId } });
+    return orms.map((orm) => this.mapper.toDomain(orm));
+  }
+
+  async findByUserIdAndCategoryIdAndPeriod(
+    userId: string,
+    categoryId: string,
+    month: number,
+    year: number,
+  ): Promise<Budget | null> {
+    const orm = await this.manager.findOne(BudgetOrmEntity, {
+      where: { userId, categoryId, month, year },
+    });
+    return orm ? this.mapper.toDomain(orm) : null;
+  }
+
+  async save(budget: Budget): Promise<Budget> {
+    const orm = this.mapper.toOrm(budget);
+    const saved = await this.manager.save(BudgetOrmEntity, orm);
+    return this.mapper.toDomain(saved);
+  }
+
+  async delete(id: string): Promise<void> {
+    await this.manager.delete(BudgetOrmEntity, id);
+  }
+}
+
 // ── Implementación del UoW ────────────────────────────────────────────────────
 
 @Injectable({ scope: Scope.REQUEST })
@@ -143,6 +188,7 @@ export class TypeOrmUnitOfWorkImpl extends IUnitOfWork {
     private readonly dataSource: DataSource,
     private readonly transactionMapper: TransactionMapper,
     private readonly accountMapper: AccountMapper,
+    private readonly budgetMapper: BudgetMapper,
   ) {
     super();
   }
@@ -181,6 +227,13 @@ export class TypeOrmUnitOfWorkImpl extends IUnitOfWork {
     return new ScopedAccountRepository(
       this.queryRunner!.manager,
       this.accountMapper,
+    );
+  }
+
+  getBudgetRepository(): IBudgetRepository {
+    return new ScopedBudgetRepository(
+      this.queryRunner!.manager,
+      this.budgetMapper,
     );
   }
 }

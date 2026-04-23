@@ -1,6 +1,7 @@
 import { IUnitOfWork } from '../../../domain/IUnitOfWork';
 import { ITransactionRepository } from '../../../domain/repository/transaction.repository';
 import { IAccountRepository } from '../../../../accounts/domain/repository/accounts.repository';
+import { IBudgetRepository } from '../../../../budgets/domain/repository/budgets.repository';
 
 export class InMemoryUnitOfWork extends IUnitOfWork {
   private _commits = 0;
@@ -10,6 +11,7 @@ export class InMemoryUnitOfWork extends IUnitOfWork {
   constructor(
     private readonly txRepo: ITransactionRepository,
     private readonly acctRepo: IAccountRepository,
+    private readonly budgetRepo?: IBudgetRepository,
   ) {
     super();
   }
@@ -40,6 +42,13 @@ export class InMemoryUnitOfWork extends IUnitOfWork {
 
   getAccountRepository(): IAccountRepository {
     return this.acctRepo;
+  }
+
+  getBudgetRepository(): IBudgetRepository {
+    if (!this.budgetRepo) {
+      throw new Error('BudgetRepository not provided to InMemoryUnitOfWork');
+    }
+    return this.budgetRepo;
   }
 
   commits(): number {

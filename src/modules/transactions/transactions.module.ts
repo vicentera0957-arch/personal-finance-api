@@ -60,6 +60,6 @@ import { BudgetsModule } from '../budgets/budgets.module';
       scope: Scope.REQUEST,
     },
   ],
-  exports: [IExpenseChecker],
+  exports: [IExpenseChecker, IUnitOfWork],
 })
 export class TransactionsModule {}

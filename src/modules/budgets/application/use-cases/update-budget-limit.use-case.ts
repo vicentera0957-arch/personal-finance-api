@@ -1,8 +1,12 @@
 import { Injectable } from '@nestjs/common';
-import { IBudgetRepository } from '../../domain/repository/budgets.repository';
+import { IUnitOfWork } from '../../../transactions/domain/IUnitOfWork';
 import { Budget } from '../../domain/budget.entity';
 import { AmountLimit } from '../../domain/amountlimit.vo';
-import { GetBudgetByIdUseCase } from './get-budget-by-id.use-case';
+import {
+  BudgetNotFoundException,
+  BudgetAccessDeniedException,
+} from '../../domain/exceptions/budget.exceptions';
+import { GetCategoryByIdUseCase } from '../../../categories/application/use-cases/get-category-by-id.use-case';
 
 interface UpdateBudgetLimitCommand {
   id: string;
@@ -13,19 +17,36 @@ interface UpdateBudgetLimitCommand {
 @Injectable()
 export class UpdateBudgetLimitUseCase {
   constructor(
-    private readonly budgetRepository: IBudgetRepository,
-    private readonly getBudgetByIdUseCase: GetBudgetByIdUseCase,
+    private readonly uow: IUnitOfWork,
+    private readonly getCategoryByIdUseCase: GetCategoryByIdUseCase,
   ) {}
 
   async execute(command: UpdateBudgetLimitCommand): Promise<Budget> {
-    const budget = await this.getBudgetByIdUseCase.execute(
-      command.id,
-      command.requestUserId,
-    );
+    await this.uow.begin();
+    try {
+      const budgetRepo = this.uow.getBudgetRepository();
 
-    const limit = AmountLimit.create(command.limit);
-    budget.updateLimit(limit);
+      const budget = await budgetRepo.findById(command.id);
+      if (!budget) {
+        throw new BudgetNotFoundException(command.id);
+      }
 
-    return this.budgetRepository.save(budget);
+      if (budget.userId !== command.requestUserId) {
+        throw new BudgetAccessDeniedException(command.id);
+      }
+
+      const limit = AmountLimit.create(command.limit);
+      budget.updateLimit(limit);
+
+      const updated = await budgetRepo.save(budget);
+      await this.uow.commit();
+
+      return updated;
+    } catch (error) {
+      await this.uow.rollback();
+      throw error;
+    } finally {
+      await this.uow.release();
+    }
   }
 }
