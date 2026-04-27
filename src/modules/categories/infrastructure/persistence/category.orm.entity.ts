@@ -39,9 +39,6 @@ export class CategoryOrmEntity {
   @Column({ length: 20 })
   nature: string;
 
-  @Column({ name: 'is_budgetable', default: true })
-  isBudgetable: boolean;
-
   // Color e ícono son opcionales — el frontend puede definir defaults visuales
   @Column({ length: 20, nullable: true })
   color: string | null;

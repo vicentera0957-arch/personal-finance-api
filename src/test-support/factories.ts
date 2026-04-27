@@ -78,7 +78,6 @@ interface CategoryOverrides {
   userId?: string;
   name?: string;
   nature?: 'income' | 'expense';
-  isBudgetable?: boolean;
   color?: string;
   icon?: string;
   createdAt?: Date;
@@ -92,7 +91,6 @@ export function makeCategory(overrides: CategoryOverrides = {}): Category {
     userId: overrides.userId ?? 'user-1',
     name: overrides.name ?? 'Groceries',
     nature: CategoryNature.reconstitute(overrides.nature ?? 'expense'),
-    isBudgetable: overrides.isBudgetable ?? true,
     color: overrides.color,
     icon: overrides.icon,
     createdAt: overrides.createdAt ?? now,

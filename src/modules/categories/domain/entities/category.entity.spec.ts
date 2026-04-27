@@ -13,7 +13,6 @@ describe('Category', () => {
       userId: 'user-1',
       name: 'Groceries',
       nature: CategoryNature.create('expense'),
-      isBudgetable: true,
       ...overrides,
     });
   };
@@ -26,7 +25,6 @@ describe('Category', () => {
       expect(category.userId).toBe('user-1');
       expect(category.getName()).toBe('Groceries');
       expect(category.nature.isExpense()).toBe(true);
-      expect(category.getIsBudgetable()).toBe(true);
       expect(category.getColor()).toBeNull();
       expect(category.getIcon()).toBeNull();
     });
@@ -146,18 +144,9 @@ describe('Category', () => {
         userId: 'user-1',
         name: 'Salary',
         nature: CategoryNature.create('income'),
-        isBudgetable: false,
       });
 
       expect(income.nature.isIncome()).toBe(true);
-      expect(income.getIsBudgetable()).toBe(false);
-    });
-
-    it('should preserve isBudgetable immutability (no setter exists)', () => {
-      const category = createValidCategory({ isBudgetable: true });
-      // isBudgetable has no mutation method on the entity
-      expect(category.getIsBudgetable()).toBe(true);
-      // Attempting to set it would require direct property access (not possible in normal usage)
     });
   });
 
@@ -171,7 +160,6 @@ describe('Category', () => {
         userId: 'user-2',
         name: 'Entertainment',
         nature: CategoryNature.create('expense'),
-        isBudgetable: true,
         color: '#00FF00',
         icon: '🎬',
         createdAt,
@@ -195,7 +183,6 @@ describe('Category', () => {
         userId: 'user-3',
         name: 'Test',
         nature: CategoryNature.create('income'),
-        isBudgetable: false,
         createdAt,
         updatedAt,
       });
@@ -210,7 +197,6 @@ describe('Category', () => {
         userId: 'user-1',
         name: 'Test',
         nature: CategoryNature.create('expense'),
-        isBudgetable: true,
         color: undefined,
         createdAt: new Date(),
         updatedAt: new Date(),
@@ -225,7 +211,6 @@ describe('Category', () => {
         userId: 'user-1',
         name: 'Test',
         nature: CategoryNature.create('expense'),
-        isBudgetable: true,
         icon: undefined,
         createdAt: new Date(),
         updatedAt: new Date(),
@@ -416,7 +401,6 @@ describe('Category', () => {
       });
 
       expect(category.getName()).toBe('Test Category');
-      expect(category.getIsBudgetable()).toBe(true);
       expect(category.getColor()).toBe('#123456');
       expect(category.getIcon()).toBe('💳');
       expect(category.getUpdatedAt()).toEqual(category.createdAt);
@@ -443,39 +427,8 @@ describe('Category', () => {
         userId: 'user-1',
         name: 'Salary',
         nature: CategoryNature.create('income'),
-        isBudgetable: false,
       });
       expect(incomeCategory.nature.isIncome()).toBe(true);
-    });
-  });
-
-  describe('isBudgetable immutability', () => {
-    it('should not have a method to change isBudgetable', () => {
-      const category = createValidCategory({ isBudgetable: true });
-
-      // isBudgetable is set at creation and immutable
-      expect(category.getIsBudgetable()).toBe(true);
-
-      // There is no changeBudgetable() or setBudgetable() method
-      // The property cannot be mutated through public API
-      expect((category as any).changeBudgetable).toBeUndefined();
-      expect((category as any).setBudgetable).toBeUndefined();
-    });
-
-    it('should preserve isBudgetable value throughout lifecycle', () => {
-      const budgetable = createValidCategory({ isBudgetable: true });
-      const notBudgetable = createValidCategory({ isBudgetable: false });
-
-      // Perform various mutations
-      budgetable.rename('New Name');
-      budgetable.changeColor('#FF0000');
-      budgetable.changeIcon('🎯');
-
-      notBudgetable.rename('Another Name');
-
-      // isBudgetable remains unchanged
-      expect(budgetable.getIsBudgetable()).toBe(true);
-      expect(notBudgetable.getIsBudgetable()).toBe(false);
     });
   });
 

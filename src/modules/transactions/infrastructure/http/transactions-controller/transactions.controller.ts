@@ -15,6 +15,7 @@ import {
   ForbiddenException,
   ParseUUIDPipe,
 } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../../../../auth/infrastructure/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../../../auth/infrastructure/decorators/current-user.decorator';
 // Use cases
@@ -40,7 +41,6 @@ import {
 import {
   BudgetLimitExceededException,
   BudgetRequiredForExpenseTransactionException,
-  CategoryNotBudgetableForBudgetException,
 } from '../../../../budgets/domain/exceptions/budget.exceptions';
 // Excepciones de módulos vecinos (mapeadas aquí)
 import {
@@ -51,6 +51,8 @@ import {
 import { CategoryNotFoundException } from '../../../../categories/domain/exceptions/category.exceptions';
 import { ResourceOwnershipException } from '../../../../../shared/domain/exceptions/resource-ownership.exception';
 
+@ApiTags('transactions')
+@ApiBearerAuth('access-token')
 @Controller('transactions')
 export class TransactionsController {
   constructor(
@@ -109,7 +111,6 @@ export class TransactionsController {
       }
       if (
         e instanceof BudgetRequiredForExpenseTransactionException ||
-        e instanceof CategoryNotBudgetableForBudgetException ||
         e instanceof CannotOperateOnArchivedAccountException ||
         e instanceof ResourceOwnershipException
       ) {

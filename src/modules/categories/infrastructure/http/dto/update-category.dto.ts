@@ -1,5 +1,4 @@
 import {
-  IsBoolean,
   IsOptional,
   IsString,
   MaxLength,
@@ -15,10 +14,6 @@ export class UpdateCategoryDto {
   @MinLength(2)
   @MaxLength(80)
   name?: string;
-
-  @IsOptional()
-  @IsBoolean()
-  isBudgetable?: boolean;
 
   @IsOptional()
   @IsString()

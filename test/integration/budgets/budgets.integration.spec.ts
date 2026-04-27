@@ -34,7 +34,7 @@ describe('Budgets (integration)', () => {
     const catRes = await request(app.getHttpServer())
       .post('/categories')
       .set('Authorization', `Bearer ${accessToken}`)
-      .send({ name: 'Alimentación', nature: 'expense', isBudgetable: true });
+      .send({ name: 'Alimentación', nature: 'expense' });
     categoryId = catRes.body.id;
 
     // Budget base
@@ -54,7 +54,7 @@ describe('Budgets (integration)', () => {
       const catRes = await request(app.getHttpServer())
         .post('/categories')
         .set('Authorization', `Bearer ${accessToken}`)
-        .send({ name: 'Transporte', nature: 'expense', isBudgetable: true });
+        .send({ name: 'Transporte', nature: 'expense' });
 
       const res = await request(app.getHttpServer())
         .post('/budgets')
@@ -78,7 +78,7 @@ describe('Budgets (integration)', () => {
       const incomeCat = await request(app.getHttpServer())
         .post('/categories')
         .set('Authorization', `Bearer ${accessToken}`)
-        .send({ name: 'Salario', nature: 'income', isBudgetable: false });
+        .send({ name: 'Salario', nature: 'income' });
 
       await request(app.getHttpServer())
         .post('/budgets')

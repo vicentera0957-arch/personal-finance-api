@@ -2,7 +2,6 @@ import { UpdateCategoryUseCase } from './update-category.use-case';
 import { GetCategoryByIdUseCase } from './get-category-by-id.use-case';
 import { InMemoryCategoryRepository } from '../../infrastructure/persistence/__fakes__/in-memory-category.repository';
 import {
-  CategoryBudgetableImmutableException,
   CategoryNotFoundException,
 } from '../../domain/exceptions/category.exceptions';
 import { ResourceOwnershipException } from '../../../../shared/domain/exceptions/resource-ownership.exception';
@@ -29,34 +28,6 @@ describe('UpdateCategoryUseCase', () => {
     });
 
     expect(result.getName()).toBe('New');
-  });
-
-  it('should throw CategoryBudgetableImmutableException when changing isBudgetable', async () => {
-    repo.seed([
-      makeCategory({ id: 'c1', userId: 'user-1', isBudgetable: true }),
-    ]);
-
-    await expect(
-      useCase.execute({
-        id: 'c1',
-        requestUserId: 'user-1',
-        isBudgetable: false,
-      }),
-    ).rejects.toThrow(CategoryBudgetableImmutableException);
-  });
-
-  it('should allow passing the same isBudgetable value (no-op)', async () => {
-    repo.seed([
-      makeCategory({ id: 'c1', userId: 'user-1', isBudgetable: true }),
-    ]);
-
-    const result = await useCase.execute({
-      id: 'c1',
-      requestUserId: 'user-1',
-      isBudgetable: true,
-    });
-
-    expect(result.getIsBudgetable()).toBe(true);
   });
 
   it('should throw ResourceOwnershipException when updating another user category', async () => {

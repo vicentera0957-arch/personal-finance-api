@@ -8,7 +8,6 @@ interface CreateCategoryCommand {
   userId: string;
   name: string;
   nature: string;
-  isBudgetable: boolean;
   color?: string;
   icon?: string;
 }
@@ -25,7 +24,6 @@ export class CreateCategoryUseCase {
       userId: command.userId,
       name: command.name,
       nature,
-      isBudgetable: command.isBudgetable,
       color: command.color,
       icon: command.icon,
     });

@@ -1,5 +1,4 @@
 import {
-  IsBoolean,
   IsIn,
   IsNotEmpty,
   IsOptional,
@@ -18,9 +17,6 @@ export class CreateCategoryDto {
   // Solo acepta los valores del VO CategoryNature
   @IsIn(['income', 'expense'])
   nature: string;
-
-  @IsBoolean()
-  isBudgetable: boolean;
 
   @IsOptional()
   @IsString()

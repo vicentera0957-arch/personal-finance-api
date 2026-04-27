@@ -6,7 +6,6 @@ import { AmountLimit } from '../../domain/amountlimit.vo';
 import {
   BudgetAlreadyExistsException,
   BudgetCategoryMustBeExpenseException,
-  CategoryNotBudgetableForBudgetException,
 } from '../../domain/exceptions/budget.exceptions';
 import { GetCategoryByIdUseCase } from '../../../categories/application/use-cases/get-category-by-id.use-case';
 
@@ -36,10 +35,6 @@ export class CreateBudgetUseCase {
         command.categoryId,
         category.nature.getValue(),
       );
-    }
-
-    if (!category.getIsBudgetable()) {
-      throw new CategoryNotBudgetableForBudgetException(command.categoryId);
     }
 
     const existing =

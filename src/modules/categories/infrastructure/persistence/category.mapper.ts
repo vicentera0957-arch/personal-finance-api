@@ -16,7 +16,6 @@ export class CategoryMapper {
       userId: orm.userId,
       name: orm.name,
       nature,
-      isBudgetable: orm.isBudgetable,
       color: orm.color ?? undefined,
       icon: orm.icon ?? undefined,
       createdAt: orm.createdAt,
@@ -30,7 +29,6 @@ export class CategoryMapper {
     orm.userId = domain.userId;
     orm.name = domain.getName();
     orm.nature = domain.nature.getValue();
-    orm.isBudgetable = domain.getIsBudgetable();
     orm.color = domain.getColor();
     orm.icon = domain.getIcon();
     orm.createdAt = domain.createdAt;

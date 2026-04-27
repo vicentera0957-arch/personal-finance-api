@@ -15,6 +15,7 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../../../../auth/infrastructure/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../../../auth/infrastructure/decorators/current-user.decorator';
 import { CreateBudgetUseCase } from '../../../application/use-cases/create-budget.use-case';
@@ -31,7 +32,6 @@ import {
   BudgetCategoryMustBeExpenseException,
   BudgetNotFoundException,
   BudgetHasTransactionsInPeriodException,
-  CategoryNotBudgetableForBudgetException,
   InvalidAmountLimitException,
   InvalidBudgetMonthException,
   InvalidBudgetYearException,
@@ -40,6 +40,8 @@ import { CategoryNotFoundException } from '../../../../categories/domain/excepti
 import { ResourceOwnershipException } from '../../../../../shared/domain/exceptions/resource-ownership.exception';
 import { GetBudgetsQueryDto } from '../dto/get-budgets-query.dto';
 
+@ApiTags('budgets')
+@ApiBearerAuth('access-token')
 @Controller('budgets')
 export class BudgetsController {
   constructor(
@@ -91,7 +93,6 @@ export class BudgetsController {
       if (
         e instanceof BudgetAlreadyExistsException ||
         e instanceof BudgetCategoryMustBeExpenseException ||
-        e instanceof CategoryNotBudgetableForBudgetException ||
         e instanceof ResourceOwnershipException
       ) {
         throw new ConflictException(e.message);

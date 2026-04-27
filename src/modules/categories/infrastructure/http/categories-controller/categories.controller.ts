@@ -14,6 +14,7 @@ import {
   ForbiddenException,
   ParseUUIDPipe,
 } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../../../../auth/infrastructure/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../../../auth/infrastructure/decorators/current-user.decorator';
 // Use cases
@@ -29,7 +30,6 @@ import { CategoryResponseDto } from '../dto/category-response.dto';
 // Dominio
 import { Category } from '../../../domain/entities/category.entity';
 import {
-  CategoryBudgetableImmutableException,
   CategoryNotFoundException,
   CategoryInUseException,
   DuplicateCategoryException,
@@ -39,6 +39,8 @@ import {
 } from '../../../domain/exceptions/category.exceptions';
 import { ResourceOwnershipException } from '../../../../../shared/domain/exceptions/resource-ownership.exception';
 
+@ApiTags('categories')
+@ApiBearerAuth('access-token')
 @Controller('categories')
 export class CategoriesController {
   constructor(
@@ -56,7 +58,6 @@ export class CategoriesController {
     dto.userId = category.userId;
     dto.name = category.getName();
     dto.nature = category.nature.getValue();
-    dto.isBudgetable = category.getIsBudgetable();
     dto.color = category.getColor();
     dto.icon = category.getIcon();
     dto.createdAt = category.createdAt;
@@ -74,7 +75,6 @@ export class CategoriesController {
         userId: user.userId,
         name: dto.name,
         nature: dto.nature,
-        isBudgetable: dto.isBudgetable,
         color: dto.color,
         icon: dto.icon,
       });
@@ -136,7 +136,6 @@ export class CategoriesController {
       const category = await this.updateCategoryUseCase.execute({
         id,
         name: dto.name,
-        isBudgetable: dto.isBudgetable,
         color: dto.color,
         icon: dto.icon,
         requestUserId: user.userId,
@@ -155,9 +154,6 @@ export class CategoriesController {
       }
       if (e instanceof ResourceOwnershipException) {
         throw new ForbiddenException(e.message);
-      }
-      if (e instanceof CategoryBudgetableImmutableException) {
-        throw new ConflictException(e.message);
       }
       throw e;
     }

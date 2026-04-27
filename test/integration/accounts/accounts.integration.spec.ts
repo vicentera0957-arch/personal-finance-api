@@ -179,7 +179,7 @@ describe('Accounts (integration)', () => {
       const catRes = await request(app.getHttpServer())
         .post('/categories')
         .set('Authorization', `Bearer ${accessToken}`)
-        .send({ name: 'Alimentación', nature: 'expense', isBudgetable: true })
+        .send({ name: 'Alimentación', nature: 'expense' })
         .expect(201);
       const categoryId = catRes.body.id;
 
@@ -214,7 +214,7 @@ describe('Accounts (integration)', () => {
       const catRes = await request(app.getHttpServer())
         .post('/categories')
         .set('Authorization', `Bearer ${accessToken}`)
-        .send({ name: 'Transporte', nature: 'expense', isBudgetable: true })
+        .send({ name: 'Transporte', nature: 'expense' })
         .expect(201);
       const categoryId = catRes.body.id;
 

@@ -9,7 +9,6 @@ import { GetBudgetByUserCategoryPeriodUseCase } from '../../../budgets/applicati
 import {
   BudgetLimitExceededException,
   BudgetRequiredForExpenseTransactionException,
-  CategoryNotBudgetableForBudgetException,
 } from '../../../budgets/domain/exceptions/budget.exceptions';
 import { GetAccountByIdUseCase } from '../../../accounts/application/use-cases/get-account-by-id.use-case';
 import { UpdateAccountBalanceUseCase } from '../../../accounts/application/use-cases/update-account-balance.use-case';
@@ -56,10 +55,6 @@ export class CreateTransactionUseCase {
     }
 
     if (nature.isExpense()) {
-      if (!category.getIsBudgetable()) {
-        throw new CategoryNotBudgetableForBudgetException(command.categoryId);
-      }
-
       const month = command.transactionDate.getMonth() + 1;
       const year = command.transactionDate.getFullYear();
 

@@ -5,7 +5,6 @@ import { InMemoryCategoryRepository } from '../../../categories/infrastructure/p
 import {
   BudgetAlreadyExistsException,
   BudgetCategoryMustBeExpenseException,
-  CategoryNotBudgetableForBudgetException,
 } from '../../domain/exceptions/budget.exceptions';
 import { CategoryNotFoundException } from '../../../categories/domain/exceptions/category.exceptions';
 import { makeBudget, makeCategory } from '../../../../test-support/factories';
@@ -30,7 +29,6 @@ describe('CreateBudgetUseCase', () => {
         id: 'cat-1',
         userId: 'user-1',
         nature: 'expense',
-        isBudgetable: true,
       }),
     ]);
 
@@ -56,7 +54,6 @@ describe('CreateBudgetUseCase', () => {
         id: 'cat-1',
         userId: 'user-1',
         nature: 'income',
-        isBudgetable: true,
       }),
     ]);
 
@@ -69,27 +66,6 @@ describe('CreateBudgetUseCase', () => {
         limit: 500,
       }),
     ).rejects.toThrow(BudgetCategoryMustBeExpenseException);
-  });
-
-  it('should throw CategoryNotBudgetableForBudgetException when category is not budgetable', async () => {
-    categoryRepo.seed([
-      makeCategory({
-        id: 'cat-1',
-        userId: 'user-1',
-        nature: 'expense',
-        isBudgetable: false,
-      }),
-    ]);
-
-    await expect(
-      useCase.execute({
-        userId: 'user-1',
-        categoryId: 'cat-1',
-        month: 3,
-        year: 2026,
-        limit: 500,
-      }),
-    ).rejects.toThrow(CategoryNotBudgetableForBudgetException);
   });
 
   it('should throw BudgetAlreadyExistsException when one exists for the period', async () => {

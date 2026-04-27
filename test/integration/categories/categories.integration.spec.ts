@@ -8,7 +8,7 @@ describe('Categories (integration)', () => {
   let accessToken: string;
   let categoryId: string;
 
-  const expenseCategoryPayload = { name: 'Alimentación', nature: 'expense', isBudgetable: true };
+  const expenseCategoryPayload = { name: 'Alimentación', nature: 'expense' };
 
   beforeAll(async () => {
     app = await createTestApp();
@@ -43,7 +43,7 @@ describe('Categories (integration)', () => {
       const res = await request(app.getHttpServer())
         .post('/categories')
         .set('Authorization', `Bearer ${accessToken}`)
-        .send({ name: 'Salario', nature: 'income', isBudgetable: false })
+        .send({ name: 'Salario', nature: 'income' })
         .expect(201);
 
       expect(res.body).toHaveProperty('id');

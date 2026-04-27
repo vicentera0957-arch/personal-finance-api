@@ -11,7 +11,6 @@ interface CreateCategoryProps {
   userId: string;
   name: string;
   nature: CategoryNature;
-  isBudgetable: boolean;
   color?: string;
   icon?: string;
 }
@@ -28,7 +27,6 @@ export class Category {
     public readonly userId: string,
     private name: string,
     public readonly nature: CategoryNature, // inmutable — ver notas.md
-    private isBudgetable: boolean,
     private color: string | null,
     private icon: string | null,
     public readonly createdAt: Date,
@@ -47,7 +45,6 @@ export class Category {
       props.userId,
       normalizedName,
       props.nature,
-      props.isBudgetable,
       props.color ?? null,
       props.icon ?? null,
       now,
@@ -62,7 +59,6 @@ export class Category {
       props.userId,
       props.name,
       props.nature,
-      props.isBudgetable,
       props.color ?? null,
       props.icon ?? null,
       props.createdAt,
@@ -100,10 +96,6 @@ export class Category {
 
   getName(): string {
     return this.name;
-  }
-
-  getIsBudgetable(): boolean {
-    return this.isBudgetable;
   }
 
   getColor(): string | null {

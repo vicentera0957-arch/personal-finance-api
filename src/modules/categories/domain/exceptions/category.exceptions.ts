@@ -60,11 +60,3 @@ export class InvalidCategoryNatureException extends CategoryException {
   }
 }
 
-// Se lanza cuando se intenta cambiar isBudgetable despues de crear la categoria.
-export class CategoryBudgetableImmutableException extends CategoryException {
-  constructor(id: string) {
-    super(
-      `No se puede modificar isBudgetable para la categoria ${id} despues de su creacion`,
-    );
-  }
-}

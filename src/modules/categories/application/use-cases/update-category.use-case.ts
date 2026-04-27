@@ -2,12 +2,10 @@ import { Injectable } from '@nestjs/common';
 import { ICategoryRepository } from '../../domain/repository/category.repository';
 import { Category } from '../../domain/entities/category.entity';
 import { GetCategoryByIdUseCase } from './get-category-by-id.use-case';
-import { CategoryBudgetableImmutableException } from '../../domain/exceptions/category.exceptions';
 
 interface UpdateCategoryCommand {
   id: string;
   name?: string;
-  isBudgetable?: boolean;
   color?: string;
   icon?: string;
   requestUserId: string;
@@ -35,12 +33,6 @@ export class UpdateCategoryUseCase {
     }
     if (command.icon !== undefined) {
       category.changeIcon(command.icon);
-    }
-    if (
-      command.isBudgetable !== undefined &&
-      command.isBudgetable !== category.getIsBudgetable()
-    ) {
-      throw new CategoryBudgetableImmutableException(command.id);
     }
 
     return this.categoryRepository.save(category);

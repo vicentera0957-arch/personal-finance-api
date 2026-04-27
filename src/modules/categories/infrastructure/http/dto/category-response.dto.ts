@@ -5,7 +5,6 @@ export class CategoryResponseDto {
   userId: string;
   name: string;
   nature: string;
-  isBudgetable: boolean;
   color: string | null;
   icon: string | null;
   createdAt: Date;

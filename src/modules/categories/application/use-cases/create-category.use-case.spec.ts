@@ -16,12 +16,10 @@ describe('CreateCategoryUseCase', () => {
       userId: 'user-1',
       name: 'Food',
       nature: 'expense',
-      isBudgetable: true,
     });
 
     expect(result.userId).toBe('user-1');
     expect(result.nature.getValue()).toBe('expense');
-    expect(result.getIsBudgetable()).toBe(true);
     expect(repo.size()).toBe(1);
   });
 
@@ -31,7 +29,6 @@ describe('CreateCategoryUseCase', () => {
         userId: 'user-1',
         name: 'Food',
         nature: 'bogus',
-        isBudgetable: true,
       }),
     ).rejects.toThrow(InvalidCategoryNatureException);
 

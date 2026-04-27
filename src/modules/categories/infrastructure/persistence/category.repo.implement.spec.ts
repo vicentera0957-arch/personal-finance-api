@@ -22,7 +22,6 @@ describe('CategoryRepositoryImpl', () => {
     orm.userId = overrides.userId ?? 'user-1';
     orm.name = overrides.name ?? 'Food';
     orm.nature = overrides.nature ?? 'expense';
-    orm.isBudgetable = overrides.isBudgetable ?? true;
     orm.color = overrides.color ?? null;
     orm.icon = overrides.icon ?? null;
     orm.createdAt = new Date();

@@ -11,7 +11,6 @@ import { GetCategoriesByUserIdUseCase } from '../../../application/use-cases/get
 import { UpdateCategoryUseCase } from '../../../application/use-cases/update-category.use-case';
 import { DeleteCategoryUseCase } from '../../../application/use-cases/delete-category.use-case';
 import {
-  CategoryBudgetableImmutableException,
   CategoryInUseException,
   CategoryNotFoundException,
   DuplicateCategoryException,
@@ -54,7 +53,7 @@ describe('CategoriesController', () => {
       );
 
       await controller.create(
-        { name: 'Food', nature: 'expense', isBudgetable: true },
+        { name: 'Food', nature: 'expense' },
         currentUser,
       );
 
@@ -62,7 +61,6 @@ describe('CategoriesController', () => {
         userId: 'user-1',
         name: 'Food',
         nature: 'expense',
-        isBudgetable: true,
         color: undefined,
         icon: undefined,
       });
@@ -72,7 +70,7 @@ describe('CategoriesController', () => {
       createUseCase.execute.mockRejectedValue(new InvalidCategoryNameException(''));
 
       await expect(
-        controller.create({ name: '', nature: 'expense', isBudgetable: true }, currentUser),
+        controller.create({ name: '', nature: 'expense' }, currentUser),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -80,7 +78,7 @@ describe('CategoriesController', () => {
       createUseCase.execute.mockRejectedValue(new DuplicateCategoryException('Food', 'expense'));
 
       await expect(
-        controller.create({ name: 'Food', nature: 'expense', isBudgetable: true }, currentUser),
+        controller.create({ name: 'Food', nature: 'expense' }, currentUser),
       ).rejects.toThrow(ConflictException);
     });
   });
@@ -115,13 +113,6 @@ describe('CategoriesController', () => {
   });
 
   describe('update', () => {
-    it('should map CategoryBudgetableImmutableException to 409', async () => {
-      updateUseCase.execute.mockRejectedValue(new CategoryBudgetableImmutableException('c1'));
-
-      await expect(
-        controller.update('c1', { isBudgetable: false }, currentUser),
-      ).rejects.toThrow(ConflictException);
-    });
   });
 
   describe('delete', () => {

@@ -43,14 +43,14 @@ describe('Transactions (integration)', () => {
     const expCatRes = await request(app.getHttpServer())
       .post('/categories')
       .set('Authorization', `Bearer ${accessToken}`)
-      .send({ name: 'Alimentación', nature: 'expense', isBudgetable: true });
+      .send({ name: 'Alimentación', nature: 'expense' });
     expenseCategoryId = expCatRes.body.id;
 
     // Categoría income
     const incCatRes = await request(app.getHttpServer())
       .post('/categories')
       .set('Authorization', `Bearer ${accessToken}`)
-      .send({ name: 'Salario', nature: 'income', isBudgetable: false });
+      .send({ name: 'Salario', nature: 'income' });
     incomeCategoryId = incCatRes.body.id;
 
     // Budget para la categoría expense del mes actual
@@ -426,7 +426,7 @@ describe('Transactions (integration)', () => {
       const catRes = await request(app.getHttpServer())
         .post('/categories')
         .set('Authorization', `Bearer ${accessToken}`)
-        .send({ name: 'Gastos pequeños', nature: 'expense', isBudgetable: true })
+        .send({ name: 'Gastos pequeños', nature: 'expense' })
         .expect(201);
       const smallCatId = catRes.body.id;
 
@@ -460,7 +460,7 @@ describe('Transactions (integration)', () => {
       const catRes = await request(app.getHttpServer())
         .post('/categories')
         .set('Authorization', `Bearer ${accessToken}`)
-        .send({ name: 'Gastos cero', nature: 'expense', isBudgetable: true })
+        .send({ name: 'Gastos cero', nature: 'expense' })
         .expect(201);
       const zeroCatId = catRes.body.id;
 
@@ -546,7 +546,7 @@ describe('Transactions (integration)', () => {
       const catRes = await request(app.getHttpServer())
         .post('/categories')
         .set('Authorization', `Bearer ${accessToken}`)
-        .send({ name: 'Transporte', nature: 'expense', isBudgetable: true })
+        .send({ name: 'Transporte', nature: 'expense' })
         .expect(201);
 
       // NO crear budget → debe fallar con 409
@@ -567,7 +567,7 @@ describe('Transactions (integration)', () => {
       const catRes = await request(app.getHttpServer())
         .post('/categories')
         .set('Authorization', `Bearer ${accessToken}`)
-        .send({ name: 'Misceláneos', nature: 'expense', isBudgetable: false })
+        .send({ name: 'Misceláneos', nature: 'expense' })
         .expect(201);
 
       await request(app.getHttpServer())

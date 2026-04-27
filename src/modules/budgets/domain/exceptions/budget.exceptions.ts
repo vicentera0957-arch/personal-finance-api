@@ -45,14 +45,6 @@ export class BudgetCategoryMustBeExpenseException extends BudgetException {
   }
 }
 
-export class CategoryNotBudgetableForBudgetException extends BudgetException {
-  constructor(categoryId: string) {
-    super(
-      `La categoria ${categoryId} no es presupuestable y no puede asociarse a un presupuesto`,
-    );
-  }
-}
-
 export class BudgetRequiredForExpenseTransactionException extends BudgetException {
   constructor(categoryId: string, month: number, year: number) {
     super(
