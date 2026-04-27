@@ -92,6 +92,7 @@ export class CreateTransactionUseCase {
       const updateBalance = new UpdateAccountBalanceUseCase(acctRepo);
 
       if (nature.isExpense()) {
+        const budgetRepo = this.uow.getBudgetRepository();
         const month = command.transactionDate.getMonth() + 1;
         const year = command.transactionDate.getFullYear();
 
@@ -103,12 +104,12 @@ export class CreateTransactionUseCase {
             year,
           );
 
-        const budget = await this.getBudgetByUserCategoryPeriodUseCase.execute({
-          userId: command.userId,
-          categoryId: command.categoryId,
+        const budget = await budgetRepo.findByUserIdAndCategoryIdAndPeriod(
+          command.userId,
+          command.categoryId,
           month,
           year,
-        });
+        );
 
         const projectedSpent = spentInPeriod + amount.getValue();
         const limit = budget!.getLimit().getValue();

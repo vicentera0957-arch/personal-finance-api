@@ -13,7 +13,6 @@ import { IncompatibleCategoryNatureException } from '../../domain/exceptions/tra
 import {
   BudgetLimitExceededException,
   BudgetRequiredForExpenseTransactionException,
-  CategoryNotBudgetableForBudgetException,
 } from '../../../budgets/domain/exceptions/budget.exceptions';
 
 import {
@@ -38,7 +37,7 @@ describe('CreateTransactionUseCase', () => {
     accountRepo = new InMemoryAccountRepository();
     categoryRepo = new InMemoryCategoryRepository();
     budgetRepo = new InMemoryBudgetRepository();
-    uow = new InMemoryUnitOfWork(txRepo, accountRepo);
+    uow = new InMemoryUnitOfWork(txRepo, accountRepo, budgetRepo);
 
     useCase = new CreateTransactionUseCase(
       uow,
@@ -65,7 +64,6 @@ describe('CreateTransactionUseCase', () => {
         id: 'cat-1',
         userId: 'user-1',
         nature: 'expense',
-        isBudgetable: true,
       }),
     ]);
     budgetRepo.seed([
@@ -128,7 +126,6 @@ describe('CreateTransactionUseCase', () => {
         id: 'cat-1',
         userId: 'user-1',
         nature: 'income',
-        isBudgetable: false,
       }),
     ]);
 
@@ -153,7 +150,6 @@ describe('CreateTransactionUseCase', () => {
         id: 'cat-1',
         userId: 'user-1',
         nature: 'income',
-        isBudgetable: false,
       }),
     ]);
 
@@ -171,29 +167,6 @@ describe('CreateTransactionUseCase', () => {
     expect(txRepo.size()).toBe(0);
   });
 
-  it('should throw CategoryNotBudgetableForBudgetException for non-budgetable expense category', async () => {
-    accountRepo.seed([makeAccount({ id: 'a1', userId: 'user-1' })]);
-    categoryRepo.seed([
-      makeCategory({
-        id: 'cat-1',
-        userId: 'user-1',
-        nature: 'expense',
-        isBudgetable: false,
-      }),
-    ]);
-
-    await expect(
-      useCase.execute({
-        userId: 'user-1',
-        accountId: 'a1',
-        categoryId: 'cat-1',
-        nature: 'expense',
-        amount: 50,
-        transactionDate: TX_DATE,
-      }),
-    ).rejects.toThrow(CategoryNotBudgetableForBudgetException);
-  });
-
   it('should throw BudgetRequiredForExpenseTransactionException when no budget exists', async () => {
     accountRepo.seed([makeAccount({ id: 'a1', userId: 'user-1' })]);
     categoryRepo.seed([
@@ -201,7 +174,6 @@ describe('CreateTransactionUseCase', () => {
         id: 'cat-1',
         userId: 'user-1',
         nature: 'expense',
-        isBudgetable: true,
       }),
     ]);
 

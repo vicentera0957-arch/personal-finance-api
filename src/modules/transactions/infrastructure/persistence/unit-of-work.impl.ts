@@ -117,7 +117,10 @@ class ScopedAccountRepository extends IAccountRepository {
   }
 
   async findById(id: string): Promise<Account | null> {
-    const orm = await this.manager.findOne(AccountOrmEntity, { where: { id } });
+    const orm = await this.manager.findOne(AccountOrmEntity, {
+      where: { id },
+      lock: { mode: 'pessimistic_write' },
+    });
     return orm ? this.mapper.toDomain(orm) : null;
   }
 
@@ -146,7 +149,10 @@ class ScopedBudgetRepository extends IBudgetRepository {
   }
 
   async findById(id: string): Promise<Budget | null> {
-    const orm = await this.manager.findOne(BudgetOrmEntity, { where: { id } });
+    const orm = await this.manager.findOne(BudgetOrmEntity, {
+      where: { id },
+      lock: { mode: 'pessimistic_write' },
+    });
     return orm ? this.mapper.toDomain(orm) : null;
   }
 
@@ -163,6 +169,7 @@ class ScopedBudgetRepository extends IBudgetRepository {
   ): Promise<Budget | null> {
     const orm = await this.manager.findOne(BudgetOrmEntity, {
       where: { userId, categoryId, month, year },
+      lock: { mode: 'pessimistic_write' },
     });
     return orm ? this.mapper.toDomain(orm) : null;
   }
