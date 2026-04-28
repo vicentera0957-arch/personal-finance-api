@@ -1,10 +1,11 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, QueryFailedError } from 'typeorm';
 import { IUserRepository } from '../../domain/repository/user.repository';
 import { User } from '../../domain/entities/user.entity';
 import { UserOrmEntity } from './user.orm.entity';
 import { UserMapper } from './user.mapper';
+import { UserAlreadyExistsException } from '../../domain/exceptions/user.exceptions';
 
 @Injectable()
 export class UserRepositoryImpl extends IUserRepository {
@@ -43,12 +44,26 @@ export class UserRepositoryImpl extends IUserRepository {
     // Convertimos de dominio a ORM entity antes de persistir
     const orm = this.mapper.toOrm(user);
 
-    // TypeORM decide internamente si hace INSERT o UPDATE
-    // basándose en si el id ya existe en la tabla
-    const saved = await this.ormRepository.save(orm);
+    try {
+      // TypeORM decide internamente si hace INSERT o UPDATE
+      // basándose en si el id ya existe en la tabla
+      const saved = await this.ormRepository.save(orm);
 
-    // Devolvemos el resultado convertido de vuelta al dominio
-    return this.mapper.toDomain(saved);
+      // Devolvemos el resultado convertido de vuelta al dominio
+      return this.mapper.toDomain(saved);
+    } catch (err) {
+      // Cierra Bug E: dos concurrent POST /auth/register con el mismo email
+      // — la segunda falla con constraint violation (23505 en Postgres).
+      // Sin este catch, TypeORM propaga QueryFailedError → NestJS devuelve 500.
+      // Con esto, mapeamos a domain exception → controller mapea a 409.
+      if (
+        err instanceof QueryFailedError &&
+        (err as any).driverError?.code === '23505'
+      ) {
+        throw new UserAlreadyExistsException(user.email.getValue());
+      }
+      throw err;
+    }
   }
 
   async delete(id: string): Promise<void> {

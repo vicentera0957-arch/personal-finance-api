@@ -1,7 +1,8 @@
-import { Repository } from 'typeorm';
+import { Repository, QueryFailedError } from 'typeorm';
 import { UserRepositoryImpl } from './user.repo.implement';
 import { UserMapper } from './user.mapper';
 import { UserOrmEntity } from './user.orm.entity';
+import { UserAlreadyExistsException } from '../../domain/exceptions/user.exceptions';
 import { makeUser } from '../../../../test-support/factories';
 
 type OrmMock = jest.Mocked<Pick<Repository<UserOrmEntity>, 'findOne' | 'save' | 'delete'>>;
@@ -81,6 +82,34 @@ describe('UserRepositoryImpl', () => {
       expect(savedArg).toBeInstanceOf(UserOrmEntity);
       expect(savedArg.email).toBe('a@b.cl');
       expect(saved.email.getValue()).toBe('a@b.cl');
+    });
+
+    // Bug E — dos concurrent POST /auth/register con el mismo email:
+    // ambas pasan el pre-check de CreateUserUseCase, la segunda falla
+    // en el INSERT con constraint violation (23505). El repo debe
+    // mapear QueryFailedError → UserAlreadyExistsException → 409.
+    it('should throw UserAlreadyExistsException on unique email violation (23505)', async () => {
+      const user = makeUser({ id: 'user-1', email: 'a@b.cl' });
+
+      // Simula que Postgres rechaza el INSERT por constraint de unicidad
+      const dbError = Object.assign(new QueryFailedError('INSERT', [], new Error()), {
+        driverError: { code: '23505' },
+      });
+      ormRepo.save.mockRejectedValue(dbError);
+
+      await expect(repo.save(user)).rejects.toThrow(UserAlreadyExistsException);
+      await expect(repo.save(user)).rejects.toThrow('a@b.cl');
+    });
+
+    it('should rethrow non-23505 QueryFailedErrors as-is', async () => {
+      const user = makeUser({ id: 'user-1', email: 'a@b.cl' });
+
+      const dbError = Object.assign(new QueryFailedError('INSERT', [], new Error()), {
+        driverError: { code: '23503' }, // FK violation — distinto error
+      });
+      ormRepo.save.mockRejectedValue(dbError);
+
+      await expect(repo.save(user)).rejects.toBeInstanceOf(QueryFailedError);
     });
   });
 
