@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { randomUUID } from 'crypto';
-import { IUnitOfWork } from '../../domain/IUnitOfWork';
+import { ITransactionUnitOfWork } from '../../domain/ITransactionUnitOfWork';
 import { Transaction } from '../../domain/entities/transaction.entity';
 import { TransactionNature } from '../../domain/value-objects/transaction-nature.vo';
 import { Amount } from '../../domain/value-objects/amount.vo';
@@ -27,7 +27,7 @@ interface CreateTransactionCommand {
 @Injectable()
 export class CreateTransactionUseCase {
   constructor(
-    private readonly uow: IUnitOfWork,
+    private readonly uow: ITransactionUnitOfWork,
     private readonly getAccountByIdUseCase: GetAccountByIdUseCase,
     private readonly getCategoryByIdUseCase: GetCategoryByIdUseCase,
     private readonly getBudgetByUserCategoryPeriodUseCase: GetBudgetByUserCategoryPeriodUseCase,

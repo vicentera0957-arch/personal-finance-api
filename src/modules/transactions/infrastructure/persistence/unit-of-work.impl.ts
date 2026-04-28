@@ -1,6 +1,7 @@
 import { Injectable, Scope } from '@nestjs/common';
 import { DataSource, EntityManager, QueryRunner, Between, MoreThanOrEqual, LessThanOrEqual } from 'typeorm';
-import { IUnitOfWork } from '../../domain/IUnitOfWork';
+import { ITransactionUnitOfWork } from '../../domain/ITransactionUnitOfWork';
+import { IBudgetUnitOfWork } from '../../../budgets/domain/IBudgetUnitOfWork';
 import { ITransactionRepository, TransactionQueryOptions } from '../../domain/repository/transaction.repository';
 import { IAccountRepository } from '../../../accounts/domain/repository/accounts.repository';
 import { IBudgetRepository } from '../../../budgets/domain/repository/budgets.repository';
@@ -187,8 +188,17 @@ class ScopedBudgetRepository extends IBudgetRepository {
 
 // ── Implementación del UoW ────────────────────────────────────────────────────
 
+/**
+ * Single concrete implementation that satisfies BOTH module-specific UoW ports.
+ *
+ * Wired in NestJS via `useExisting` so `ITransactionUnitOfWork` and
+ * `IBudgetUnitOfWork` resolve to the SAME request-scoped instance — sharing
+ * one QueryRunner / one DB transaction.
+ */
 @Injectable({ scope: Scope.REQUEST })
-export class TypeOrmUnitOfWorkImpl extends IUnitOfWork {
+export class TypeOrmUnitOfWorkImpl
+  extends ITransactionUnitOfWork
+  implements IBudgetUnitOfWork {
   private queryRunner: QueryRunner | null = null;
 
   constructor(

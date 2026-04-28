@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { IUnitOfWork } from '../../domain/IUnitOfWork';
+import { ITransactionUnitOfWork } from '../../domain/ITransactionUnitOfWork';
 import { GetTransactionByIdUseCase } from './get-transaction-by-id.use-case';
 import { CannotDeleteTransactionException } from '../../domain/exceptions/transaction.exceptions';
 import { UpdateAccountBalanceUseCase } from '../../../accounts/application/use-cases/update-account-balance.use-case';
@@ -8,7 +8,7 @@ import { InsufficientFundsException } from '../../../accounts/domain/exceptions/
 @Injectable()
 export class DeleteTransactionUseCase {
   constructor(
-    private readonly uow: IUnitOfWork,
+    private readonly uow: ITransactionUnitOfWork,
     private readonly getTransactionByIdUseCase: GetTransactionByIdUseCase,
   ) {}
 

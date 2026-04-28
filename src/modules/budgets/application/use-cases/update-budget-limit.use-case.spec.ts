@@ -1,5 +1,5 @@
 import { UpdateBudgetLimitUseCase } from './update-budget-limit.use-case';
-import { IUnitOfWork } from '../../../transactions/domain/IUnitOfWork';
+import { IBudgetUnitOfWork } from '../../domain/IBudgetUnitOfWork';
 import { IBudgetRepository } from '../../domain/repository/budgets.repository';
 import { InMemoryBudgetRepository } from '../../infrastructure/persistence/__fakes__/in-memory-budget.repository';
 import {
@@ -11,7 +11,7 @@ import { makeBudget } from '../../../../test-support/factories';
 
 describe('UpdateBudgetLimitUseCase', () => {
   let budgetRepo: InMemoryBudgetRepository;
-  let mockUow: Partial<IUnitOfWork>;
+  let mockUow: Partial<IBudgetUnitOfWork>;
   let useCase: UpdateBudgetLimitUseCase;
 
   beforeEach(() => {
@@ -25,7 +25,7 @@ describe('UpdateBudgetLimitUseCase', () => {
       getBudgetRepository: jest.fn().mockReturnValue(budgetRepo),
     };
     useCase = new UpdateBudgetLimitUseCase(
-      mockUow as IUnitOfWork,
+      mockUow as IBudgetUnitOfWork,
       null as any, // getCategoryByIdUseCase not needed for these tests
     );
   });

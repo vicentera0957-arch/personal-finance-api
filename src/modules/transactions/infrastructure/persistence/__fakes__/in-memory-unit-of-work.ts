@@ -1,9 +1,12 @@
-import { IUnitOfWork } from '../../../domain/IUnitOfWork';
+import { ITransactionUnitOfWork } from '../../../domain/ITransactionUnitOfWork';
+import { IBudgetUnitOfWork } from '../../../../budgets/domain/IBudgetUnitOfWork';
 import { ITransactionRepository } from '../../../domain/repository/transaction.repository';
 import { IAccountRepository } from '../../../../accounts/domain/repository/accounts.repository';
 import { IBudgetRepository } from '../../../../budgets/domain/repository/budgets.repository';
 
-export class InMemoryUnitOfWork extends IUnitOfWork {
+export class InMemoryUnitOfWork
+  extends ITransactionUnitOfWork
+  implements IBudgetUnitOfWork {
   private _commits = 0;
   private _rollbacks = 0;
   private active = false;

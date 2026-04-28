@@ -13,7 +13,6 @@ import { DeleteBudgetUseCase } from './application/use-cases/delete-budget.use-c
 import { GetBudgetByUserCategoryPeriodUseCase } from './application/use-cases/get-budget-by-user-category-period.use-case';
 import { CategoriesModule } from '../categories/categories.module';
 import { TransactionsModule } from '../transactions/transactions.module';
-import { IUnitOfWork } from '../transactions/domain/IUnitOfWork';
 
 @Module({
   imports: [

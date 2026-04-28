@@ -13,7 +13,8 @@ import { TypeOrmUnitOfWorkImpl } from './infrastructure/persistence/unit-of-work
 import { ITransactionRepository } from './domain/repository/transaction.repository';
 import { IExpenseChecker } from '../budgets/domain/repository/expense-checker.port';
 import { ExpenseCheckerImpl } from './infrastructure/persistence/expense-checker.implement';
-import { IUnitOfWork } from './domain/IUnitOfWork';
+import { ITransactionUnitOfWork } from './domain/ITransactionUnitOfWork';
+import { IBudgetUnitOfWork } from '../budgets/domain/IBudgetUnitOfWork';
 // Use Cases
 import { CreateTransactionUseCase } from './application/use-cases/create-transaction.use-case';
 import { GetTransactionByIdUseCase } from './application/use-cases/get-transaction-by-id.use-case';
@@ -54,12 +55,23 @@ import { BudgetsModule } from '../budgets/budgets.module';
       provide: IExpenseChecker,
       useClass: ExpenseCheckerImpl,
     },
+    // The concrete UoW is provided once as request-scoped, then aliased
+    // to each module-specific port via `useExisting` so all consumers share
+    // the SAME instance (and therefore the same QueryRunner) per request.
     {
-      provide: IUnitOfWork,
+      provide: TypeOrmUnitOfWorkImpl,
       useClass: TypeOrmUnitOfWorkImpl,
       scope: Scope.REQUEST,
     },
+    {
+      provide: ITransactionUnitOfWork,
+      useExisting: TypeOrmUnitOfWorkImpl,
+    },
+    {
+      provide: IBudgetUnitOfWork,
+      useExisting: TypeOrmUnitOfWorkImpl,
+    },
   ],
-  exports: [IExpenseChecker, IUnitOfWork],
+  exports: [IExpenseChecker, ITransactionUnitOfWork, IBudgetUnitOfWork],
 })
 export class TransactionsModule {}

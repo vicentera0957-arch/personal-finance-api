@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { IUnitOfWork } from '../../../transactions/domain/IUnitOfWork';
+import { IBudgetUnitOfWork } from '../../domain/IBudgetUnitOfWork';
 import { Budget } from '../../domain/budget.entity';
 import { AmountLimit } from '../../domain/amountlimit.vo';
 import {
@@ -17,7 +17,7 @@ interface UpdateBudgetLimitCommand {
 @Injectable()
 export class UpdateBudgetLimitUseCase {
   constructor(
-    private readonly uow: IUnitOfWork,
+    private readonly uow: IBudgetUnitOfWork,
     private readonly getCategoryByIdUseCase: GetCategoryByIdUseCase,
   ) {}
 
