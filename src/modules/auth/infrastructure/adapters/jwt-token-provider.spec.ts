@@ -14,10 +14,20 @@ describe('JwtTokenProvider', () => {
       verifyAsync: jest.fn(),
     } as unknown as jest.Mocked<JwtService>;
 
+    // Los 4 valores que lee el provider via getOrThrow:
+    // JWT_SECRET, JWT_REFRESH_SECRET, JWT_ACCESS_EXPIRES_IN, JWT_REFRESH_EXPIRES_IN
+    const configMap: Record<string, string> = {
+      JWT_SECRET: 'access-secret',
+      JWT_REFRESH_SECRET: 'refresh-secret',
+      JWT_ACCESS_EXPIRES_IN: '15m',
+      JWT_REFRESH_EXPIRES_IN: '7d',
+    };
     configService = {
-      getOrThrow: jest.fn((key: string) =>
-        key === 'JWT_SECRET' ? 'access-secret' : 'refresh-secret',
-      ),
+      getOrThrow: jest.fn((key: string) => {
+        const val = configMap[key];
+        if (val === undefined) throw new Error(`Missing config ${key}`);
+        return val;
+      }),
     } as unknown as ConfigService;
 
     provider = new JwtTokenProvider(jwtService, configService);
@@ -51,7 +61,10 @@ describe('JwtTokenProvider', () => {
 
   describe('verifyAccessToken', () => {
     it('should return the decoded payload when signature is valid', async () => {
-      jwtService.verifyAsync.mockResolvedValue({ sub: 'user-1', email: 'a@b.cl' });
+      jwtService.verifyAsync.mockResolvedValue({
+        sub: 'user-1',
+        email: 'a@b.cl',
+      });
 
       const result = await provider.verifyAccessToken('token');
 
@@ -72,7 +85,10 @@ describe('JwtTokenProvider', () => {
 
   describe('verifyRefreshToken', () => {
     it('should return the decoded payload when valid', async () => {
-      jwtService.verifyAsync.mockResolvedValue({ sub: 'user-1', email: 'a@b.cl' });
+      jwtService.verifyAsync.mockResolvedValue({
+        sub: 'user-1',
+        email: 'a@b.cl',
+      });
 
       const result = await provider.verifyRefreshToken('r-token');
 

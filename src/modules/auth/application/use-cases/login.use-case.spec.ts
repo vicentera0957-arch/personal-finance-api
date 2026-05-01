@@ -4,7 +4,6 @@ import { InMemoryUserRepository } from '../../../users/infrastructure/persistenc
 import { IPasswordHasher } from '../../domain/ports/password-hasher.port';
 import { ITokenProvider } from '../../domain/ports/token-provider.port';
 import { InvalidCredentialsException } from '../../domain/exceptions/auth.exceptions';
-import { UserNotFoundException } from '../../../users/domain/exceptions/user.exceptions';
 import { makeUser } from '../../../../test-support/factories';
 
 describe('LoginUseCase', () => {
@@ -40,7 +39,9 @@ describe('LoginUseCase', () => {
   });
 
   it('should return tokens when credentials are valid', async () => {
-    userRepo.seed([makeUser({ email: 'test@example.com', passwordHash: 'hashed-password' })]);
+    userRepo.seed([
+      makeUser({ email: 'test@example.com', passwordHash: 'hashed-password' }),
+    ]);
     passwordHasher.compare.mockResolvedValue(true);
     tokenProvider.generateTokens.mockResolvedValue(mockTokenPair);
 
@@ -61,7 +62,9 @@ describe('LoginUseCase', () => {
   });
 
   it('should throw InvalidCredentialsException when password is wrong', async () => {
-    userRepo.seed([makeUser({ email: 'test@example.com', passwordHash: 'hashed-password' })]);
+    userRepo.seed([
+      makeUser({ email: 'test@example.com', passwordHash: 'hashed-password' }),
+    ]);
     passwordHasher.compare.mockResolvedValue(false);
 
     await expect(
@@ -74,13 +77,39 @@ describe('LoginUseCase', () => {
     expect(tokenProvider.generateTokens).not.toHaveBeenCalled();
   });
 
-  it('should propagate UserNotFoundException when user does not exist', async () => {
-    // repo vacío → GetUserByEmailUseCase lanza UserNotFoundException real
+  // Timing-attack defense: when user does not exist we STILL call bcrypt.compare
+  // (against a dummy hash) and throw the SAME exception as wrong-password.
+  // Otherwise latency + exception type leak whether an email is registered.
+  it('should throw InvalidCredentialsException (NOT UserNotFoundException) when user does not exist', async () => {
+    // repo vacío
+    passwordHasher.compare.mockResolvedValue(false);
+
     await expect(
       loginUseCase.execute({
-        email: 'test@example.com',
+        email: 'no-user@example.com',
         password: 'any-password',
       }),
-    ).rejects.toThrow(UserNotFoundException);
+    ).rejects.toThrow(InvalidCredentialsException);
+
+    expect(tokenProvider.generateTokens).not.toHaveBeenCalled();
+  });
+
+  it('should run bcrypt.compare even when user does not exist (timing-safe)', async () => {
+    passwordHasher.compare.mockResolvedValue(false);
+
+    await expect(
+      loginUseCase.execute({
+        email: 'no-user@example.com',
+        password: 'whatever',
+      }),
+    ).rejects.toThrow(InvalidCredentialsException);
+
+    // La clave: bcrypt.compare se llamó igual aunque no exista el user.
+    // Esto asegura que el tiempo de respuesta no filtra la existencia del email.
+    expect(passwordHasher.compare).toHaveBeenCalledTimes(1);
+    expect(passwordHasher.compare).toHaveBeenCalledWith(
+      'whatever',
+      expect.stringMatching(/^\$2[aby]\$/), // bcrypt hash format
+    );
   });
 });
