@@ -40,10 +40,10 @@ export class CategoryOrmEntity {
   nature: string;
 
   // Color e ícono son opcionales — el frontend puede definir defaults visuales
-  @Column({ length: 20, nullable: true })
+  @Column({ type: 'varchar', length: 20, nullable: true })
   color: string | null;
 
-  @Column({ length: 50, nullable: true })
+  @Column({ type: 'varchar', length: 50, nullable: true })
   icon: string | null;
 
   @CreateDateColumn({ name: 'created_at' })

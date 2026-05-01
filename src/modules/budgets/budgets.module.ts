@@ -34,6 +34,6 @@ import { TransactionsModule } from '../transactions/transactions.module';
       useClass: BudgetRepositoryImpl,
     },
   ],
-  exports: [GetBudgetByUserCategoryPeriodUseCase],
+  exports: [GetBudgetByUserCategoryPeriodUseCase, BudgetMapper],
 })
 export class BudgetsModule {}
