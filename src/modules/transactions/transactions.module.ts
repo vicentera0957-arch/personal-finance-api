@@ -15,6 +15,7 @@ import { IExpenseChecker } from '../budgets/domain/repository/expense-checker.po
 import { ExpenseCheckerImpl } from './infrastructure/persistence/expense-checker.implement';
 import { ITransactionUnitOfWork } from './domain/ITransactionUnitOfWork';
 import { IBudgetUnitOfWork } from '../budgets/domain/IBudgetUnitOfWork';
+import { IAccountUnitOfWork } from '../accounts/domain/IAccountUnitOfWork';
 // Use Cases
 import { CreateTransactionUseCase } from './application/use-cases/create-transaction.use-case';
 import { GetTransactionByIdUseCase } from './application/use-cases/get-transaction-by-id.use-case';
@@ -30,7 +31,7 @@ import { BudgetsModule } from '../budgets/budgets.module';
 @Module({
   imports: [
     TypeOrmModule.forFeature([TransactionOrmEntity]),
-    AccountsModule, // provee GetAccountByIdUseCase + IAccountRepository
+    forwardRef(() => AccountsModule), // provee GetAccountByIdUseCase + IAccountRepository
     CategoriesModule, // provee GetCategoryByIdUseCase
     forwardRef(() => BudgetsModule), // provee GetBudgetByUserCategoryPeriodUseCase
   ],
@@ -71,7 +72,11 @@ import { BudgetsModule } from '../budgets/budgets.module';
       provide: IBudgetUnitOfWork,
       useExisting: TypeOrmUnitOfWorkImpl,
     },
+    {
+      provide: IAccountUnitOfWork,
+      useExisting: TypeOrmUnitOfWorkImpl,
+    },
   ],
-  exports: [IExpenseChecker, ITransactionUnitOfWork, IBudgetUnitOfWork],
+  exports: [IExpenseChecker, ITransactionUnitOfWork, IBudgetUnitOfWork, IAccountUnitOfWork],
 })
 export class TransactionsModule {}

@@ -3,6 +3,7 @@ import { IBudgetUnitOfWork } from '../../../../budgets/domain/IBudgetUnitOfWork'
 import { ITransactionRepository } from '../../../domain/repository/transaction.repository';
 import { IAccountRepository } from '../../../../accounts/domain/repository/accounts.repository';
 import { IBudgetRepository } from '../../../../budgets/domain/repository/budgets.repository';
+import { IExpenseChecker } from '../../../../budgets/domain/repository/expense-checker.port';
 
 export class InMemoryUnitOfWork
   extends ITransactionUnitOfWork
@@ -15,6 +16,7 @@ export class InMemoryUnitOfWork
     private readonly txRepo: ITransactionRepository,
     private readonly acctRepo: IAccountRepository,
     private readonly budgetRepo?: IBudgetRepository,
+    private readonly expenseChecker?: IExpenseChecker,
   ) {
     super();
   }
@@ -52,6 +54,13 @@ export class InMemoryUnitOfWork
       throw new Error('BudgetRepository not provided to InMemoryUnitOfWork');
     }
     return this.budgetRepo;
+  }
+
+  getScopedExpenseChecker(): IExpenseChecker {
+    if (!this.expenseChecker) {
+      throw new Error('ExpenseChecker not provided to InMemoryUnitOfWork');
+    }
+    return this.expenseChecker;
   }
 
   commits(): number {

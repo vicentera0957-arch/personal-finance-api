@@ -2,9 +2,11 @@ import { Injectable, Scope } from '@nestjs/common';
 import { DataSource, EntityManager, QueryRunner, Between, MoreThanOrEqual, LessThanOrEqual } from 'typeorm';
 import { ITransactionUnitOfWork } from '../../domain/ITransactionUnitOfWork';
 import { IBudgetUnitOfWork } from '../../../budgets/domain/IBudgetUnitOfWork';
+import { IAccountUnitOfWork } from '../../../accounts/domain/IAccountUnitOfWork';
 import { ITransactionRepository, TransactionQueryOptions } from '../../domain/repository/transaction.repository';
 import { IAccountRepository } from '../../../accounts/domain/repository/accounts.repository';
 import { IBudgetRepository } from '../../../budgets/domain/repository/budgets.repository';
+import { IExpenseChecker } from '../../../budgets/domain/repository/expense-checker.port';
 import { Transaction } from '../../domain/entities/transaction.entity';
 import { TransactionOrmEntity } from './transaction.orm.entity';
 import { TransactionMapper } from './transaction.mapper';
@@ -186,6 +188,33 @@ class ScopedBudgetRepository extends IBudgetRepository {
   }
 }
 
+class ScopedExpenseChecker extends IExpenseChecker {
+  constructor(private readonly manager: EntityManager) {
+    super();
+  }
+
+  async hasExpensesInPeriod(
+    userId: string,
+    categoryId: string,
+    month: number,
+    year: number,
+  ): Promise<boolean> {
+    const periodStart = new Date(year, month - 1, 1);
+    const periodEnd = new Date(year, month, 1);
+    const count = await this.manager
+      .getRepository(TransactionOrmEntity)
+      .createQueryBuilder('t')
+      .where('t.userId = :userId', { userId })
+      .andWhere('t.categoryId = :categoryId', { categoryId })
+      .andWhere('t.nature = :nature', { nature: 'expense' })
+      .andWhere('t.transactionDate >= :periodStart', { periodStart })
+      .andWhere('t.transactionDate < :periodEnd', { periodEnd })
+      .setLock('pessimistic_write')
+      .getCount();
+    return count > 0;
+  }
+}
+
 // ── Implementación del UoW ────────────────────────────────────────────────────
 
 /**
@@ -198,7 +227,7 @@ class ScopedBudgetRepository extends IBudgetRepository {
 @Injectable({ scope: Scope.REQUEST })
 export class TypeOrmUnitOfWorkImpl
   extends ITransactionUnitOfWork
-  implements IBudgetUnitOfWork {
+  implements IBudgetUnitOfWork, IAccountUnitOfWork {
   private queryRunner: QueryRunner | null = null;
 
   constructor(
@@ -252,5 +281,9 @@ export class TypeOrmUnitOfWorkImpl
       this.queryRunner!.manager,
       this.budgetMapper,
     );
+  }
+
+  getScopedExpenseChecker(): IExpenseChecker {
+    return new ScopedExpenseChecker(this.queryRunner!.manager);
   }
 }

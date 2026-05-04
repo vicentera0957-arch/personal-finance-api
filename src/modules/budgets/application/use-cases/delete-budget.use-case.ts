@@ -1,36 +1,39 @@
 import { Injectable } from '@nestjs/common';
-import { IBudgetRepository } from '../../domain/repository/budgets.repository';
-import { IExpenseChecker } from '../../domain/repository/expense-checker.port';
-import { BudgetHasTransactionsInPeriodException } from '../../domain/exceptions/budget.exceptions';
-import { GetBudgetByIdUseCase } from './get-budget-by-id.use-case';
+import { IBudgetUnitOfWork } from '../../domain/IBudgetUnitOfWork';
+import {
+  BudgetNotFoundException,
+  BudgetAccessDeniedException,
+  BudgetHasTransactionsInPeriodException,
+} from '../../domain/exceptions/budget.exceptions';
 
 @Injectable()
 export class DeleteBudgetUseCase {
-  constructor(
-    private readonly budgetRepository: IBudgetRepository,
-    private readonly getBudgetByIdUseCase: GetBudgetByIdUseCase,
-    private readonly expenseChecker: IExpenseChecker,
-  ) {}
+  constructor(private readonly uow: IBudgetUnitOfWork) {}
 
   async execute(id: string, requestUserId: string): Promise<void> {
-    const budget = await this.getBudgetByIdUseCase.execute(id, requestUserId);
+    await this.uow.begin();
+    try {
+      const budgetRepo = this.uow.getBudgetRepository();
 
-    // Valida que no existan transacciones de gasto en el periodo del presupuesto
-    const hasExpenses = await this.expenseChecker.hasExpensesInPeriod(
-      budget.userId,
-      budget.categoryId,
-      budget.month,
-      budget.year,
-    );
+      const budget = await budgetRepo.findById(id);
+      if (!budget) throw new BudgetNotFoundException(id);
+      if (budget.userId !== requestUserId) throw new BudgetAccessDeniedException(id);
 
-    if (hasExpenses) {
-      throw new BudgetHasTransactionsInPeriodException(
-        id,
-        budget.month,
-        budget.year,
-      );
+      const hasExpenses = await this.uow
+        .getScopedExpenseChecker()
+        .hasExpensesInPeriod(budget.userId, budget.categoryId, budget.month, budget.year);
+
+      if (hasExpenses) {
+        throw new BudgetHasTransactionsInPeriodException(id, budget.month, budget.year);
+      }
+
+      await budgetRepo.delete(id);
+      await this.uow.commit();
+    } catch (error) {
+      await this.uow.rollback();
+      throw error;
+    } finally {
+      await this.uow.release();
     }
-
-    await this.budgetRepository.delete(id);
   }
 }

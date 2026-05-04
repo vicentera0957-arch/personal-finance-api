@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 // ORM Entity
@@ -11,6 +11,10 @@ import { AccountsController } from './infrastructure/http/accounts-controller/ac
 
 // Domain
 import { IAccountRepository } from './domain/repository/accounts.repository';
+import { IAccountUnitOfWork } from './domain/IAccountUnitOfWork';
+
+// Módulos vecinos
+import { TransactionsModule } from '../transactions/transactions.module';
 
 // Use Cases
 import { CreateAccountUseCase } from './application/use-cases/create-account.use-case';
@@ -23,7 +27,10 @@ import { DeleteAccountUseCase } from './application/use-cases/delete-account.use
 import { UpdateAccountBalanceUseCase } from './application/use-cases/update-account-balance.use-case';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([AccountOrmEntity])],
+  imports: [
+    TypeOrmModule.forFeature([AccountOrmEntity]),
+    forwardRef(() => TransactionsModule),
+  ],
   controllers: [AccountsController],
   providers: [
     // Mapper

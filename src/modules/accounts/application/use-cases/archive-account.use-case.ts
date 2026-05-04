@@ -1,7 +1,8 @@
 import { Injectable } from '@nestjs/common';
-import { IAccountRepository } from '../../domain/repository/accounts.repository';
+import { IAccountUnitOfWork } from '../../domain/IAccountUnitOfWork';
 import { Account } from '../../domain/entities/account.entity';
-import { GetAccountByIdUseCase } from './get-account-by-id.use-case';
+import { AccountNotFoundException } from '../../domain/exceptions/account.exceptions';
+import { ResourceOwnershipException } from '../../../../shared/domain/exceptions/resource-ownership.exception';
 
 interface ArchiveAccountDto {
   id: string;
@@ -10,17 +11,26 @@ interface ArchiveAccountDto {
 
 @Injectable()
 export class ArchiveAccountUseCase {
-  constructor(
-    private readonly accountRepository: IAccountRepository,
-    private readonly getAccountByIdUseCase: GetAccountByIdUseCase,
-  ) {}
+  constructor(private readonly uow: IAccountUnitOfWork) {}
 
   async execute(dto: ArchiveAccountDto): Promise<Account> {
-    const account = await this.getAccountByIdUseCase.execute({
-      id: dto.id,
-      requestUserId: dto.requestUserId,
-    });
-    account.archive(); // la entidad lanza error si ya está archivada
-    return this.accountRepository.save(account);
+    await this.uow.begin();
+    try {
+      const accountRepo = this.uow.getAccountRepository();
+
+      const account = await accountRepo.findById(dto.id);
+      if (!account) throw new AccountNotFoundException(dto.id);
+      if (account.userId !== dto.requestUserId) throw new ResourceOwnershipException(dto.id);
+
+      account.archive();
+      const saved = await accountRepo.save(account);
+      await this.uow.commit();
+      return saved;
+    } catch (error) {
+      await this.uow.rollback();
+      throw error;
+    } finally {
+      await this.uow.release();
+    }
   }
 }
