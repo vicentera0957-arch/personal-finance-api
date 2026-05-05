@@ -111,8 +111,16 @@ export class CreateTransactionUseCase {
           year,
         );
 
+        if (!budget) {
+          throw new BudgetRequiredForExpenseTransactionException(
+            command.categoryId,
+            month,
+            year,
+          );
+        }
+
         const projectedSpent = spentInPeriod + amount.getValue();
-        const limit = budget!.getLimit().getValue();
+        const limit = budget.getLimit().getValue();
 
         if (projectedSpent > limit) {
           throw new BudgetLimitExceededException(
