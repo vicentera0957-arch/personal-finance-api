@@ -75,8 +75,17 @@ export class BudgetLimitExceededException extends BudgetException {
   }
 }
 
-export class BudgetAccessDeniedException extends BudgetException {
-  constructor(budgetId: string) {
-    super(`No tienes acceso al presupuesto ${budgetId}`);
+export class BudgetLimitBelowSpentException extends BudgetException {
+  constructor(
+    budgetId: string,
+    month: number,
+    year: number,
+    limit: number,
+    spent: number,
+  ) {
+    super(
+      `El limite del presupuesto ${budgetId} no puede ser menor al gasto ya registrado en ${month}/${year}. Limite=${limit}, gasto=${spent}`,
+    );
   }
 }
+

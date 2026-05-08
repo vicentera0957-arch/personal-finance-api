@@ -5,6 +5,7 @@
 Un **budget** es un límite de gasto mensual: "Comida, abril 2026, máximo $200.000". La app previene que el usuario supere el límite al crear transacciones de gasto.
 
 Campos clave:
+
 - `(userId, categoryId, month, year)` — 4-tupla única enforced a nivel DB
 - `limit` — VO `AmountLimit`, entero positivo
 
@@ -35,15 +36,16 @@ Método de negocio: `updateLimit(newLimit: AmountLimit)` — reemplaza el límit
 
 ### Excepciones de dominio
 
-| Excepción | HTTP |
-|-----------|------|
-| `BudgetNotFoundException` | 404 |
-| `BudgetAccessDeniedException` | 403 |
-| `BudgetAlreadyExistsException` | 409 |
-| `BudgetLimitExceededException` | 422 |
-| `BudgetRequiredForExpenseTransactionException` | 422 |
-| `CategoryNotBudgetableForBudgetException` | 422 |
-| `BudgetHasTransactionsException` | 409 |
+| Excepción                                      | HTTP |
+| ---------------------------------------------- | ---- |
+| `BudgetNotFoundException`                      | 404  |
+| `ResourceOwnershipException` (shared)          | 403  |
+| `BudgetAlreadyExistsException`                 | 409  |
+| `BudgetLimitExceededException`                 | 422  |
+| `BudgetLimitBelowSpentException`               | 409  |
+| `BudgetRequiredForExpenseTransactionException` | 422  |
+| `CategoryNotBudgetableForBudgetException`      | 422  |
+| `BudgetHasTransactionsInPeriodException`       | 409  |
 
 ### Puerto `IExpenseChecker`
 
@@ -57,14 +59,14 @@ Método: `hasExpenseTransactionsInPeriod(userId, categoryId, month, year): Promi
 
 ## Capa application
 
-| Use case | Flujo |
-|----------|-------|
-| `CreateBudgetUseCase` | Valida categoría (expense + budgetable) → persiste → `catch 23505` → `BudgetAlreadyExistsException` |
-| `GetBudgetByIdUseCase` | Busca → valida ownership → lanza `BudgetNotFoundException` |
-| `GetBudgetsByUserIdUseCase` | Filtra por userId (y opcionalmente month/year) |
-| `GetBudgetByUserCategoryPeriodUseCase` | Búsqueda interna para `CreateTransactionUseCase` |
-| `UpdateBudgetLimitUseCase` | Abre UoW → lee budget → valida ownership → actualiza límite → commit |
-| `DeleteBudgetUseCase` | Valida ownership → llama `IExpenseChecker` → elimina |
+| Use case                               | Flujo                                                                                               |
+| -------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `CreateBudgetUseCase`                  | Valida categoría (expense + budgetable) → persiste → `catch 23505` → `BudgetAlreadyExistsException` |
+| `GetBudgetByIdUseCase`                 | Busca → valida ownership → lanza `BudgetNotFoundException`                                          |
+| `GetBudgetsByUserIdUseCase`            | Filtra por userId (y opcionalmente month/year)                                                      |
+| `GetBudgetByUserCategoryPeriodUseCase` | Búsqueda interna para `CreateTransactionUseCase`                                                    |
+| `UpdateBudgetLimitUseCase`             | Abre UoW → `findById` budget (FOR UPDATE) → valida ownership → suma expenses del periodo (FOR UPDATE) → si `nuevo limit < spent` lanza `BudgetLimitBelowSpentException` (409) → commit |
+| `DeleteBudgetUseCase`                  | Abre UoW → `findById` budget (FOR UPDATE) → valida ownership → `hasExpensesInPeriod` (FOR UPDATE) → elimina si no hay expenses                                       |
 
 ---
 
@@ -72,14 +74,14 @@ Método: `hasExpenseTransactionsInPeriod(userId, categoryId, month, year): Promi
 
 ### `BudgetOrmEntity`
 
-| Columna | Tipo | Notas |
-|---------|------|-------|
-| `id` | `uuid` | PK |
-| `userId` | `varchar` | |
-| `categoryId` | `varchar` | |
-| `month` | `int` | 1-12 |
-| `year` | `int` | |
-| `limit` | `int` | CLP |
+| Columna                   | Tipo        | Notas             |
+| ------------------------- | ----------- | ----------------- |
+| `id`                      | `uuid`      | PK                |
+| `userId`                  | `varchar`   |                   |
+| `categoryId`              | `varchar`   |                   |
+| `month`                   | `int`       | 1-12              |
+| `year`                    | `int`       |                   |
+| `limit`                   | `int`       | CLP               |
 | `createdAt` / `updatedAt` | `timestamp` | `@Column` simples |
 
 `@Unique(['userId', 'categoryId', 'month', 'year'])` — constraint en la entidad.
@@ -90,13 +92,13 @@ Método: `hasExpenseTransactionsInPeriod(userId, categoryId, month, year): Promi
 
 ### Rutas
 
-| Método | Ruta | Use case | HTTP |
-|--------|------|----------|------|
-| POST | `/budgets` | `CreateBudgetUseCase` | 201 |
-| GET | `/budgets` | `GetBudgetsByUserIdUseCase` | 200 |
-| GET | `/budgets/:id` | `GetBudgetByIdUseCase` | 200 |
-| PATCH | `/budgets/:id/limit` | `UpdateBudgetLimitUseCase` | 200 |
-| DELETE | `/budgets/:id` | `DeleteBudgetUseCase` | 204 |
+| Método | Ruta                 | Use case                    | HTTP |
+| ------ | -------------------- | --------------------------- | ---- |
+| POST   | `/budgets`           | `CreateBudgetUseCase`       | 201  |
+| GET    | `/budgets`           | `GetBudgetsByUserIdUseCase` | 200  |
+| GET    | `/budgets/:id`       | `GetBudgetByIdUseCase`      | 200  |
+| PATCH  | `/budgets/:id/limit` | `UpdateBudgetLimitUseCase`  | 200  |
+| DELETE | `/budgets/:id`       | `DeleteBudgetUseCase`       | 204  |
 
 ---
 
@@ -112,6 +114,7 @@ Exports: `GetBudgetByUserCategoryPeriodUseCase` — consumido por `CreateTransac
 Problema: `transactions` necesita `budgets` para validar R8. `budgets` necesita saber si hay transactions para validar el delete. Sin cuidado, ciclo `budgets → transactions → budgets`.
 
 Solución "port owned by consumer":
+
 ```
 budgets/domain/repository/expense-checker.port.ts   ← define el puerto
 transactions/infrastructure/persistence/expense-checker.implement.ts  ← implementa
@@ -130,19 +133,22 @@ El `forwardRef()` es un artefacto del DI graph de NestJS. La dirección de depen
 Estado previo: `CreateBudgetUseCase` hacía check + insert sin garantía de atomicidad.  
 Estado actual: `@Unique` en ORM + migración `1745366400000` + `catch 23505` en `BudgetRepositoryImpl.save()` → retorna 409 en vez de 500.
 
-### ⚠️ Bug A — Write skew en UpdateBudgetLimit vs CreateTransaction — ABIERTA
+### ⚠️ Bug A — Write skew en UpdateBudgetLimit vs CreateTransaction — RESUELTO
 
 **Escenario:**
+
 1. User tiene budget limit=$100, ha gastado $80.
 2. `PATCH /budgets/X/limit` → abre UoW, lee budget con `ScopedBudgetRepository.findById` (**sin lock**), baja el límite a $60, commit.
 3. Simultáneamente: `POST /transactions` expense $20 → lee el budget fuera del UoW (usa `getBudgetByUserCategoryPeriodUseCase` global, línea 111 de `create-transaction.use-case.ts`) → ve limit=$100 → $80+$20=100 ≤ 100 → inserta.
 4. Resultado: gastó $100 con limit=$60. R8 violada.
 
 **Dos problemas independientes que se combinan:**
+
 - `ScopedBudgetRepository.findById` (`unit-of-work.impl.ts:148`) no toma `FOR UPDATE`
 - La segunda lectura del budget en `create-transaction.use-case.ts:111` usa el use case global (no el repo escopado) → sale de la transacción PG
 
 **Fix completo:**
+
 1. Mover la segunda lectura del budget en `CreateTransactionUseCase` a `uow.getBudgetRepository().findByUserIdAndCategoryIdAndPeriod(...)`.
 2. Agregar `setLock('pessimistic_write')` en `ScopedBudgetRepository.findById`.
 

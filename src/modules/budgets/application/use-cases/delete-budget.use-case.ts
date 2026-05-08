@@ -2,9 +2,9 @@ import { Injectable } from '@nestjs/common';
 import { IBudgetUnitOfWork } from '../../domain/IBudgetUnitOfWork';
 import {
   BudgetNotFoundException,
-  BudgetAccessDeniedException,
   BudgetHasTransactionsInPeriodException,
 } from '../../domain/exceptions/budget.exceptions';
+import { ResourceOwnershipException } from '../../../../shared/domain/exceptions/resource-ownership.exception';
 
 @Injectable()
 export class DeleteBudgetUseCase {
@@ -17,7 +17,7 @@ export class DeleteBudgetUseCase {
 
       const budget = await budgetRepo.findById(id);
       if (!budget) throw new BudgetNotFoundException(id);
-      if (budget.userId !== requestUserId) throw new BudgetAccessDeniedException(id);
+      if (budget.userId !== requestUserId) throw new ResourceOwnershipException(id);
 
       const hasExpenses = await this.uow
         .getScopedExpenseChecker()

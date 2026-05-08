@@ -4,9 +4,9 @@ import { Budget } from '../../domain/budget.entity';
 import { AmountLimit } from '../../domain/amountlimit.vo';
 import {
   BudgetNotFoundException,
-  BudgetAccessDeniedException,
+  BudgetLimitBelowSpentException,
 } from '../../domain/exceptions/budget.exceptions';
-import { GetCategoryByIdUseCase } from '../../../categories/application/use-cases/get-category-by-id.use-case';
+import { ResourceOwnershipException } from '../../../../shared/domain/exceptions/resource-ownership.exception';
 
 interface UpdateBudgetLimitCommand {
   id: string;
@@ -16,10 +16,7 @@ interface UpdateBudgetLimitCommand {
 
 @Injectable()
 export class UpdateBudgetLimitUseCase {
-  constructor(
-    private readonly uow: IBudgetUnitOfWork,
-    private readonly getCategoryByIdUseCase: GetCategoryByIdUseCase,
-  ) {}
+  constructor(private readonly uow: IBudgetUnitOfWork) {}
 
   async execute(command: UpdateBudgetLimitCommand): Promise<Budget> {
     await this.uow.begin();
@@ -32,10 +29,28 @@ export class UpdateBudgetLimitUseCase {
       }
 
       if (budget.userId !== command.requestUserId) {
-        throw new BudgetAccessDeniedException(command.id);
+        throw new ResourceOwnershipException(command.id);
       }
 
       const limit = AmountLimit.create(command.limit);
+      const spentInPeriod = await this.uow
+        .getScopedExpenseChecker()
+        .sumExpenseAmountInPeriod(
+          budget.userId,
+          budget.categoryId,
+          budget.month,
+          budget.year,
+        );
+
+      if (limit.getValue() < spentInPeriod) {
+        throw new BudgetLimitBelowSpentException(
+          budget.id,
+          budget.month,
+          budget.year,
+          limit.getValue(),
+          spentInPeriod,
+        );
+      }
       budget.updateLimit(limit);
 
       const updated = await budgetRepo.save(budget);

@@ -3,24 +3,36 @@ import { InMemoryBudgetRepository } from '../../infrastructure/persistence/__fak
 import {
   BudgetHasTransactionsInPeriodException,
   BudgetNotFoundException,
-  BudgetAccessDeniedException,
 } from '../../domain/exceptions/budget.exceptions';
+import { ResourceOwnershipException } from '../../../../shared/domain/exceptions/resource-ownership.exception';
 import { IExpenseChecker } from '../../domain/repository/expense-checker.port';
 import { makeBudget } from '../../../../test-support/factories';
 
 class FakeExpenseChecker extends IExpenseChecker {
-  constructor(private readonly value: boolean) { super(); }
-  async hasExpensesInPeriod(): Promise<boolean> { return this.value; }
+  constructor(private readonly value: boolean) {
+    super();
+  }
+  async hasExpensesInPeriod(): Promise<boolean> {
+    return this.value;
+  }
+  async sumExpenseAmountInPeriod(): Promise<number> {
+    return this.value ? 1 : 0;
+  }
 }
 
-const makeMockUow = (budgetRepo: InMemoryBudgetRepository, hasExpenses: boolean) => ({
+const makeMockUow = (
+  budgetRepo: InMemoryBudgetRepository,
+  hasExpenses: boolean,
+) => ({
   begin: jest.fn().mockResolvedValue(undefined),
   commit: jest.fn().mockResolvedValue(undefined),
   rollback: jest.fn().mockResolvedValue(undefined),
   release: jest.fn().mockResolvedValue(undefined),
   isActive: jest.fn().mockReturnValue(true),
   getBudgetRepository: jest.fn().mockReturnValue(budgetRepo),
-  getScopedExpenseChecker: jest.fn().mockReturnValue(new FakeExpenseChecker(hasExpenses)),
+  getScopedExpenseChecker: jest
+    .fn()
+    .mockReturnValue(new FakeExpenseChecker(hasExpenses)),
 });
 
 describe('DeleteBudgetUseCase', () => {
@@ -45,9 +57,9 @@ describe('DeleteBudgetUseCase', () => {
     repo.seed([makeBudget({ id: 'b1', userId: 'user-1' })]);
     const uow = makeMockUow(repo, true);
 
-    await expect(new DeleteBudgetUseCase(uow as any).execute('b1', 'user-1')).rejects.toThrow(
-      BudgetHasTransactionsInPeriodException,
-    );
+    await expect(
+      new DeleteBudgetUseCase(uow as any).execute('b1', 'user-1'),
+    ).rejects.toThrow(BudgetHasTransactionsInPeriodException);
 
     expect(repo.size()).toBe(1);
     expect(uow.rollback).toHaveBeenCalledTimes(1);
@@ -57,20 +69,20 @@ describe('DeleteBudgetUseCase', () => {
   it('should throw BudgetNotFoundException when budget does not exist', async () => {
     const uow = makeMockUow(repo, false);
 
-    await expect(new DeleteBudgetUseCase(uow as any).execute('ghost', 'user-1')).rejects.toThrow(
-      BudgetNotFoundException,
-    );
+    await expect(
+      new DeleteBudgetUseCase(uow as any).execute('ghost', 'user-1'),
+    ).rejects.toThrow(BudgetNotFoundException);
 
     expect(uow.rollback).toHaveBeenCalledTimes(1);
   });
 
-  it('should throw BudgetAccessDeniedException when user does not own the budget', async () => {
+  it('should throw ResourceOwnershipException when user does not own the budget', async () => {
     repo.seed([makeBudget({ id: 'b1', userId: 'owner' })]);
     const uow = makeMockUow(repo, false);
 
-    await expect(new DeleteBudgetUseCase(uow as any).execute('b1', 'intruder')).rejects.toThrow(
-      BudgetAccessDeniedException,
-    );
+    await expect(
+      new DeleteBudgetUseCase(uow as any).execute('b1', 'intruder'),
+    ).rejects.toThrow(ResourceOwnershipException);
 
     expect(repo.size()).toBe(1);
     expect(uow.rollback).toHaveBeenCalledTimes(1);
