@@ -32,6 +32,7 @@ import {
   BudgetCategoryMustBeExpenseException,
   BudgetNotFoundException,
   BudgetHasTransactionsInPeriodException,
+  BudgetLimitBelowSpentException,
   InvalidAmountLimitException,
   InvalidBudgetMonthException,
   InvalidBudgetYearException,
@@ -83,6 +84,9 @@ export class BudgetsController {
       if (e instanceof CategoryNotFoundException) {
         throw new NotFoundException(e.message);
       }
+      if (e instanceof ResourceOwnershipException) {
+        throw new ForbiddenException(e.message);
+      }
       if (
         e instanceof InvalidAmountLimitException ||
         e instanceof InvalidBudgetMonthException ||
@@ -92,8 +96,7 @@ export class BudgetsController {
       }
       if (
         e instanceof BudgetAlreadyExistsException ||
-        e instanceof BudgetCategoryMustBeExpenseException ||
-        e instanceof ResourceOwnershipException
+        e instanceof BudgetCategoryMustBeExpenseException
       ) {
         throw new ConflictException(e.message);
       }
@@ -154,6 +157,9 @@ export class BudgetsController {
       }
       if (e instanceof InvalidAmountLimitException) {
         throw new BadRequestException(e.message);
+      }
+      if (e instanceof BudgetLimitBelowSpentException) {
+        throw new ConflictException(e.message);
       }
       throw e;
     }

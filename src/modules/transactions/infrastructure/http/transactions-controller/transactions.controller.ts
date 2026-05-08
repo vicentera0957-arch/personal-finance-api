@@ -101,6 +101,9 @@ export class TransactionsController {
       ) {
         throw new NotFoundException(e.message);
       }
+      if (e instanceof ResourceOwnershipException) {
+        throw new ForbiddenException(e.message);
+      }
       if (
         e instanceof InvalidAmountException ||
         e instanceof EmptyTransactionNatureException ||
@@ -111,8 +114,7 @@ export class TransactionsController {
       }
       if (
         e instanceof BudgetRequiredForExpenseTransactionException ||
-        e instanceof CannotOperateOnArchivedAccountException ||
-        e instanceof ResourceOwnershipException
+        e instanceof CannotOperateOnArchivedAccountException
       ) {
         throw new ConflictException(e.message);
       }
@@ -203,10 +205,12 @@ export class TransactionsController {
       ) {
         throw new NotFoundException(e.message);
       }
+      if (e instanceof ResourceOwnershipException) {
+        throw new ForbiddenException(e.message);
+      }
       if (
         e instanceof CannotDeleteTransactionException ||
-        e instanceof CannotOperateOnArchivedAccountException ||
-        e instanceof ResourceOwnershipException
+        e instanceof CannotOperateOnArchivedAccountException
       ) {
         throw new ConflictException(e.message);
       }
