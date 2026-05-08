@@ -1,9 +1,19 @@
 import { Injectable, Scope } from '@nestjs/common';
-import { DataSource, EntityManager, QueryRunner, Between, MoreThanOrEqual, LessThanOrEqual } from 'typeorm';
+import {
+  DataSource,
+  EntityManager,
+  QueryRunner,
+  Between,
+  MoreThanOrEqual,
+  LessThanOrEqual,
+} from 'typeorm';
 import { ITransactionUnitOfWork } from '../../domain/ITransactionUnitOfWork';
 import { IBudgetUnitOfWork } from '../../../budgets/domain/IBudgetUnitOfWork';
 import { IAccountUnitOfWork } from '../../../accounts/domain/IAccountUnitOfWork';
-import { ITransactionRepository, TransactionQueryOptions } from '../../domain/repository/transaction.repository';
+import {
+  ITransactionRepository,
+  TransactionQueryOptions,
+} from '../../domain/repository/transaction.repository';
 import { IAccountRepository } from '../../../accounts/domain/repository/accounts.repository';
 import { IBudgetRepository } from '../../../budgets/domain/repository/budgets.repository';
 import { IExpenseChecker } from '../../../budgets/domain/repository/expense-checker.port';
@@ -29,7 +39,10 @@ class ScopedTransactionRepository extends ITransactionRepository {
   }
 
   async findById(id: string): Promise<Transaction | null> {
-    const orm = await this.manager.findOne(TransactionOrmEntity, { where: { id } });
+    const orm = await this.manager.findOne(TransactionOrmEntity, {
+      where: { id },
+      lock: { mode: 'pessimistic_write' },
+    });
     return orm ? this.mapper.toDomain(orm) : null;
   }
 
@@ -128,7 +141,9 @@ class ScopedAccountRepository extends IAccountRepository {
   }
 
   async findByUserId(userId: string): Promise<Account[]> {
-    const orms = await this.manager.find(AccountOrmEntity, { where: { userId } });
+    const orms = await this.manager.find(AccountOrmEntity, {
+      where: { userId },
+    });
     return orms.map((orm) => this.mapper.toDomain(orm));
   }
 
@@ -160,7 +175,9 @@ class ScopedBudgetRepository extends IBudgetRepository {
   }
 
   async findByUserId(userId: string): Promise<Budget[]> {
-    const orms = await this.manager.find(BudgetOrmEntity, { where: { userId } });
+    const orms = await this.manager.find(BudgetOrmEntity, {
+      where: { userId },
+    });
     return orms.map((orm) => this.mapper.toDomain(orm));
   }
 
@@ -213,6 +230,28 @@ class ScopedExpenseChecker extends IExpenseChecker {
       .getCount();
     return count > 0;
   }
+
+  async sumExpenseAmountInPeriod(
+    userId: string,
+    categoryId: string,
+    month: number,
+    year: number,
+  ): Promise<number> {
+    const periodStart = new Date(year, month - 1, 1);
+    const periodEnd = new Date(year, month, 1);
+    const raw = await this.manager
+      .getRepository(TransactionOrmEntity)
+      .createQueryBuilder('t')
+      .select('COALESCE(SUM(t.amount), 0)', 'total')
+      .where('t.userId = :userId', { userId })
+      .andWhere('t.categoryId = :categoryId', { categoryId })
+      .andWhere('t.nature = :nature', { nature: 'expense' })
+      .andWhere('t.transactionDate >= :periodStart', { periodStart })
+      .andWhere('t.transactionDate < :periodEnd', { periodEnd })
+      .setLock('pessimistic_write')
+      .getRawOne<{ total: string }>();
+    return Number(raw?.total ?? 0);
+  }
 }
 
 // ── Implementación del UoW ────────────────────────────────────────────────────
@@ -227,7 +266,8 @@ class ScopedExpenseChecker extends IExpenseChecker {
 @Injectable({ scope: Scope.REQUEST })
 export class TypeOrmUnitOfWorkImpl
   extends ITransactionUnitOfWork
-  implements IBudgetUnitOfWork, IAccountUnitOfWork {
+  implements IBudgetUnitOfWork, IAccountUnitOfWork
+{
   private queryRunner: QueryRunner | null = null;
 
   constructor(
