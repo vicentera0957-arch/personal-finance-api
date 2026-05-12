@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ICategoryRepository } from '../../domain/repository/category.repository';
+import { ICategoriesCache } from '../../domain/ports/cache/categories-cache.port';
 import { Category } from '../../domain/entities/category.entity';
 import { GetCategoryByIdUseCase } from './get-category-by-id.use-case';
 
@@ -16,6 +17,7 @@ export class UpdateCategoryUseCase {
   constructor(
     private readonly categoryRepository: ICategoryRepository,
     private readonly getCategoryByIdUseCase: GetCategoryByIdUseCase,
+    private readonly cache: ICategoriesCache,
   ) {}
 
   async execute(command: UpdateCategoryCommand): Promise<Category> {
@@ -24,17 +26,15 @@ export class UpdateCategoryUseCase {
       command.requestUserId,
     );
 
-    // Solo aplica el método si el campo fue enviado en la petición
-    if (command.name !== undefined) {
-      category.rename(command.name);
-    }
-    if (command.color !== undefined) {
-      category.changeColor(command.color);
-    }
-    if (command.icon !== undefined) {
-      category.changeIcon(command.icon);
-    }
+    if (command.name !== undefined) category.rename(command.name);
+    if (command.color !== undefined) category.changeColor(command.color);
+    if (command.icon !== undefined) category.changeIcon(command.icon);
 
-    return this.categoryRepository.save(category);
+    const saved = await this.categoryRepository.save(category);
+    await Promise.all([
+      this.cache.invalidateUser(saved.userId),
+      this.cache.invalidateById(saved.id),
+    ]);
+    return saved;
   }
 }

@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { ICategoryRepository } from '../../domain/repository/category.repository';
+import { ICategoriesCache } from '../../domain/ports/cache/categories-cache.port';
 import { Category } from '../../domain/entities/category.entity';
 import { CategoryNature } from '../../domain/value-objects/category-nature.vo';
 
@@ -14,7 +15,10 @@ interface CreateCategoryCommand {
 
 @Injectable()
 export class CreateCategoryUseCase {
-  constructor(private readonly categoryRepository: ICategoryRepository) {}
+  constructor(
+    private readonly categoryRepository: ICategoryRepository,
+    private readonly cache: ICategoriesCache,
+  ) {}
 
   async execute(command: CreateCategoryCommand): Promise<Category> {
     const nature = CategoryNature.create(command.nature);
@@ -28,6 +32,8 @@ export class CreateCategoryUseCase {
       icon: command.icon,
     });
 
-    return this.categoryRepository.save(category);
+    const saved = await this.categoryRepository.save(category);
+    await this.cache.invalidateUser(saved.userId);
+    return saved;
   }
 }

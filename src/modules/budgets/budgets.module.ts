@@ -4,7 +4,9 @@ import { BudgetOrmEntity } from './infrastructure/persistence/budget.orm.entity'
 import { BudgetRepositoryImpl } from './infrastructure/persistence/budget.repo.implement';
 import { BudgetMapper } from './infrastructure/persistence/budget.mapper';
 import { BudgetsController } from './infrastructure/http/budgets-controller/budgets.controller';
+import { BudgetsCacheImpl } from './infrastructure/cache/budgets-cache.impl';
 import { IBudgetRepository } from './domain/repository/budgets.repository';
+import { IBudgetsCache } from './domain/ports/cache/budgets-cache.port';
 import { CreateBudgetUseCase } from './application/use-cases/create-budget.use-case';
 import { GetBudgetByIdUseCase } from './application/use-cases/get-budget-by-id.use-case';
 import { GetBudgetsByUserIdUseCase } from './application/use-cases/get-budgets-by-user-id.use-case';
@@ -29,10 +31,9 @@ import { TransactionsModule } from '../transactions/transactions.module';
     GetBudgetByUserCategoryPeriodUseCase,
     UpdateBudgetLimitUseCase,
     DeleteBudgetUseCase,
-    {
-      provide: IBudgetRepository,
-      useClass: BudgetRepositoryImpl,
-    },
+    { provide: IBudgetRepository, useClass: BudgetRepositoryImpl },
+    BudgetsCacheImpl,
+    { provide: IBudgetsCache, useExisting: BudgetsCacheImpl },
   ],
   exports: [GetBudgetByUserCategoryPeriodUseCase, BudgetMapper],
 })

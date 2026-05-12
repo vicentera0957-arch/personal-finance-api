@@ -8,9 +8,11 @@ import { UserOrmEntity } from './infrastructure/persistence/user.orm.entity';
 import { UserRepositoryImpl } from './infrastructure/persistence/user.repo.implement';
 import { UserMapper } from './infrastructure/persistence/user.mapper';
 import { UsersController } from './infrastructure/http/user-controller/user.controller';
+import { UsersCacheImpl } from './infrastructure/cache/users-cache.impl';
 
 // Domain
 import { IUserRepository } from './domain/repository/user.repository';
+import { IUsersCache } from './domain/ports/cache/users-cache.port';
 
 // Use Cases
 import { CreateUserUseCase } from './application/use-cases/create-user.use-case';
@@ -33,11 +35,12 @@ import { DeleteUserUseCase } from './application/use-cases/delete-user.use-case'
     UpdateUserProfileUseCase,
     DeleteUserUseCase,
 
-    // Vincula la interfaz con su implementación
-    {
-      provide: IUserRepository,
-      useClass: UserRepositoryImpl,
-    },
+    // Repository
+    { provide: IUserRepository, useClass: UserRepositoryImpl },
+
+    // Cache
+    UsersCacheImpl,
+    { provide: IUsersCache, useExisting: UsersCacheImpl },
   ],
   exports: [GetUserByEmailUseCase, CreateUserUseCase],
 })

@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { IBudgetUnitOfWork } from '../../domain/IBudgetUnitOfWork';
+import { IBudgetsCache } from '../../domain/ports/cache/budgets-cache.port';
 import { Budget } from '../../domain/budget.entity';
 import { AmountLimit } from '../../domain/amountlimit.vo';
 import {
@@ -16,7 +17,10 @@ interface UpdateBudgetLimitCommand {
 
 @Injectable()
 export class UpdateBudgetLimitUseCase {
-  constructor(private readonly uow: IBudgetUnitOfWork) {}
+  constructor(
+    private readonly uow: IBudgetUnitOfWork,
+    private readonly cache: IBudgetsCache,
+  ) {}
 
   async execute(command: UpdateBudgetLimitCommand): Promise<Budget> {
     await this.uow.begin();
@@ -24,23 +28,13 @@ export class UpdateBudgetLimitUseCase {
       const budgetRepo = this.uow.getBudgetRepository();
 
       const budget = await budgetRepo.findById(command.id);
-      if (!budget) {
-        throw new BudgetNotFoundException(command.id);
-      }
-
-      if (budget.userId !== command.requestUserId) {
-        throw new ResourceOwnershipException(command.id);
-      }
+      if (!budget) throw new BudgetNotFoundException(command.id);
+      if (budget.userId !== command.requestUserId) throw new ResourceOwnershipException(command.id);
 
       const limit = AmountLimit.create(command.limit);
       const spentInPeriod = await this.uow
         .getScopedExpenseChecker()
-        .sumExpenseAmountInPeriod(
-          budget.userId,
-          budget.categoryId,
-          budget.month,
-          budget.year,
-        );
+        .sumExpenseAmountInPeriod(budget.userId, budget.categoryId, budget.month, budget.year);
 
       if (limit.getValue() < spentInPeriod) {
         throw new BudgetLimitBelowSpentException(
@@ -56,6 +50,10 @@ export class UpdateBudgetLimitUseCase {
       const updated = await budgetRepo.save(budget);
       await this.uow.commit();
 
+      await Promise.all([
+        this.cache.invalidateUser(updated.userId),
+        this.cache.invalidateById(updated.id),
+      ]);
       return updated;
     } catch (error) {
       await this.uow.rollback();

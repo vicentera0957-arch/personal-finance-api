@@ -1,5 +1,6 @@
 import { GetBudgetsByUserIdUseCase } from './get-budgets-by-user-id.use-case';
 import { InMemoryBudgetRepository } from '../../infrastructure/persistence/__fakes__/in-memory-budget.repository';
+import { NullBudgetsCache } from '../../infrastructure/cache/__fakes__/null-budgets-cache';
 import { makeBudget } from '../../../../test-support/factories';
 
 describe('GetBudgetsByUserIdUseCase', () => {
@@ -8,7 +9,7 @@ describe('GetBudgetsByUserIdUseCase', () => {
 
   beforeEach(() => {
     repo = new InMemoryBudgetRepository();
-    useCase = new GetBudgetsByUserIdUseCase(repo);
+    useCase = new GetBudgetsByUserIdUseCase(repo, new NullBudgetsCache());
   });
 
   it('should return only the budgets of the user', async () => {

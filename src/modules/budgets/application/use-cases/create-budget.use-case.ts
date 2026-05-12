@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { IBudgetRepository } from '../../domain/repository/budgets.repository';
+import { IBudgetsCache } from '../../domain/ports/cache/budgets-cache.port';
 import { Budget } from '../../domain/budget.entity';
 import { AmountLimit } from '../../domain/amountlimit.vo';
 import {
@@ -22,6 +23,7 @@ export class CreateBudgetUseCase {
   constructor(
     private readonly budgetRepository: IBudgetRepository,
     private readonly getCategoryByIdUseCase: GetCategoryByIdUseCase,
+    private readonly cache: IBudgetsCache,
   ) {}
 
   async execute(command: CreateBudgetCommand): Promise<Budget> {
@@ -37,13 +39,12 @@ export class CreateBudgetUseCase {
       );
     }
 
-    const existing =
-      await this.budgetRepository.findByUserIdAndCategoryIdAndPeriod(
-        command.userId,
-        command.categoryId,
-        command.month,
-        command.year,
-      );
+    const existing = await this.budgetRepository.findByUserIdAndCategoryIdAndPeriod(
+      command.userId,
+      command.categoryId,
+      command.month,
+      command.year,
+    );
 
     if (existing) {
       throw new BudgetAlreadyExistsException(
@@ -55,7 +56,6 @@ export class CreateBudgetUseCase {
     }
 
     const limit = AmountLimit.create(command.limit);
-
     const budget = Budget.create({
       id: randomUUID(),
       userId: command.userId,
@@ -65,6 +65,8 @@ export class CreateBudgetUseCase {
       limit,
     });
 
-    return this.budgetRepository.save(budget);
+    const saved = await this.budgetRepository.save(budget);
+    await this.cache.invalidateUser(saved.userId);
+    return saved;
   }
 }
