@@ -1,4 +1,4 @@
-import { Category } from '../../../entities/category.entity';
+import { Category } from '../../entities/category.entity';
 
 export abstract class ICategoriesCache {
   abstract getListByUser(userId: string): Promise<Category[] | null>;

@@ -1,4 +1,4 @@
-import { User } from '../../../entities/user.entity';
+import { User } from '../../entities/user.entity';
 
 export abstract class IUsersCache {
   abstract getById(id: string): Promise<User | null>;
