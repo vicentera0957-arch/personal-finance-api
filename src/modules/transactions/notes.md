@@ -63,8 +63,8 @@ Los repositorios escopados comparten el `EntityManager` del `QueryRunner` activo
 **Flujo dentro del UoW:**
 1. `uow.begin()` — abre `QueryRunner`, inicia transacción de PG
 2. `txRepo.sumExpenseAmountByUserCategoryAndPeriod(...)` con `setLock('pessimistic_write')` — lock en las filas de gasto del período
-3. Lee el budget nuevamente (⚠️ **Bug A** — ver abajo) para verificar el límite
-4. `UpdateAccountBalanceUseCase(acctRepo).execute(...)` — actualiza balance usando el repositorio escopado
+3. `budgetRepo.findByUserIdAndCategoryIdAndPeriod(...)` (repo escopado, lock pesimista implícito) — releé el budget bajo `FOR UPDATE` para verificar el límite vigente al momento del COMMIT
+4. `UpdateAccountBalanceUseCase(acctRepo).execute(...)` — actualiza balance usando el repositorio escopado (lock pesimista implícito en `findById`)
 5. `txRepo.save(transaction)` — persiste la transacción
 6. `uow.commit()` / `uow.rollback()` en `finally`
 
@@ -151,36 +151,58 @@ Exports: `IExpenseChecker` (implementación usada por `BudgetsModule` para valid
 
 ---
 
-## Bugs activos — leer antes de tocar este módulo
+## Race conditions resueltas (histórico — abril 2026)
 
-### Bug A — Write skew en budget limit
+### Bug A — Write skew en budget limit (RESUELTO)
 
-**Escenario:** User tiene budget limit=$100, ha gastado $80.
-1. `PATCH /budgets/X/limit` → `UpdateBudgetLimitUseCase` abre UoW, lee budget sin lock, cambia limit a $60, hace commit.
-2. Simultáneamente: `POST /transactions` expense $20 → lee budget FUERA del UoW (línea 111 usa `getBudgetByUserCategoryPeriodUseCase` global, no el repo escopado) → ve limit=$100 → $80+$20=100 ≤ 100 → inserta.
-3. Resultado: el user gastó $100 pero el limit es $60. R8 violada.
+**Escenario original:** User tenía budget limit=$100, había gastado $80.
+1. `PATCH /budgets/X/limit` → `UpdateBudgetLimitUseCase` abría UoW, leía budget sin lock, cambiaba limit a $60, hacía commit.
+2. Simultáneamente: `POST /transactions` expense $20 → leía budget FUERA del UoW (la línea ~111 usaba `getBudgetByUserCategoryPeriodUseCase` global, no el repo escopado) → veía limit=$100 → $80+$20=100 ≤ 100 → insertaba.
+3. Resultado: el user gastaba $100 pero el limit era $60. R8 violada.
 
-**Archivo exacto:** `create-transaction.use-case.ts:111` y `unit-of-work.impl.ts:148-150`.
+**Archivos afectados:** `create-transaction.use-case.ts` (segunda lectura de budget) y `unit-of-work.impl.ts` (`ScopedBudgetRepository.findById` y `findByUserIdAndCategoryIdAndPeriod`).
 
-**Fix:** Mover la segunda lectura del budget dentro del UoW usando `uow.getBudgetRepository().findByUserIdAndCategoryIdAndPeriod(...)` en lugar del use case global. Y agregar `FOR UPDATE` a `ScopedBudgetRepository.findById`.
+**Solución aplicada:**
+1. La segunda lectura del budget en `CreateTransactionUseCase` se movió **dentro** del UoW: ahora usa `uow.getBudgetRepository().findByUserIdAndCategoryIdAndPeriod(...)` en vez del use case global. Esta lectura ahora viaja por el `QueryRunner` activo y participa de la misma transacción de PG.
+2. `ScopedBudgetRepository.findByUserIdAndCategoryIdAndPeriod` agregó `lock: { mode: 'pessimistic_write' }` → emite `SELECT ... FOR UPDATE`.
+3. `ScopedBudgetRepository.findById` agregó el mismo lock → protege también el lado de `UpdateBudgetLimitUseCase`.
 
-### Bug B — Lost update en balance de cuenta
+**Por qué funciona:** ambos flujos (`CreateTransaction` y `UpdateBudgetLimit`) ahora compiten por el mismo lock de fila sobre el budget. PostgreSQL serializa: el segundo en llegar espera al COMMIT del primero antes de leer, garantizando que el limit visto sea el vigente.
 
-**Escenario:** Dos requests concurrentes `POST /transactions` sobre la misma cuenta.
-1. TX1 lee `account.balance = $1000` (sin lock)
-2. TX2 lee `account.balance = $1000` (sin lock)
-3. TX1 calcula $1000 + $500 = $1500, escribe
-4. TX2 calcula $1000 - $300 = $700, escribe → **los $500 de TX1 se perdieron**
+### Bug B — Lost update en balance de cuenta (RESUELTO)
 
-**Archivo exacto:** `unit-of-work.impl.ts:119-121` — `ScopedAccountRepository.findById` usa `manager.findOne` sin lock.
+**Escenario original:** Dos requests concurrentes `POST /transactions` sobre la misma cuenta.
+1. TX1 leía `account.balance = $1000` (sin lock)
+2. TX2 leía `account.balance = $1000` (sin lock)
+3. TX1 calculaba $1000 + $500 = $1500, escribía
+4. TX2 calculaba $1000 - $300 = $700, escribía → **los $500 de TX1 se perdían**
 
-**Fix:** Añadir `SELECT ... FOR UPDATE` al `findById` del `ScopedAccountRepository`.
+**Archivo afectado:** `unit-of-work.impl.ts` — `ScopedAccountRepository.findById` usaba `manager.findOne` sin lock.
+
+**Solución aplicada:** `ScopedAccountRepository.findById` agregó `lock: { mode: 'pessimistic_write' }` → emite `SELECT ... FOR UPDATE`.
+
+**Por qué funciona sin tocar `UpdateAccountBalanceUseCase`:** ese use case (en `accounts/application/`) es agnóstico al mecanismo del repo. Recibe `IAccountRepository` y llama `findById` — cuando el UoW le inyecta el repo escopado, hereda el lock automáticamente. Buena separación de responsabilidades: el dominio de accounts no necesita saber de transacciones SQL.
+
+---
+
+## Decisión arquitectónica — locks en repos escopados
+
+**Decisión:** los locks pesimistas viven hardcodeados en los métodos de los `ScopedXRepository` dentro de `unit-of-work.impl.ts`. **No** se exponen como parámetro opcional ni como método declarativo (`findByIdForUpdate`) en las interfaces de dominio.
+
+**Razones:**
+1. Las clases `ScopedXRepository` son privadas al archivo. Solo el UoW las construye y solo se usan dentro de un `QueryRunner` activo. En ese contexto, leer por id implica intención de mutar — no existe caso legítimo de leer sin lock.
+2. Las interfaces de dominio (`IAccountRepository`, `IBudgetRepository`) no se contaminan con conceptos SQL. Quedan limpias para el resto del sistema.
+3. No requiere crear interfaces escopadas paralelas (`IScopedAccountRepository extends IAccountRepository`) ni modificar `IUnitOfWork` para retornar tipos especializados. Cambio mínimo, máxima cobertura.
+
+**Trade-off aceptado:** se pierde la flexibilidad de hacer una lectura sin lock dentro de una transacción. En este dominio no hay caso de uso para eso — las lecturas no-mutantes (validación, listado) usan los repos globales fuera del UoW.
 
 ---
 
 ## Conceptos de aislamiento relevantes
 
-`sumExpenseAmountByUserCategoryAndPeriod` toma `pessimistic_write` sobre las filas de transacciones del período. Esto bloquea inserciones concurrentes en las mismas filas. Pero no bloquea el budget ni la cuenta — de ahí los bugs A y B.
+`sumExpenseAmountByUserCategoryAndPeriod` toma `pessimistic_write` sobre las filas de transacciones del período. Antes era el único lock en juego — insuficiente porque no bloqueaba el budget ni la cuenta. Hoy actúa como capa adicional sobre las transacciones del período; el budget y el account ya tienen sus propios locks vía los scoped repos.
+
+**Punto importante:** el budget actúa como **gate de serialización del invariante** "suma de transactions ≤ limit". Lockear el budget al momento de insertar una transaction bloquea cualquier modificación concurrente del limit, y viceversa. El lock se sostiene desde el `SELECT FOR UPDATE` hasta el `COMMIT` del UoW — ese es exactamente el período crítico.
 
 El default de Postgres es `READ COMMITTED`. Dentro de la misma transacción, dos lecturas del mismo row pueden ver valores distintos si otro commit ocurrió entre medio ("non-repeatable reads"). `SERIALIZABLE` detectaría el conflicto en el commit y abortaría con `40001` — requeriría retry en la aplicación.
 

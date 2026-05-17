@@ -6,10 +6,13 @@ import {
   UpdateDateColumn,
   ManyToOne,
   JoinColumn,
+  Index,
 } from 'typeorm';
 import { UserOrmEntity } from '../../../users/infrastructure/persistence/user.orm.entity';
 
+// Índice en user_id para `findByUserId` — se llama cada vez que listamos cuentas del usuario.
 @Entity('accounts')
+@Index('idx_account_user', ['userId'])
 export class AccountOrmEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;

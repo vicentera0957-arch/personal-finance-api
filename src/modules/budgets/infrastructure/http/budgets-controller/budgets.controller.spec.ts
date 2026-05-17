@@ -13,6 +13,7 @@ import { DeleteBudgetUseCase } from '../../../application/use-cases/delete-budge
 import {
   BudgetAlreadyExistsException,
   BudgetHasTransactionsInPeriodException,
+  BudgetLimitBelowSpentException,
   BudgetNotFoundException,
   InvalidAmountLimitException,
   InvalidBudgetMonthException,
@@ -33,11 +34,21 @@ describe('BudgetsController', () => {
   const currentUser: AuthenticatedUser = { userId: 'user-1', email: 'a@b.cl' };
 
   beforeEach(() => {
-    createUseCase = { execute: jest.fn() } as unknown as jest.Mocked<CreateBudgetUseCase>;
-    getByIdUseCase = { execute: jest.fn() } as unknown as jest.Mocked<GetBudgetByIdUseCase>;
-    getByUserUseCase = { execute: jest.fn() } as unknown as jest.Mocked<GetBudgetsByUserIdUseCase>;
-    updateLimitUseCase = { execute: jest.fn() } as unknown as jest.Mocked<UpdateBudgetLimitUseCase>;
-    deleteUseCase = { execute: jest.fn() } as unknown as jest.Mocked<DeleteBudgetUseCase>;
+    createUseCase = {
+      execute: jest.fn(),
+    } as unknown as jest.Mocked<CreateBudgetUseCase>;
+    getByIdUseCase = {
+      execute: jest.fn(),
+    } as unknown as jest.Mocked<GetBudgetByIdUseCase>;
+    getByUserUseCase = {
+      execute: jest.fn(),
+    } as unknown as jest.Mocked<GetBudgetsByUserIdUseCase>;
+    updateLimitUseCase = {
+      execute: jest.fn(),
+    } as unknown as jest.Mocked<UpdateBudgetLimitUseCase>;
+    deleteUseCase = {
+      execute: jest.fn(),
+    } as unknown as jest.Mocked<DeleteBudgetUseCase>;
 
     controller = new BudgetsController(
       createUseCase,
@@ -69,26 +80,41 @@ describe('BudgetsController', () => {
     });
 
     it('should map CategoryNotFoundException to 404', async () => {
-      createUseCase.execute.mockRejectedValue(new CategoryNotFoundException('c1'));
+      createUseCase.execute.mockRejectedValue(
+        new CategoryNotFoundException('c1'),
+      );
 
       await expect(
-        controller.create({ categoryId: 'c1', month: 3, year: 2026, limit: 1 }, currentUser),
+        controller.create(
+          { categoryId: 'c1', month: 3, year: 2026, limit: 1 },
+          currentUser,
+        ),
       ).rejects.toThrow(NotFoundException);
     });
 
     it('should map InvalidBudgetMonthException to 400', async () => {
-      createUseCase.execute.mockRejectedValue(new InvalidBudgetMonthException(13));
+      createUseCase.execute.mockRejectedValue(
+        new InvalidBudgetMonthException(13),
+      );
 
       await expect(
-        controller.create({ categoryId: 'c1', month: 13, year: 2026, limit: 1 }, currentUser),
+        controller.create(
+          { categoryId: 'c1', month: 13, year: 2026, limit: 1 },
+          currentUser,
+        ),
       ).rejects.toThrow(BadRequestException);
     });
 
     it('should map InvalidAmountLimitException to 400', async () => {
-      createUseCase.execute.mockRejectedValue(new InvalidAmountLimitException('negative'));
+      createUseCase.execute.mockRejectedValue(
+        new InvalidAmountLimitException('negative'),
+      );
 
       await expect(
-        controller.create({ categoryId: 'c1', month: 3, year: 2026, limit: -1 }, currentUser),
+        controller.create(
+          { categoryId: 'c1', month: 3, year: 2026, limit: -1 },
+          currentUser,
+        ),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -98,8 +124,24 @@ describe('BudgetsController', () => {
       );
 
       await expect(
-        controller.create({ categoryId: 'c1', month: 3, year: 2026, limit: 1 }, currentUser),
+        controller.create(
+          { categoryId: 'c1', month: 3, year: 2026, limit: 1 },
+          currentUser,
+        ),
       ).rejects.toThrow(ConflictException);
+    });
+
+    it('should map ResourceOwnershipException to 403 (categoryId belongs to another user)', async () => {
+      createUseCase.execute.mockRejectedValue(
+        new ResourceOwnershipException('c1'),
+      );
+
+      await expect(
+        controller.create(
+          { categoryId: 'c1', month: 3, year: 2026, limit: 1 },
+          currentUser,
+        ),
+      ).rejects.toThrow(ForbiddenException);
     });
   });
 
@@ -107,7 +149,10 @@ describe('BudgetsController', () => {
     it('should forward optional month and year filters', async () => {
       getByUserUseCase.execute.mockResolvedValue([makeBudget({ id: 'b1' })]);
 
-      const result = await controller.findByUserId(currentUser, { month: 3, year: 2026 });
+      const result = await controller.findByUserId(currentUser, {
+        month: 3,
+        year: 2026,
+      });
 
       expect(result).toHaveLength(1);
       expect(getByUserUseCase.execute).toHaveBeenCalledWith('user-1', {
@@ -119,7 +164,9 @@ describe('BudgetsController', () => {
 
   describe('findById', () => {
     it('should map BudgetNotFoundException to 404', async () => {
-      getByIdUseCase.execute.mockRejectedValue(new BudgetNotFoundException('b1'));
+      getByIdUseCase.execute.mockRejectedValue(
+        new BudgetNotFoundException('b1'),
+      );
 
       await expect(controller.findById('b1', currentUser)).rejects.toThrow(
         NotFoundException,
@@ -127,7 +174,9 @@ describe('BudgetsController', () => {
     });
 
     it('should map ResourceOwnershipException to 403', async () => {
-      getByIdUseCase.execute.mockRejectedValue(new ResourceOwnershipException('b1'));
+      getByIdUseCase.execute.mockRejectedValue(
+        new ResourceOwnershipException('b1'),
+      );
 
       await expect(controller.findById('b1', currentUser)).rejects.toThrow(
         ForbiddenException,
@@ -137,11 +186,23 @@ describe('BudgetsController', () => {
 
   describe('updateLimit', () => {
     it('should map InvalidAmountLimitException to 400', async () => {
-      updateLimitUseCase.execute.mockRejectedValue(new InvalidAmountLimitException('bad'));
+      updateLimitUseCase.execute.mockRejectedValue(
+        new InvalidAmountLimitException('bad'),
+      );
 
       await expect(
         controller.updateLimit('b1', { limit: -1 }, currentUser),
       ).rejects.toThrow(BadRequestException);
+    });
+
+    it('should map BudgetLimitBelowSpentException to 409', async () => {
+      updateLimitUseCase.execute.mockRejectedValue(
+        new BudgetLimitBelowSpentException('b1', 3, 2026, 200, 300),
+      );
+
+      await expect(
+        controller.updateLimit('b1', { limit: 200 }, currentUser),
+      ).rejects.toThrow(ConflictException);
     });
   });
 

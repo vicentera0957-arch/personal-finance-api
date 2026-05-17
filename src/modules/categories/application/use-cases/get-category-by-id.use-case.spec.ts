@@ -1,5 +1,6 @@
 import { GetCategoryByIdUseCase } from './get-category-by-id.use-case';
 import { InMemoryCategoryRepository } from '../../infrastructure/persistence/__fakes__/in-memory-category.repository';
+import { NullCategoriesCache } from '../../infrastructure/cache/__fakes__/null-categories-cache';
 import { CategoryNotFoundException } from '../../domain/exceptions/category.exceptions';
 import { ResourceOwnershipException } from '../../../../shared/domain/exceptions/resource-ownership.exception';
 import { makeCategory } from '../../../../test-support/factories';
@@ -10,7 +11,7 @@ describe('GetCategoryByIdUseCase', () => {
 
   beforeEach(() => {
     repo = new InMemoryCategoryRepository();
-    useCase = new GetCategoryByIdUseCase(repo);
+    useCase = new GetCategoryByIdUseCase(repo, new NullCategoriesCache());
   });
 
   it('should return the category when owned by the requester', async () => {

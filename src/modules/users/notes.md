@@ -1,93 +1,62 @@
-# Módulo `users` — Documentación de referencia
+# Módulo `users` — Referencia actual
 
-## Alcance V1
-
-| Incluido                                   | Excluido                                  |
-| ------------------------------------------ | ----------------------------------------- |
-| Registro con email, password y nombre      | Login / generación de JWT (módulo `auth`) |
-| Recuperar perfil por id                    | Recuperación de contraseña                |
-| Actualizar nombre                          | Verificación de email                     |
-| Eliminar cuenta                            | Roles y permisos                          |
-| `GetUserByEmail` — uso interno para `auth` | Actualizar moneda por defecto             |
-
----
-
-## Capa domain
+## Dominio
 
 ### Value object `Email`
 
 **Archivo:** `domain/value-objects/email.vo.ts`
 
-Clase inmutable que encapsula y valida el formato de email. No depende de `class-validator` — la validación es TypeScript puro.
+Clase inmutable. Valida formato y vacío en `Email.create(raw)`. Normaliza a minúsculas. No depende de `class-validator` — TypeScript puro.
 
-Métodos:
+Métodos: `create(raw)`, `getValue()`, `equals()`, `getDomain()`.
 
-- `Email.create(raw)` — valida formato y vacío; normaliza a minúsculas
-- `getValue()`, `equals()`, `getDomain()`
+El mapper usa `Email.create()` (no `reconstitute()`) porque los emails ya estaban validados al guardarse y el format check es barato. Si en el futuro cambia la regex de validación, usar `Email.reconstitute()` en el mapper para evitar que datos históricos "se rompan" al ser leídos.
 
 ### Entidad `User`
 
 **Archivo:** `domain/entities/user.entity.ts`
 
-Clase pura sin decoradores de framework. Constructor privado con dos factory methods:
+Constructor privado. Dos factory methods:
+- `User.create(props)` — genera `createdAt` y `updatedAt`
+- `User.reconstitute(props)` — respeta fechas originales
 
-- `User.create(props)` — para usuarios nuevos; genera `createdAt` y `updatedAt`
-- `User.reconstitute(props)` — para reconstruir desde persistencia; respeta las fechas originales
+Propiedades: `id`, `email` (`Email`), `passwordHash`, `name`, `createdAt`, `updatedAt`.
 
-Propiedades: `id`, `email` (tipo `Email`), `passwordHash`, `name`, `createdAt`, `updatedAt`.
-
-Métodos de negocio:
-
-- `updateProfile(name)` — valida que el nombre no sea vacío; lanza `InvalidNameException`
-- `changePassword(newHash)` — lanza `InvalidPasswordHashException` si el hash es vacío
+Métodos: `updateProfile(name)` → lanza `InvalidNameException` si vacío. `changePassword(newHash)` → lanza `InvalidPasswordHashException` si vacío.
 
 ### Excepciones de dominio
 
 **Archivo:** `domain/exceptions/user.exceptions.ts`
 
-Todas extienden la clase base `UserException extends Error`. El mapeo a HTTP ocurre exclusivamente en el controlador, nunca acá.
+Base: `UserException extends Error`. HTTP mapping solo en el controlador.
 
-**Excepciones de entidad:**
-| Excepción | Cuándo se lanza |
-| --------- | --------------- |
-| `UserNotFoundException` | Usuario no encontrado por id o email |
-| `UserAlreadyExistsException` | Intento de crear usuario con email ya registrado |
-| `InvalidCredentialsException` | Credenciales inválidas (reservado para módulo `auth`) |
-| `InvalidNameException` | `updateProfile()` recibe nombre vacío |
-| `InvalidPasswordHashException` | `changePassword()` recibe hash vacío |
+| Excepción | HTTP |
+|-----------|------|
+| `UserNotFoundException` | 404 |
+| `UserAlreadyExistsException` | 409 |
+| `InvalidCredentialsException` | 401 (usado por auth) |
+| `InvalidNameException` | 400 |
+| `InvalidPasswordHashException` | 400 |
+| `EmptyEmailException` | 400 |
+| `InvalidEmailFormatException` | 400 |
 
-**Excepciones de Value Object:**
-| Excepción | Cuándo se lanza |
-| --------- | --------------- |
-| `EmptyEmailException` | `Email.create()` recibe string vacío |
-| `InvalidEmailFormatException` | `Email.create()` recibe formato inválido |
+### Puerto `IUserRepository`
 
-### Repositorio
-
-**Archivo:** `domain/repository/user.repository.ts`
-
-Puerto de salida definido como clase abstracta (necesario para DI en NestJS — las interfaces TypeScript no existen en runtime). Métodos:
-
-- `findById(id: string): Promise<User | null>`
-- `findByEmail(email: string): Promise<User | null>`
-- `save(user: User): Promise<User>`
-- `delete(id: string): Promise<void>`
+Clase abstracta. Métodos: `findById`, `findByEmail`, `save`, `delete`.
 
 ---
 
 ## Capa application
 
-### Use cases
+| Use case | Flujo |
+|----------|-------|
+| `CreateUserUseCase` | Verifica email único (`GetUserByEmailUseCase`) → hashea password con `IPasswordHasher` → crea entidad → persiste |
+| `GetUserByIdUseCase` | Valida self-access (`id !== requestUserId` → `ResourceOwnershipException`) → busca → lanza `UserNotFoundException` |
+| `GetUserByEmailUseCase` | Búsqueda interna para `auth` — no expuesta como endpoint HTTP |
+| `UpdateUserProfileUseCase` | Valida self-access → `user.updateProfile(name)` → persiste |
+| `DeleteUserUseCase` | Valida self-access → `repo.delete()` |
 
-| Use case                   | Descripción                                                                 |
-| -------------------------- | --------------------------------------------------------------------------- |
-| `CreateUserUseCase`        | Verifica email único → hashea password con bcrypt → crea entidad → persiste |
-| `GetUserByIdUseCase`       | Busca por id → lanza `UserNotFoundException` si no existe                   |
-| `GetUserByEmailUseCase`    | Uso interno para `auth` — no expuesto como endpoint HTTP                    |
-| `UpdateUserProfileUseCase` | Recupera via `GetUserByIdUseCase` → llama `user.updateProfile()` → persiste |
-| `DeleteUserUseCase`        | Verifica existencia → elimina via repositorio → retorna `void`              |
-
-**Nota sobre bcrypt:** `CreateUserUseCase` importa bcrypt directamente. En V2 esto debería reemplazarse con un `IPasswordHasher` abstracto inyectado por DI, para que el use case no tenga dependencia de infraestructura.
+**Nota sobre `IPasswordHasher`:** `CreateUserUseCase` inyecta el port abstracto (no bcrypt directamente). La implementación concreta (`BcryptAdapter`) vive en `auth/infrastructure/`. El módulo `users` importa el adapter vía `AuthModule` exports. Esto permite cambiar el algoritmo de hashing sin tocar los use cases.
 
 ---
 
@@ -97,97 +66,84 @@ Puerto de salida definido como clase abstracta (necesario para DI en NestJS — 
 
 **Archivo:** `infrastructure/persistence/user.orm.entity.ts`
 
-Entidad TypeORM completamente separada de la entidad de dominio.
+| Columna | Tipo | Notas |
+|---------|------|-------|
+| `id` | `uuid` | PK, generado con `randomUUID()` |
+| `email` | `varchar` | `@Index('uq_users_email', { unique: true })` |
+| `password_hash` | `varchar` | |
+| `full_name` | `varchar` | |
+| `created_at` | `timestamp` | `@Column` simple |
+| `updated_at` | `timestamp` | `@Column` simple |
 
-| Columna         | Tipo        | Notas                                                                 |
-| --------------- | ----------- | --------------------------------------------------------------------- |
-| `id`            | `uuid`      | PK, generado en el use case con `randomUUID()`                        |
-| `email`         | `varchar`   | Sin `unique: true` a nivel ORM — la unicidad la garantiza el use case |
-| `password_hash` | `varchar`   |                                                                       |
-| `full_name`     | `varchar`   |                                                                       |
-| `created_at`    | `timestamp` | `@Column` simple — el dominio controla este valor                     |
-| `updated_at`    | `timestamp` | `@Column` simple — el dominio controla este valor                     |
-
-**Decisión sobre timestamps:** Se usan `@Column` simples en lugar de `@CreateDateColumn`/`@UpdateDateColumn`. TypeORM con esos decoradores sobreescribe los valores en cada `save()`, ignorando lo que el dominio setea. Al usar `@Column` simple, la entidad de dominio es la única fuente de verdad para las fechas.
+El índice único en `email` existe a nivel DB y es la última línea de defensa contra emails duplicados. Por qué `@Column` simple en lugar de `@CreateDateColumn`: TypeORM con `@CreateDateColumn`/`@UpdateDateColumn` sobreescribiría las fechas en cada `save()`, ignorando lo que el dominio setea.
 
 ### `UserMapper`
 
-**Archivo:** `infrastructure/persistence/user.mapper.ts`
-
-Único punto de traducción entre ORM entity y domain entity.
-
-- `toDomain(orm)` — usa `Email.create()` para reconstruir el VO con validación; usa `User.reconstitute()` para reconstruir la entidad sin generar nuevos timestamps
-- `toOrm(domain)` — extrae valores con getters del dominio
+`toDomain(orm)` — usa `Email.create()` para reconstruir el VO. `User.reconstitute()` para preservar timestamps.  
+`toOrm(domain)` — extrae valores con getters.
 
 ### `UserRepositoryImpl`
 
 **Archivo:** `infrastructure/persistence/user.repo.implement.ts`
 
-Implementa `IUserRepository` con TypeORM. Delega toda la conversión al mapper. No contiene lógica de negocio.
+`save()` actual **no** tiene `catch 23505` (ver Bug E abajo). El índice único en `email` existe pero el error de Postgres se propaga como 500 en lugar de 409.
 
-### DTOs
+### Rutas
 
-**Archivos:** `infrastructure/http/dto/`
+| Método | Ruta | Use case | HTTP |
+|--------|------|----------|------|
+| GET | `/users/:id` | `GetUserByIdUseCase` | 200 |
+| PATCH | `/users/:id/profile` | `UpdateUserProfileUseCase` | 200 |
+| DELETE | `/users/:id` | `DeleteUserUseCase` | 204 |
 
-- `CreateUserDto` — `email`, `password`, `name` con validaciones de `class-validator`
-- `UpdateUserProfileDto` — `name` opcional
-- `UserResponseDto` — excluye `passwordHash`; incluye `id`, `email`, `name`, `createdAt`, `updatedAt`
-
-### `UsersController`
-
-**Archivo:** `infrastructure/http/user-controller/user.controller.ts`
-
-| Método | Ruta                 | Use case                   | HTTP éxito |
-| ------ | -------------------- | -------------------------- | ---------- |
-| POST   | `/users`             | `CreateUserUseCase`        | 201        |
-| GET    | `/users/:id`         | `GetUserByIdUseCase`       | 200        |
-| PATCH  | `/users/:id/profile` | `UpdateUserProfileUseCase` | 200        |
-| DELETE | `/users/:id`         | `DeleteUserUseCase`        | 204        |
-
-Mapeo de excepciones de dominio a HTTP:
-
-| Excepción                     | HTTP |
-| ----------------------------- | ---- |
-| `UserNotFoundException`       | 404  |
-| `UserAlreadyExistsException`  | 409  |
-| `EmptyEmailException`         | 400  |
-| `InvalidEmailFormatException` | 400  |
-| `InvalidNameException`        | 400  |
+No hay `POST /users` — la creación de usuarios ocurre en `POST /auth/register`.
 
 ---
 
 ## Wiring — `UsersModule`
 
-**Archivo:** `users.module.ts`
+Exports: `GetUserByEmailUseCase` — consumido por `AuthModule` en el flujo de login.
+
+---
+
+## Bug E — Concurrent register → 500
+
+**Archivo:** `infrastructure/persistence/user.repo.implement.ts:42`
+
+`CreateUserUseCase` hace un `GetUserByEmailUseCase` antes de insertar (check-then-insert). En condiciones normales detecta el duplicado y lanza `UserAlreadyExistsException` → 409. Pero si dos requests llegan simultáneamente, ambas pasan el check y la segunda falla con `23505` en el `ormRepository.save()`.
+
+`UserRepositoryImpl.save()` no tiene `try/catch`, por lo que el `QueryFailedError` sube sin mapear → NestJS devuelve 500.
+
+**Fix (~15 minutos):**
 
 ```typescript
-@Module({
-  imports: [TypeOrmModule.forFeature([UserOrmEntity])],
-  controllers: [UsersController],
-  providers: [
-    UserMapper,
-    CreateUserUseCase,
-    GetUserByIdUseCase,
-    GetUserByEmailUseCase,
-    UpdateUserProfileUseCase,
-    DeleteUserUseCase,
-    { provide: IUserRepository, useClass: UserRepositoryImpl },
-  ],
-  exports: [GetUserByEmailUseCase], // consumido por el módulo auth
-})
-export class UsersModule {}
+async save(user: User): Promise<User> {
+  const orm = this.mapper.toOrm(user);
+  try {
+    const saved = await this.ormRepository.save(orm);
+    return this.mapper.toDomain(saved);
+  } catch (err) {
+    if (err instanceof QueryFailedError && (err as any).driverError?.code === '23505') {
+      throw new UserAlreadyExistsException(user.getEmail().getValue());
+    }
+    throw err;
+  }
+}
 ```
 
 ---
 
-## Checklist de verificación
+## Gaps de features (no bugs)
 
-- [ ] `POST /users` con email duplicado → `409 Conflict`
-- [ ] `POST /users` con email inválido → `400 Bad Request`
-- [ ] `GET /users/:id` retorna el usuario
-- [ ] `GET /users/:id` con id inexistente → `404 Not Found`
-- [ ] `PATCH /users/:id/profile` actualiza el nombre
-- [ ] `PATCH /users/:id/profile` con nombre vacío → `400 Bad Request`
-- [ ] `DELETE /users/:id` elimina el usuario → `204 No Content`
-- [ ] `DELETE /users/:id` con id inexistente → `404 Not Found`
-- [ ] El módulo `auth` puede importar `GetUserByEmailUseCase` sin errores
+| Gap | Notas |
+|----|-------|
+| Email verification | Al registrarse, el email se asume válido. Real-world: token de verificación + endpoint `/auth/verify-email`. Requiere cola (BullMQ) para enviar mail sin bloquear el register. |
+| Reset password | `/auth/forgot-password` → email con token → `/auth/reset-password`. Token con TTL corto (~15 min). |
+| Soft delete | Hoy el delete es hard. `deletedAt` + filtros en todos los queries es más seguro para producción. |
+
+---
+
+## Recursos
+
+- 📄 OWASP "Password Storage Cheat Sheet" — bcrypt vs argon2, work factors
+- 📄 Martin Fowler — "Soft Deletes" (pros y contras)

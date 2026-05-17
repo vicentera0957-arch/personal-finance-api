@@ -13,6 +13,7 @@ import {
   ForbiddenException,
   ParseUUIDPipe,
 } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../../../../auth/infrastructure/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../../../auth/infrastructure/decorators/current-user.decorator';
 //use cases
@@ -29,6 +30,8 @@ import {
 } from '../../../domain/exceptions/user.exceptions';
 import { ResourceOwnershipException } from '../../../../../shared/domain/exceptions/resource-ownership.exception';
 
+@ApiTags('users')
+@ApiBearerAuth('access-token')
 @Controller('users')
 export class UsersController {
   constructor(

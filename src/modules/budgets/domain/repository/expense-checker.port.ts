@@ -8,4 +8,11 @@ export abstract class IExpenseChecker {
     month: number,
     year: number,
   ): Promise<boolean>;
+
+  abstract sumExpenseAmountInPeriod(
+    userId: string,
+    categoryId: string,
+    month: number,
+    year: number,
+  ): Promise<number>;
 }

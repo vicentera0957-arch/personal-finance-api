@@ -223,6 +223,23 @@ describe('TransactionsController', () => {
         ),
       ).rejects.toThrow(UnprocessableEntityException);
     });
+
+    it('should map ResourceOwnershipException to 403 (account or category belongs to another user)', async () => {
+      createUseCase.execute.mockRejectedValue(new ResourceOwnershipException('a1'));
+
+      await expect(
+        controller.create(
+          {
+            accountId: 'a1',
+            categoryId: 'c1',
+            nature: 'expense',
+            amount: 1,
+            transactionDate: '2026-03-15T12:00:00.000Z',
+          },
+          currentUser,
+        ),
+      ).rejects.toThrow(ForbiddenException);
+    });
   });
 
   describe('findByUserId', () => {
@@ -297,6 +314,14 @@ describe('TransactionsController', () => {
 
       await expect(controller.delete('t1', currentUser)).rejects.toThrow(
         ConflictException,
+      );
+    });
+
+    it('should map ResourceOwnershipException to 403', async () => {
+      deleteUseCase.execute.mockRejectedValue(new ResourceOwnershipException('t1'));
+
+      await expect(controller.delete('t1', currentUser)).rejects.toThrow(
+        ForbiddenException,
       );
     });
 

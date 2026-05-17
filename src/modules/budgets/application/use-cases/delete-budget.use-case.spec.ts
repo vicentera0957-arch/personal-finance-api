@@ -7,6 +7,7 @@ import {
 import { ResourceOwnershipException } from '../../../../shared/domain/exceptions/resource-ownership.exception';
 import { IExpenseChecker } from '../../domain/repository/expense-checker.port';
 import { makeBudget } from '../../../../test-support/factories';
+import { NullBudgetsCache } from '../../infrastructure/cache/__fakes__/null-budgets-cache';
 
 class FakeExpenseChecker extends IExpenseChecker {
   constructor(private readonly value: boolean) {
@@ -46,7 +47,7 @@ describe('DeleteBudgetUseCase', () => {
     repo.seed([makeBudget({ id: 'b1', userId: 'user-1' })]);
     const uow = makeMockUow(repo, false);
 
-    await new DeleteBudgetUseCase(uow as any).execute('b1', 'user-1');
+    await new DeleteBudgetUseCase(uow as any, new NullBudgetsCache()).execute('b1', 'user-1');
 
     expect(repo.size()).toBe(0);
     expect(uow.commit).toHaveBeenCalledTimes(1);
@@ -58,7 +59,7 @@ describe('DeleteBudgetUseCase', () => {
     const uow = makeMockUow(repo, true);
 
     await expect(
-      new DeleteBudgetUseCase(uow as any).execute('b1', 'user-1'),
+      new DeleteBudgetUseCase(uow as any, new NullBudgetsCache()).execute('b1', 'user-1'),
     ).rejects.toThrow(BudgetHasTransactionsInPeriodException);
 
     expect(repo.size()).toBe(1);
@@ -70,7 +71,7 @@ describe('DeleteBudgetUseCase', () => {
     const uow = makeMockUow(repo, false);
 
     await expect(
-      new DeleteBudgetUseCase(uow as any).execute('ghost', 'user-1'),
+      new DeleteBudgetUseCase(uow as any, new NullBudgetsCache()).execute('ghost', 'user-1'),
     ).rejects.toThrow(BudgetNotFoundException);
 
     expect(uow.rollback).toHaveBeenCalledTimes(1);
@@ -81,7 +82,7 @@ describe('DeleteBudgetUseCase', () => {
     const uow = makeMockUow(repo, false);
 
     await expect(
-      new DeleteBudgetUseCase(uow as any).execute('b1', 'intruder'),
+      new DeleteBudgetUseCase(uow as any, new NullBudgetsCache()).execute('b1', 'intruder'),
     ).rejects.toThrow(ResourceOwnershipException);
 
     expect(repo.size()).toBe(1);

@@ -1,5 +1,6 @@
 import { CreateCategoryUseCase } from './create-category.use-case';
 import { InMemoryCategoryRepository } from '../../infrastructure/persistence/__fakes__/in-memory-category.repository';
+import { NullCategoriesCache } from '../../infrastructure/cache/__fakes__/null-categories-cache';
 import { InvalidCategoryNatureException } from '../../domain/exceptions/category.exceptions';
 
 describe('CreateCategoryUseCase', () => {
@@ -8,7 +9,7 @@ describe('CreateCategoryUseCase', () => {
 
   beforeEach(() => {
     repo = new InMemoryCategoryRepository();
-    useCase = new CreateCategoryUseCase(repo);
+    useCase = new CreateCategoryUseCase(repo, new NullCategoriesCache());
   });
 
   it('should persist a new category and return it', async () => {

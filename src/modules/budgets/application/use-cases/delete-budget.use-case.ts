@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { IBudgetUnitOfWork } from '../../domain/IBudgetUnitOfWork';
+import { IBudgetsCache } from '../../domain/ports/cache/budgets-cache.port';
 import {
   BudgetNotFoundException,
   BudgetHasTransactionsInPeriodException,
@@ -8,7 +9,10 @@ import { ResourceOwnershipException } from '../../../../shared/domain/exceptions
 
 @Injectable()
 export class DeleteBudgetUseCase {
-  constructor(private readonly uow: IBudgetUnitOfWork) {}
+  constructor(
+    private readonly uow: IBudgetUnitOfWork,
+    private readonly cache: IBudgetsCache,
+  ) {}
 
   async execute(id: string, requestUserId: string): Promise<void> {
     await this.uow.begin();
@@ -29,6 +33,11 @@ export class DeleteBudgetUseCase {
 
       await budgetRepo.delete(id);
       await this.uow.commit();
+
+      await Promise.all([
+        this.cache.invalidateUser(budget.userId),
+        this.cache.invalidateById(id),
+      ]);
     } catch (error) {
       await this.uow.rollback();
       throw error;

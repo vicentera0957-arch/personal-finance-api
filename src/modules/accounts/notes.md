@@ -1,156 +1,106 @@
-# Módulo `accounts` — Documentación de referencia
+# Módulo `accounts` — Referencia actual
 
-## Alcance V1
-
-| Incluido | Excluido |
-| -------- | -------- |
-| Crear cuenta con nombre, tipo y balance inicial | Transferencias entre cuentas (módulo `transactions`) |
-| Recuperar cuenta por id | Actualización de balance vía transacciones |
-| Listar cuentas de un usuario | `AdjustBalance` manual (ver decisión más abajo) |
-| Renombrar cuenta | Paginación del listado |
-| Archivar / desarchivar cuenta | |
-| Eliminar cuenta | |
-
----
-
-## Capa domain
+## Dominio
 
 ### Value object `Balance`
 
 **Archivo:** `domain/value-objects/balance.vo.ts`
 
-Clase inmutable que encapsula un monto monetario en **CLP** (sin decimales). Relación 1:1 entre el valor del VO y lo que se persiste en la DB.
+Monto monetario en CLP (sin decimales). Inmutable.
 
 Métodos:
-- `Balance.create(amount)` — valida que sea número finito, no negativo y sin decimales; rechaza decimales explícitamente (CLP no tiene centavos)
-- `Balance.reconstitute(value)` — reconstruye desde persistencia sin re-validar; evita que cambios futuros en las reglas rompan datos históricos
+- `Balance.create(amount)` — valida finito, no negativo, sin decimales
+- `Balance.reconstitute(value)` — reconstruye desde persistencia sin re-validar (el mapper SIEMPRE usa este)
 - `Balance.zero()` — factory para balance cero
-- `add(other)` — aritmética inmutable, retorna nuevo `Balance`
-- `subtract(other)` — aritmética inmutable; lanza `InsufficientFundsException` si el resultado sería negativo
+- `add(other)` / `subtract(other)` — aritmética inmutable; `subtract` lanza `InsufficientFundsException` si el resultado sería negativo
 - `getValue()`, `equals()`, `greaterThan()`, `isZero()`
 
-**Por qué no usar centavos:** CLP no tiene centavos, almacenar en centavos solo añade conversión sin beneficio. Si en el futuro se soportan otras monedas (USD, EUR), habrá que migrar la columna a `decimal(15,2)` y revisar el VO.
+CLP no tiene centavos — almacenar en centavos solo añade conversión sin beneficio. Si en el futuro se soportan otras monedas habrá que migrar la columna a `decimal(15,2)`.
 
-**Por qué `add`/`subtract` viven en el VO:** La regla "un balance no puede ser negativo" pertenece al VO. Si esa validación viviera en `Account` o en `transactions`, habría que repetirla en cada lugar que modifique un balance. En el VO, es imposible construir un `Balance` inválido sin importar desde dónde se llame.
+La regla "un balance no puede ser negativo" vive en el VO porque es la única forma de garantizar que sea imposible construir un `Balance` inválido desde cualquier punto del sistema.
 
 ### Value object `AccountType`
 
 **Archivo:** `domain/value-objects/type.vo.ts`
 
-Clase inmutable que valida el tipo de cuenta contra una lista cerrada. El valor se normaliza a minúsculas.
-
-Tipos válidos: `ahorro`, `corriente`, `vista`, `ruta`, `otros`
-
-Métodos:
-- `AccountType.create(tipo)` — valida contra la lista; lanza `NoTypeProvidedException` si está vacío o `InvalidAccountTypeException` si el tipo no es válido
-- `AccountType.reconstitute(tipo)` — reconstruye desde persistencia sin re-validar
-- `getType()`, `equals()`
+Lista cerrada normalizada a minúsculas: `ahorro`, `corriente`, `vista`, `ruta`, `otros`.
 
 ### Entidad `Account`
 
 **Archivo:** `domain/entities/account.entity.ts`
 
-Clase pura sin decoradores. Constructor privado con dos factory methods:
-
-- `Account.create(props)` — para cuentas nuevas; `currentBalance` arranca igual a `initialBalance`; `isArchived` arranca en `false`
-- `Account.reconstitute(props)` — para reconstruir desde persistencia; acepta `currentBalance` independiente del inicial
+Constructor privado. Dos factory methods:
+- `Account.create(props)` — `currentBalance` arranca igual a `initialBalance`; `isArchived = false`
+- `Account.reconstitute(props)` — acepta `currentBalance` independiente del inicial
 
 Métodos de negocio:
 
-| Método | Descripción |
-| ------ | ----------- |
-| `inflow(amount)` | Suma al balance; bloquea si archivada |
-| `outflow(amount)` | Resta al balance; bloquea si archivada; delega en `Balance.subtract` para validar fondos |
-| `hasSufficientFunds(amount)` | Consulta de solo lectura; siempre disponible |
-| `rename(name)` | Renombra; bloquea si archivada |
-| `archive()` | Archiva; lanza error si ya está archivada |
-| `unarchive()` | Desarchiva; lanza error si no está archivada |
+| Método | Comportamiento | Bloqueado si archivada |
+|--------|---------------|----------------------|
+| `inflow(amount)` | Suma al balance | ✅ `CannotOperateOnArchivedAccountException` |
+| `outflow(amount)` | Resta al balance (delega en `Balance.subtract`) | ✅ |
+| `rename(name)` | Actualiza nombre | ✅ |
+| `archive()` | Archiva; lanza error si ya archivada | — |
+| `unarchive()` | Desarchiva; lanza error si no archivada | — |
+| `hasSufficientFunds(amount)` | Solo lectura | — |
 
-### Invariante: cuentas archivadas son inmutables
-
-Una cuenta archivada no puede modificar su balance ni su nombre. El usuario debe llamar `unarchive()` explícitamente antes de volver a operar.
-
-| Método | Excepción si archivada |
-| ------ | ---------------------- |
-| `inflow(amount)` | `CannotOperateOnArchivedAccountException` |
-| `outflow(amount)` | `CannotOperateOnArchivedAccountException` |
-| `rename(name)` | `CannotOperateOnArchivedAccountException` |
+**Invariante:** una cuenta archivada es inmutable. El usuario debe llamar `unarchive()` explícitamente antes de volver a operar. `archive()` y `unarchive()` no son idempotentes — lanzan excepción si el estado ya es el pedido.
 
 ### Excepciones de dominio
 
 **Archivo:** `domain/exceptions/account.exceptions.ts`
 
-Todas extienden la clase base `AccountException extends Error`. El mapeo a HTTP ocurre exclusivamente en el controlador.
+Base: `AccountException extends Error`. El controlador es el único lugar donde se mapean a HTTP.
 
-**Excepciones de entidad:**
-| Excepción | Cuándo se lanza |
-| --------- | --------------- |
-| `AccountNotFoundException` | Cuenta no encontrada por id |
-| `AccountAlreadyArchivedDomainException` | `archive()` sobre cuenta ya archivada |
-| `AccountNotArchivedDomainException` | `unarchive()` sobre cuenta no archivada |
-| `CannotOperateOnArchivedAccountException` | `inflow`, `outflow`, `rename` sobre cuenta archivada |
-| `ZeroAmountInflowException` | `inflow()` con monto cero |
-| `ZeroAmountOutflowException` | `outflow()` con monto cero |
-| `InvalidAccountNameException` | `rename()` con nombre vacío |
+| Excepción | HTTP |
+|-----------|------|
+| `AccountNotFoundException` | 404 |
+| `AccountAlreadyArchivedDomainException` | 409 |
+| `AccountNotArchivedDomainException` | 409 |
+| `CannotOperateOnArchivedAccountException` | 409 |
+| `ZeroAmountInflowException` | 400 |
+| `ZeroAmountOutflowException` | 400 |
+| `InvalidAccountNameException` | 400 |
+| `InsufficientFundsException` | 422 |
+| `InvalidBalanceException` | 400 |
+| `NoTypeProvidedException` | 400 |
+| `InvalidAccountTypeException` | 400 |
 
-**Excepciones de Value Object:**
-| Excepción | Cuándo se lanza |
-| --------- | --------------- |
-| `InsufficientFundsException` | `Balance.subtract()` cuando el resultado sería negativo |
-| `InvalidBalanceException` | `Balance.create()` con valor inválido (no finito, negativo, o decimal) |
-| `NoTypeProvidedException` | `AccountType.create()` con string vacío |
-| `InvalidAccountTypeException` | `AccountType.create()` con tipo no reconocido |
+### Puerto `IAccountRepository`
 
-### Repositorio
-
-**Archivo:** `domain/repository/accounts.repository.ts`
-
-Puerto de salida definido como clase abstracta. Métodos:
-
-- `findById(id: string): Promise<Account | null>`
-- `findByUserId(userId: string): Promise<Account[]>`
-- `save(account: Account): Promise<Account>`
-- `delete(id: string): Promise<void>`
+Clase abstracta. Métodos: `findById`, `findByUserId`, `save`, `delete`.
 
 ---
 
 ## Capa application
 
-### Use cases
+| Use case | Flujo |
+|----------|-------|
+| `CreateAccountUseCase` | Crea VOs → crea entidad → persiste |
+| `GetAccountByIdUseCase` | Busca por id → valida ownership (`requestUserId`) → lanza `AccountNotFoundException` si no existe |
+| `GetAccountsByUserIdUseCase` | Retorna array (vacío es válido) |
+| `RenameAccountUseCase` | Delega a `GetAccountByIdUseCase` (hereda ownership) → `account.rename()` → persiste |
+| `ArchiveAccountUseCase` | Delega a `GetAccountByIdUseCase` → `account.archive()` → persiste |
+| `UnarchiveAccountUseCase` | Delega a `GetAccountByIdUseCase` → `account.unarchive()` → persiste |
+| `DeleteAccountUseCase` | Verifica existencia y ownership → `repo.delete()` |
+| `UpdateAccountBalanceUseCase` | `repo.findById()` → `account.inflow()` o `account.outflow()` → `repo.save()` |
 
-| Use case | Descripción |
-| -------- | ----------- |
-| `CreateAccountUseCase` | Crea VOs `AccountType` y `Balance` → crea entidad → persiste |
-| `GetAccountByIdUseCase` | Busca por id → lanza `AccountNotFoundException` si no existe |
-| `GetAccountsByUserIdUseCase` | Retorna array (vacío es válido, no es error) |
-| `RenameAccountUseCase` | Recupera cuenta → llama `account.rename()` → persiste |
-| `ArchiveAccountUseCase` | Recupera cuenta → llama `account.archive()` → persiste |
-| `UnarchiveAccountUseCase` | Recupera cuenta → llama `account.unarchive()` → persiste |
-| `DeleteAccountUseCase` | Verifica existencia → elimina → retorna `void` |
-| `UpdateAccountBalanceUseCase` | Recupera cuenta → aplica inflow/outflow via VO → persiste con QueryRunner opcional (atómico) |
-
-### `UpdateAccountBalanceUseCase` — Herramienta standalone
+### `UpdateAccountBalanceUseCase` — consumido por `transactions`
 
 **Archivo:** `application/use-cases/update-account-balance.use-case.ts`
 
-Use case que modifica el balance de una cuenta de forma independiente. Recibe:
-- `accountId: string` — id de la cuenta a modificar
-- `amount: number` — monto positivo a aplicar
-- `type: 'inflow' | 'outflow'` — operación a realizar
-- `queryRunner?: QueryRunner` — parámetro opcional para participar en una transacción de BD externa
+Este use case ES consumido por `CreateTransactionUseCase` y `DeleteTransactionUseCase`. El módulo `transactions` construye una instancia directamente inyectando el **repositorio escopado del UoW**:
 
-**Flujo:**
-1. Recupera la cuenta via `IAccountRepository.findById(accountId)` — lanza `AccountNotFoundException` si no existe
-2. Crea un VO `Balance` con el monto (valida via `Balance.create()`)
-3. Llama `account.inflow()` o `account.outflow()` según el tipo
-4. Persiste la cuenta modificada via `IAccountRepository.save(account, queryRunner)`
+```typescript
+// create-transaction.use-case.ts (dentro del bloque UoW)
+const acctRepo = this.uow.getAccountRepository(); // ScopedAccountRepository
+const updateBalance = new UpdateAccountBalanceUseCase(acctRepo);
+await updateBalance.execute(command.accountId, amount.getValue(), 'inflow' | 'outflow');
+```
 
-**Estado en V1:** Disponible como herramienta de uso futuro — no es consumido por el módulo `transactions`.
-Los use cases de transacciones gestionan las mutaciones de balance directamente sobre la entidad `Account`
-cargada en memoria, para mantener cohesión de la operación y evitar cargas redundantes a la DB.
+Al usar el repositorio escopado, la actualización del balance corre dentro de la misma transacción de PostgreSQL que el `txRepo.save(transaction)`. Esto garantiza atomicidad: si el save de la transacción falla, el balance tampoco se actualiza.
 
-> **Para cuándo sirve:** ajustes manuales de balance (correcciones administrativas, reconciliaciones),
-> operaciones batch que necesiten modificar balances sin registrar una transacción contable.
+⚠️ **Bug B:** `ScopedAccountRepository.findById` (en `unit-of-work.impl.ts:119`) usa `manager.findOne` sin lock. Dos transacciones concurrentes sobre la misma cuenta leen el mismo balance y escriben valores absolutos — la segunda escritura sobreescribe la primera. Ver detalles en `transactions/notes.md`.
 
 ---
 
@@ -161,170 +111,69 @@ cargada en memoria, para mantener cohesión de la operación y evitar cargas red
 **Archivo:** `infrastructure/persistance/account.orm.entity.ts`
 
 | Columna | Tipo | Notas |
-| ------- | ---- | ----- |
-| `id` | `uuid` | PK, generado en el use case con `randomUUID()` |
-| `userId` | `varchar` | Referencia lógica al usuario (sin FK por ahora) |
+|---------|------|-------|
+| `id` | `uuid` | PK, generado con `randomUUID()` |
+| `userId` | `varchar` | Referencia lógica |
 | `name` | `varchar` | |
-| `type` | `varchar` | Almacena el string del VO `AccountType` |
-| `initialBalance` | `int` | Valor directo en CLP (1:1 con el VO) |
-| `currentBalance` | `int` | Valor directo en CLP (1:1 con el VO) |
+| `type` | `varchar` | String del VO `AccountType` |
+| `initialBalance` | `int` | CLP |
+| `currentBalance` | `int` | CLP |
 | `isArchived` | `boolean` | Default `false` |
-| `created_at` | `timestamp` | `@Column` simple — el dominio controla este valor |
-| `updated_at` | `timestamp` | `@Column` simple — el dominio controla este valor |
+| `created_at` | `timestamp` | `@Column` simple — el dominio controla el valor |
+| `updated_at` | `timestamp` | `@Column` simple — el dominio controla el valor |
+
+Índice: `@Index('idx_account_user', ['userId'])` — el listado por usuario es hot-path.
+
+**Por qué `@Column` simple en lugar de `@CreateDateColumn`:** TypeORM con `@CreateDateColumn`/`@UpdateDateColumn` sobreescribe los valores en cada `save()`, ignorando lo que el dominio setea. Con `@Column` simple, la entidad de dominio es la única fuente de verdad para las fechas.
 
 ### `AccountMapper`
 
-**Archivo:** `infrastructure/persistance/account.mapper.ts`
+`toDomain(orm)` — usa `Balance.reconstitute()` y `AccountType.reconstitute()` (no re-valida datos persistidos). `Account.reconstitute()` para preservar timestamps.  
+`toOrm(domain)` — extrae valores con getters.
 
-Único punto de traducción entre ORM entity y domain entity.
+### Rutas
 
-- `toDomain(orm)` — usa `Balance.reconstitute()` y `AccountType.reconstitute()` para no re-validar datos persistidos; usa `Account.reconstitute()`
-- `toOrm(domain)` — extrae valores con getters del dominio
-
-### `AccountRepositoryImpl`
-
-**Archivo:** `infrastructure/persistance/account.repo.implement.ts`
-
-Implementa `IAccountRepository` con TypeORM. Delega toda la conversión al mapper.
-
-### DTOs
-
-**Archivos:** `infrastructure/http/dto/`
-
-- `CreateAccountDto` — `userId`, `name`, `type`, `initialBalance` con validaciones de `class-validator`
-- `RenameAccountDto` — `name`
-- `AccountResponseDto` — `id`, `userId`, `name`, `type`, `initialBalance`, `currentBalance`, `isArchived`, `createdAt`, `updatedAt`
-
-### `AccountsController`
-
-**Archivo:** `infrastructure/http/accounts-controller/accounts.controller.ts`
-
-| Método | Ruta | Use case | HTTP éxito |
-| ------ | ---- | -------- | ---------- |
+| Método | Ruta | Use case | HTTP |
+|--------|------|----------|------|
 | POST | `/accounts` | `CreateAccountUseCase` | 201 |
+| GET | `/accounts` | `GetAccountsByUserIdUseCase` | 200 |
 | GET | `/accounts/:id` | `GetAccountByIdUseCase` | 200 |
-| GET | `/accounts/user/:userId` | `GetAccountsByUserIdUseCase` | 200 |
 | PATCH | `/accounts/:id/name` | `RenameAccountUseCase` | 200 |
 | PATCH | `/accounts/:id/archive` | `ArchiveAccountUseCase` | 200 |
 | PATCH | `/accounts/:id/unarchive` | `UnarchiveAccountUseCase` | 200 |
 | DELETE | `/accounts/:id` | `DeleteAccountUseCase` | 204 |
 
-Mapeo de excepciones de dominio a HTTP:
-
-| Excepción | HTTP |
-| --------- | ---- |
-| `AccountNotFoundException` | 404 |
-| `AccountAlreadyArchivedDomainException` | 409 |
-| `AccountNotArchivedDomainException` | 409 |
-| `CannotOperateOnArchivedAccountException` | 409 |
-| `InvalidBalanceException` | 400 |
-| `NoTypeProvidedException` | 400 |
-| `InvalidAccountTypeException` | 400 |
-| `InsufficientFundsException` | 422 |
-
 ---
 
 ## Wiring — `AccountsModule`
 
-**Archivo:** `accounts.module.ts`
+Exports:
+- `GetAccountByIdUseCase` — consumido por `budgets` y `transactions` (ownership check cross-module)
+- `GetAccountsByUserIdUseCase` — consumido por `transactions`
+- `UpdateAccountBalanceUseCase` — consumido por `transactions`
+- `IAccountRepository` — consumido por `transactions` para el UoW scoped repo
 
-```typescript
-@Module({
-  imports: [TypeOrmModule.forFeature([AccountOrmEntity])],
-  controllers: [AccountsController],
-  providers: [
-    AccountMapper,
-    CreateAccountUseCase,
-    GetAccountByIdUseCase,
-    GetAccountsByUserIdUseCase,
-    RenameAccountUseCase,
-    ArchiveAccountUseCase,
-    UnarchiveAccountUseCase,
-    DeleteAccountUseCase,
-    UpdateAccountBalanceUseCase,
-    { provide: IAccountRepository, useClass: AccountRepositoryImpl },
-  ],
-  exports: [
-    GetAccountByIdUseCase,        // consumido por el módulo transactions
-    GetAccountsByUserIdUseCase,   // consumido por el módulo transactions
-    UpdateAccountBalanceUseCase,  // disponible para módulos futuros (ajustes, reconciliaciones)
-    IAccountRepository,           // consumido por el módulo transactions para saves atómicos
-  ],
-})
-export class AccountsModule {}
+---
+
+## Extensión futura: transferencias
+
+Para "mover $X de cuenta A a cuenta B":
+
+```
+TransferUseCase(fromId, toId, amount):
+  uow.begin()
+    txRepo.save(tx: outflow from A, transferGroupId)
+    txRepo.save(tx: inflow  to B, transferGroupId)
+    updateBalance(A, -amount, 'outflow')
+    updateBalance(B, +amount, 'inflow')
+  uow.commit()
 ```
 
----
-
-## Consideraciones arquitectónicas
-
-### `UpdateAccountBalanceUseCase` — Herramienta futura, no dependencia interna
-
-El use case `UpdateAccountBalanceUseCase` existe en V1 pero **no es consumido por el módulo `transactions`**. Está disponible para casos de uso futuros que necesiten mutar el balance de forma aislada:
-
-- **Ajustes manuales:** Correcciones administrativas por auditoría o errores en datos históricos
-- **Reconciliación:** Sincronizar balance con banco externo
-- **Cálculo de intereses:** Acumular intereses sin crear transacciones contables
-- **Operaciones batch:** Actualizar balances de múltiples cuentas bajo criterios específicos
-
-**Por qué no se usa en `CreateTransactionUseCase`:**
-
-La decisión de mantener la lógica de inflow/outflow inline en CreateTransaction responde a estos principios:
-
-1. **Cohesión operacional:** Registrar una transacción y actualizar el balance son inseparables en el dominio — son la misma operación de negocio
-2. **Eficiencia:** La cuenta se carga una sola vez y se muta en memoria, evitando un segundo query a la BD
-3. **Simplicidad:** Abstraer innecesariamente añade complejidad (N+1, indirección) sin beneficio claro aún
-4. **Claridad del flujo:** El lector ve exactamente qué pasa: load → mutate → persist, todo en un use case
-
-**Cuándo usarías `UpdateAccountBalanceUseCase`:**
-
-```typescript
-// Escenario: ajustar balance por auditoría (módulo futuro de corrections)
-const correctionUseCase = new ApplyBalanceCorrectionUseCase(
-  updateAccountBalanceUseCase,  // ← lo inyectaría como dependencia
-  correctionRepository,
-);
-
-await correctionUseCase.execute({
-  accountId: '123',
-  reason: 'Auditoría: reversión de transacción duplicada',
-  adjustment: -500,  // outflow
-});
-```
-
-En ese contexto, el use case es la herramienta correcta porque la operación está por sí sola desacoplada de la contabilidad normal.
+Ambas transacciones deben compartir un `transferGroupId` para reconstruir el transfer lógico. El UoW ya existe — la extensión es agregar el campo y el use case.
 
 ---
 
-## Decisiones de diseño
+## Recursos
 
-### `adjustBalance` y `resetToInitialBalance` no implementados en V1
-
-Ambos métodos fueron removidos de la entidad porque manipulan el balance directamente sin dejar registro del motivo. `adjustBalance` validaba un `reason` pero lo descartaba sin persistirlo — falsa trazabilidad. Para reimplementarlos en V2 debe existir primero:
-- Un módulo de auditoría que persista operaciones manuales con motivo y actor, o
-- Eventos de dominio (`BalanceAdjusted`) que otro módulo consuma y persista
-
-### `reconstitute()` en todos los VOs
-
-Todos los VOs tienen un método `reconstitute()` separado de `create()`. El mapper siempre usa `reconstitute()` al leer desde la DB para evitar re-validar datos ya persistidos. Si las reglas de validación cambian en el futuro, los datos históricos no se rompen al ser leídos.
-
----
-
-## Checklist de verificación
-
-- [ ] `POST /accounts` crea cuenta y retorna `AccountResponseDto`
-- [ ] `POST /accounts` con tipo inválido → `400 Bad Request`
-- [ ] `POST /accounts` con balance negativo → `400 Bad Request`
-- [ ] `GET /accounts/:id` retorna la cuenta
-- [ ] `GET /accounts/:id` con id inexistente → `404 Not Found`
-- [ ] `GET /accounts/user/:userId` retorna array de cuentas del usuario
-- [ ] `GET /accounts/user/:userId` sin cuentas → array vacío `[]`
-- [ ] `PATCH /accounts/:id/name` actualiza el nombre
-- [ ] `PATCH /accounts/:id/name` sobre cuenta archivada → `409 Conflict`
-- [ ] `PATCH /accounts/:id/archive` archiva la cuenta
-- [ ] `PATCH /accounts/:id/archive` sobre cuenta ya archivada → `409 Conflict`
-- [ ] `PATCH /accounts/:id/unarchive` desarchiva la cuenta
-- [ ] `PATCH /accounts/:id/unarchive` sobre cuenta no archivada → `409 Conflict`
-- [ ] `DELETE /accounts/:id` elimina la cuenta → `204 No Content`
-- [ ] `DELETE /accounts/:id` con id inexistente → `404 Not Found`
-- [ ] El módulo `transactions` puede importar `GetAccountByIdUseCase` sin errores
+- 📚 DDIA cap. 7 — lost update problem y pessimistic/optimistic locking
+- 📄 postgresql.org/docs → "Explicit Locking"

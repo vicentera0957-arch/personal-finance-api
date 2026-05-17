@@ -1,5 +1,6 @@
 import { DeleteUserUseCase } from './delete-user.use-case';
 import { InMemoryUserRepository } from '../../infrastructure/persistence/__fakes__/in-memory-user.repository';
+import { NullUsersCache } from '../../infrastructure/cache/__fakes__/null-users-cache';
 import { UserNotFoundException } from '../../domain/exceptions/user.exceptions';
 import { ResourceOwnershipException } from '../../../../shared/domain/exceptions/resource-ownership.exception';
 import { makeUser } from '../../../../test-support/factories';
@@ -10,7 +11,7 @@ describe('DeleteUserUseCase', () => {
 
   beforeEach(() => {
     repo = new InMemoryUserRepository();
-    useCase = new DeleteUserUseCase(repo);
+    useCase = new DeleteUserUseCase(repo, new NullUsersCache());
   });
 
   it('should remove the user from the repository', async () => {

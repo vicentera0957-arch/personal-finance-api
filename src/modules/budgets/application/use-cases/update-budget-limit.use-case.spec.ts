@@ -9,6 +9,7 @@ import {
 } from '../../domain/exceptions/budget.exceptions';
 import { ResourceOwnershipException } from '../../../../shared/domain/exceptions/resource-ownership.exception';
 import { makeBudget } from '../../../../test-support/factories';
+import { NullBudgetsCache } from '../../infrastructure/cache/__fakes__/null-budgets-cache';
 
 class FakeExpenseChecker extends IExpenseChecker {
   constructor(private readonly spentInPeriod: number) {
@@ -42,7 +43,7 @@ describe('UpdateBudgetLimitUseCase', () => {
         .fn()
         .mockReturnValue(new FakeExpenseChecker(0)),
     };
-    useCase = new UpdateBudgetLimitUseCase(mockUow as IBudgetUnitOfWork);
+    useCase = new UpdateBudgetLimitUseCase(mockUow as IBudgetUnitOfWork, new NullBudgetsCache());
   });
 
   it('should update the budget limit within a transaction', async () => {

@@ -1,6 +1,7 @@
 import { CreateTransactionUseCase } from './create-transaction.use-case';
 import { GetAccountByIdUseCase } from '../../../accounts/application/use-cases/get-account-by-id.use-case';
 import { GetCategoryByIdUseCase } from '../../../categories/application/use-cases/get-category-by-id.use-case';
+import { NullCategoriesCache } from '../../../categories/infrastructure/cache/__fakes__/null-categories-cache';
 import { GetBudgetByUserCategoryPeriodUseCase } from '../../../budgets/application/use-cases/get-budget-by-user-category-period.use-case';
 
 import { InMemoryTransactionRepository } from '../../infrastructure/persistence/__fakes__/in-memory-transaction.repository';
@@ -42,7 +43,7 @@ describe('CreateTransactionUseCase', () => {
     useCase = new CreateTransactionUseCase(
       uow,
       new GetAccountByIdUseCase(accountRepo),
-      new GetCategoryByIdUseCase(categoryRepo),
+      new GetCategoryByIdUseCase(categoryRepo, new NullCategoriesCache()),
       new GetBudgetByUserCategoryPeriodUseCase(budgetRepo),
     );
   });

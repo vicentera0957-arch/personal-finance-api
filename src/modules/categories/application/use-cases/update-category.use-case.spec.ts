@@ -1,9 +1,8 @@
 import { UpdateCategoryUseCase } from './update-category.use-case';
 import { GetCategoryByIdUseCase } from './get-category-by-id.use-case';
 import { InMemoryCategoryRepository } from '../../infrastructure/persistence/__fakes__/in-memory-category.repository';
-import {
-  CategoryNotFoundException,
-} from '../../domain/exceptions/category.exceptions';
+import { NullCategoriesCache } from '../../infrastructure/cache/__fakes__/null-categories-cache';
+import { CategoryNotFoundException } from '../../domain/exceptions/category.exceptions';
 import { ResourceOwnershipException } from '../../../../shared/domain/exceptions/resource-ownership.exception';
 import { makeCategory } from '../../../../test-support/factories';
 
@@ -13,13 +12,16 @@ describe('UpdateCategoryUseCase', () => {
 
   beforeEach(() => {
     repo = new InMemoryCategoryRepository();
-    useCase = new UpdateCategoryUseCase(repo, new GetCategoryByIdUseCase(repo));
+    const nullCache = new NullCategoriesCache();
+    useCase = new UpdateCategoryUseCase(
+      repo,
+      new GetCategoryByIdUseCase(repo, nullCache),
+      nullCache,
+    );
   });
 
   it('should rename the category when name is provided', async () => {
-    repo.seed([
-      makeCategory({ id: 'c1', userId: 'user-1', name: 'Old' }),
-    ]);
+    repo.seed([makeCategory({ id: 'c1', userId: 'user-1', name: 'Old' })]);
 
     const result = await useCase.execute({
       id: 'c1',
@@ -34,21 +36,13 @@ describe('UpdateCategoryUseCase', () => {
     repo.seed([makeCategory({ id: 'c1', userId: 'user-1' })]);
 
     await expect(
-      useCase.execute({
-        id: 'c1',
-        requestUserId: 'user-2',
-        name: 'Hacker',
-      }),
+      useCase.execute({ id: 'c1', requestUserId: 'user-2', name: 'Hacker' }),
     ).rejects.toThrow(ResourceOwnershipException);
   });
 
   it('should throw CategoryNotFoundException when category is missing', async () => {
     await expect(
-      useCase.execute({
-        id: 'ghost',
-        requestUserId: 'user-1',
-        name: 'X',
-      }),
+      useCase.execute({ id: 'ghost', requestUserId: 'user-1', name: 'X' }),
     ).rejects.toThrow(CategoryNotFoundException);
   });
 });

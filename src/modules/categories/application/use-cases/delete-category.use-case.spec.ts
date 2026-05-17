@@ -1,6 +1,7 @@
 import { DeleteCategoryUseCase } from './delete-category.use-case';
 import { GetCategoryByIdUseCase } from './get-category-by-id.use-case';
 import { InMemoryCategoryRepository } from '../../infrastructure/persistence/__fakes__/in-memory-category.repository';
+import { NullCategoriesCache } from '../../infrastructure/cache/__fakes__/null-categories-cache';
 import { CategoryNotFoundException } from '../../domain/exceptions/category.exceptions';
 import { ResourceOwnershipException } from '../../../../shared/domain/exceptions/resource-ownership.exception';
 import { makeCategory } from '../../../../test-support/factories';
@@ -11,7 +12,12 @@ describe('DeleteCategoryUseCase', () => {
 
   beforeEach(() => {
     repo = new InMemoryCategoryRepository();
-    useCase = new DeleteCategoryUseCase(repo, new GetCategoryByIdUseCase(repo));
+    const nullCache = new NullCategoriesCache();
+    useCase = new DeleteCategoryUseCase(
+      repo,
+      new GetCategoryByIdUseCase(repo, nullCache),
+      nullCache,
+    );
   });
 
   it('should remove the category from the repository', async () => {

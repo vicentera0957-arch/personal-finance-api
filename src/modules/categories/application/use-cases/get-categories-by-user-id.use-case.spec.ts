@@ -1,5 +1,6 @@
 import { GetCategoriesByUserIdUseCase } from './get-categories-by-user-id.use-case';
 import { InMemoryCategoryRepository } from '../../infrastructure/persistence/__fakes__/in-memory-category.repository';
+import { NullCategoriesCache } from '../../infrastructure/cache/__fakes__/null-categories-cache';
 import { makeCategory } from '../../../../test-support/factories';
 
 describe('GetCategoriesByUserIdUseCase', () => {
@@ -8,7 +9,7 @@ describe('GetCategoriesByUserIdUseCase', () => {
 
   beforeEach(() => {
     repo = new InMemoryCategoryRepository();
-    useCase = new GetCategoriesByUserIdUseCase(repo);
+    useCase = new GetCategoriesByUserIdUseCase(repo, new NullCategoriesCache());
   });
 
   it('should return only the categories owned by the user', async () => {

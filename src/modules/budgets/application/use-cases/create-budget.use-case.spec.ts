@@ -2,6 +2,8 @@ import { CreateBudgetUseCase } from './create-budget.use-case';
 import { GetCategoryByIdUseCase } from '../../../categories/application/use-cases/get-category-by-id.use-case';
 import { InMemoryBudgetRepository } from '../../infrastructure/persistence/__fakes__/in-memory-budget.repository';
 import { InMemoryCategoryRepository } from '../../../categories/infrastructure/persistence/__fakes__/in-memory-category.repository';
+import { NullCategoriesCache } from '../../../categories/infrastructure/cache/__fakes__/null-categories-cache';
+import { NullBudgetsCache } from '../../infrastructure/cache/__fakes__/null-budgets-cache';
 import {
   BudgetAlreadyExistsException,
   BudgetCategoryMustBeExpenseException,
@@ -19,7 +21,8 @@ describe('CreateBudgetUseCase', () => {
     categoryRepo = new InMemoryCategoryRepository();
     useCase = new CreateBudgetUseCase(
       budgetRepo,
-      new GetCategoryByIdUseCase(categoryRepo),
+      new GetCategoryByIdUseCase(categoryRepo, new NullCategoriesCache()),
+      new NullBudgetsCache(),
     );
   });
 

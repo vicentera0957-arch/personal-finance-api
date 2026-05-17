@@ -23,4 +23,18 @@ export class ExpenseCheckerImpl extends IExpenseChecker {
       );
     return sum > 0;
   }
+
+  async sumExpenseAmountInPeriod(
+    userId: string,
+    categoryId: string,
+    month: number,
+    year: number,
+  ): Promise<number> {
+    return this.transactionRepository.sumExpenseAmountByUserCategoryAndPeriod(
+      userId,
+      categoryId,
+      month,
+      year,
+    );
+  }
 }

@@ -1,5 +1,6 @@
 import { GetBudgetByIdUseCase } from './get-budget-by-id.use-case';
 import { InMemoryBudgetRepository } from '../../infrastructure/persistence/__fakes__/in-memory-budget.repository';
+import { NullBudgetsCache } from '../../infrastructure/cache/__fakes__/null-budgets-cache';
 import { BudgetNotFoundException } from '../../domain/exceptions/budget.exceptions';
 import { ResourceOwnershipException } from '../../../../shared/domain/exceptions/resource-ownership.exception';
 import { makeBudget } from '../../../../test-support/factories';
@@ -10,7 +11,7 @@ describe('GetBudgetByIdUseCase', () => {
 
   beforeEach(() => {
     repo = new InMemoryBudgetRepository();
-    useCase = new GetBudgetByIdUseCase(repo);
+    useCase = new GetBudgetByIdUseCase(repo, new NullBudgetsCache());
   });
 
   it('should return the budget when owned by requester', async () => {
