@@ -1,3 +1,7 @@
+> **Referencia principal:** `src/modules/auth/notes.md`  
+> Este documento es el registro de implementación original de la ownership validation (2026-04-11).
+> Útil como historial; para el estado actual del módulo, ver la nota del módulo.
+
 # Auth Module — Feature Notes
 
 ## Resumen

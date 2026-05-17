@@ -1,0 +1,157 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ─────────────────────────────────────────────────────────────
+  # Job 1: tests unitarios (sin DB — solo domain + use cases)
+  # ─────────────────────────────────────────────────────────────
+  unit-tests:
+    name: Unit tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run unit tests
+        run: npm test -- --forceExit
+
+  # ─────────────────────────────────────────────────────────────
+  # Job 2: integration tests con DB real + migraciones
+  # ─────────────────────────────────────────────────────────────
+  integration-tests:
+    name: Integration tests
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB: personal_finance_db
+          POSTGRES_USER: finance_user
+          POSTGRES_PASSWORD: finance_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Create test database
+        run: |
+          PGPASSWORD=finance_password psql \
+            -h localhost -U finance_user -d personal_finance_db \
+            -c "CREATE DATABASE personal_finance_db_test;"
+          PGPASSWORD=finance_password psql \
+            -h localhost -U finance_user -d personal_finance_db \
+            -c "GRANT ALL PRIVILEGES ON DATABASE personal_finance_db_test TO finance_user;"
+
+      - name: Run migrations on test database
+        run: npm run migration:run
+        env:
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_USER: finance_user
+          DB_PASSWORD: finance_password
+          DB_NAME: personal_finance_db_test
+          JWT_SECRET: ci-test-jwt-secret-at-least-32-characters-long
+          JWT_REFRESH_SECRET: ci-test-refresh-secret-at-least-32-characters
+
+      - name: Run integration tests
+        run: npm run test:integration
+        env:
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_USER: finance_user
+          DB_PASSWORD: finance_password
+          DB_NAME: personal_finance_db_test
+          DB_SYNCHRONIZE: 'false'
+          JWT_SECRET: ci-test-jwt-secret-at-least-32-characters-long
+          JWT_REFRESH_SECRET: ci-test-refresh-secret-at-least-32-characters
+          JWT_ACCESS_EXPIRES_IN: 15m
+          JWT_REFRESH_EXPIRES_IN: 7d
+          NODE_ENV: test
+          PORT: 3001
+
+  # ─────────────────────────────────────────────────────────────
+  # Job 3: verificar que migration:run parte de cero (DB vacía)
+  # Esto detecta si la migración inicial está incompleta.
+  # ─────────────────────────────────────────────────────────────
+  migration-smoke:
+    name: Migration smoke test
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB: personal_finance_db
+          POSTGRES_USER: finance_user
+          POSTGRES_PASSWORD: finance_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run migrations from scratch
+        run: npm run migration:run
+        env:
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_USER: finance_user
+          DB_PASSWORD: finance_password
+          DB_NAME: personal_finance_db
+          JWT_SECRET: ci-test-jwt-secret-at-least-32-characters-long
+          JWT_REFRESH_SECRET: ci-test-refresh-secret-at-least-32-characters
+
+      - name: Verify all migrations applied
+        run: npm run migration:show
+        env:
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_USER: finance_user
+          DB_PASSWORD: finance_password
+          DB_NAME: personal_finance_db
+          JWT_SECRET: ci-test-jwt-secret-at-least-32-characters-long
+          JWT_REFRESH_SECRET: ci-test-refresh-secret-at-least-32-characters

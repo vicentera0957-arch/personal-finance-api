@@ -1,3 +1,16 @@
+# ⚠️ ARCHIVO OBSOLETO
+
+Este documento es un análisis pre-implementación de los módulos `categories` y `transactions`.
+El módulo ya está implementado y documentado. Ver en su lugar:
+
+- `src/modules/categories/notes.md` — referencia actual del módulo categories
+- `src/modules/transactions/notes.md` — referencia actual del módulo transactions
+- `CLAUDE.md` — arquitectura global y bugs activos
+
+---
+
+# [CONTENIDO HISTÓRICO — no refleja el estado actual del código]
+
 # Análisis Completo: Categories y Transactions
 
 ## PARTE 1 — CATEGORIES MODULE (Explicación detallada)
