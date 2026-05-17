@@ -12,3 +12,28 @@ export class InvalidCredentialsException extends AuthException {
     super('Las credenciales proporcionadas son inválidas');
   }
 }
+
+export class InvalidRefreshTokenException extends AuthException {
+  constructor() {
+    super('Refresh token inválido');
+  }
+}
+
+export class RefreshTokenRevokedException extends AuthException {
+  constructor() {
+    super('Refresh token revocado');
+  }
+}
+
+export class RefreshTokenExpiredException extends AuthException {
+  constructor() {
+    super('Refresh token expirado');
+  }
+}
+
+/** Se lanza cuando se detecta replay: alguien usó un token ya rotado. */
+export class RefreshTokenReplayDetectedException extends AuthException {
+  constructor() {
+    super('Replay detectado: sesión revocada por seguridad');
+  }
+}

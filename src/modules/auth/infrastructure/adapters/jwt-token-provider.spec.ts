@@ -14,8 +14,6 @@ describe('JwtTokenProvider', () => {
       verifyAsync: jest.fn(),
     } as unknown as jest.Mocked<JwtService>;
 
-    // Los 4 valores que lee el provider via getOrThrow:
-    // JWT_SECRET, JWT_REFRESH_SECRET, JWT_ACCESS_EXPIRES_IN, JWT_REFRESH_EXPIRES_IN
     const configMap: Record<string, string> = {
       JWT_SECRET: 'access-secret',
       JWT_REFRESH_SECRET: 'refresh-secret',
@@ -33,29 +31,50 @@ describe('JwtTokenProvider', () => {
     provider = new JwtTokenProvider(jwtService, configService);
   });
 
-  describe('generateTokens', () => {
-    it('should sign access and refresh tokens with their respective secrets and expirations', async () => {
-      jwtService.signAsync
-        .mockResolvedValueOnce('access-token')
-        .mockResolvedValueOnce('refresh-token');
+  describe('generateAccessToken', () => {
+    it('firma con access secret y expiración correcta', async () => {
+      jwtService.signAsync.mockResolvedValue('access-token');
 
-      const result = await provider.generateTokens({
+      const result = await provider.generateAccessToken({
         sub: 'user-1',
         email: 'a@b.cl',
       });
 
-      expect(result).toEqual({
-        accessToken: 'access-token',
-        refreshToken: 'refresh-token',
-      });
+      expect(result).toBe('access-token');
       expect(jwtService.signAsync).toHaveBeenCalledWith(
         { sub: 'user-1', email: 'a@b.cl' },
         { secret: 'access-secret', expiresIn: '15m' },
       );
+    });
+  });
+
+  describe('generateRefreshToken', () => {
+    it('firma con refresh secret e incluye jti en el payload', async () => {
+      jwtService.signAsync.mockResolvedValue('refresh-token');
+
+      const result = await provider.generateRefreshToken({
+        sub: 'user-1',
+        email: 'a@b.cl',
+        jti: 'some-uuid',
+      });
+
+      expect(result).toBe('refresh-token');
       expect(jwtService.signAsync).toHaveBeenCalledWith(
-        { sub: 'user-1', email: 'a@b.cl' },
+        { sub: 'user-1', email: 'a@b.cl', jti: 'some-uuid' },
         { secret: 'refresh-secret', expiresIn: '7d' },
       );
+    });
+  });
+
+  describe('getRefreshTokenExpiresAt', () => {
+    it('devuelve una fecha ~7 días en el futuro', () => {
+      const before = Date.now();
+      const result = provider.getRefreshTokenExpiresAt();
+      const after = Date.now();
+
+      const sevenDaysMs = 7 * 86_400_000;
+      expect(result.getTime()).toBeGreaterThanOrEqual(before + sevenDaysMs - 100);
+      expect(result.getTime()).toBeLessThanOrEqual(after + sevenDaysMs + 100);
     });
   });
 
@@ -84,15 +103,16 @@ describe('JwtTokenProvider', () => {
   });
 
   describe('verifyRefreshToken', () => {
-    it('should return the decoded payload when valid', async () => {
+    it('devuelve payload con jti cuando el token es válido', async () => {
       jwtService.verifyAsync.mockResolvedValue({
         sub: 'user-1',
         email: 'a@b.cl',
+        jti: 'some-uuid',
       });
 
       const result = await provider.verifyRefreshToken('r-token');
 
-      expect(result).toEqual({ sub: 'user-1', email: 'a@b.cl' });
+      expect(result).toEqual({ sub: 'user-1', email: 'a@b.cl', jti: 'some-uuid' });
       expect(jwtService.verifyAsync).toHaveBeenCalledWith('r-token', {
         secret: 'refresh-secret',
       });

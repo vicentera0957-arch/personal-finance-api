@@ -3,7 +3,13 @@ import { AuthController } from './auth.controller';
 import { LoginUseCase } from '../../../application/use-cases/login.use-case';
 import { RegisterUseCase } from '../../../application/use-cases/register.use-case';
 import { RefreshTokenUseCase } from '../../../application/use-cases/refresh-token.use-case';
-import { InvalidCredentialsException } from '../../../domain/exceptions/auth.exceptions';
+import { LogoutUseCase } from '../../../application/use-cases/logout.use-case';
+import {
+  InvalidCredentialsException,
+  InvalidRefreshTokenException,
+  RefreshTokenExpiredException,
+  RefreshTokenReplayDetectedException,
+} from '../../../domain/exceptions/auth.exceptions';
 import {
   UserAlreadyExistsException,
   UserNotFoundException,
@@ -14,6 +20,7 @@ describe('AuthController', () => {
   let loginUseCase: jest.Mocked<LoginUseCase>;
   let registerUseCase: jest.Mocked<RegisterUseCase>;
   let refreshTokenUseCase: jest.Mocked<RefreshTokenUseCase>;
+  let logoutUseCase: jest.Mocked<LogoutUseCase>;
 
   const tokens = { accessToken: 'access', refreshToken: 'refresh' };
 
@@ -21,8 +28,14 @@ describe('AuthController', () => {
     loginUseCase = { execute: jest.fn() } as unknown as jest.Mocked<LoginUseCase>;
     registerUseCase = { execute: jest.fn() } as unknown as jest.Mocked<RegisterUseCase>;
     refreshTokenUseCase = { execute: jest.fn() } as unknown as jest.Mocked<RefreshTokenUseCase>;
+    logoutUseCase = { execute: jest.fn() } as unknown as jest.Mocked<LogoutUseCase>;
 
-    controller = new AuthController(loginUseCase, registerUseCase, refreshTokenUseCase);
+    controller = new AuthController(
+      loginUseCase,
+      registerUseCase,
+      refreshTokenUseCase,
+      logoutUseCase,
+    );
   });
 
   describe('login', () => {
@@ -97,11 +110,54 @@ describe('AuthController', () => {
       expect(refreshTokenUseCase.execute).toHaveBeenCalledWith('old-refresh');
     });
 
-    it('should map any error to 401', async () => {
-      refreshTokenUseCase.execute.mockRejectedValue(new Error('invalid'));
+    it('maps InvalidRefreshTokenException to 401', async () => {
+      refreshTokenUseCase.execute.mockRejectedValue(new InvalidRefreshTokenException());
 
       await expect(
         controller.refresh({ refreshToken: 'bad' }),
+      ).rejects.toThrow(UnauthorizedException);
+    });
+
+    it('maps RefreshTokenExpiredException to 401', async () => {
+      refreshTokenUseCase.execute.mockRejectedValue(new RefreshTokenExpiredException());
+
+      await expect(
+        controller.refresh({ refreshToken: 'expired' }),
+      ).rejects.toThrow(UnauthorizedException);
+    });
+
+    it('maps RefreshTokenReplayDetectedException to 401', async () => {
+      refreshTokenUseCase.execute.mockRejectedValue(new RefreshTokenReplayDetectedException());
+
+      await expect(
+        controller.refresh({ refreshToken: 'replayed' }),
+      ).rejects.toThrow(UnauthorizedException);
+    });
+
+    it('propagates unexpected errors (does NOT swallow as 401)', async () => {
+      refreshTokenUseCase.execute.mockRejectedValue(new Error('db connection lost'));
+
+      await expect(
+        controller.refresh({ refreshToken: 'bad' }),
+      ).rejects.toThrow(Error);
+    });
+  });
+
+  describe('logout', () => {
+    it('returns void (204) on successful logout', async () => {
+      logoutUseCase.execute.mockResolvedValue(undefined);
+
+      await expect(
+        controller.logout({ refreshToken: 'rt' }),
+      ).resolves.toBeUndefined();
+      expect(logoutUseCase.execute).toHaveBeenCalledWith('rt');
+    });
+
+    it('maps InvalidRefreshTokenException to 401', async () => {
+      logoutUseCase.execute.mockRejectedValue(new InvalidRefreshTokenException());
+
+      await expect(
+        controller.logout({ refreshToken: 'bad' }),
       ).rejects.toThrow(UnauthorizedException);
     });
   });

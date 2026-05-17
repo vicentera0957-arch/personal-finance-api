@@ -1,10 +1,11 @@
 import { Injectable } from '@nestjs/common';
+import { v4 as uuidv4 } from 'uuid';
 import { CreateUserUseCase } from '../../../users/application/use-cases/create-user.use-case';
 import { IPasswordHasher } from '../../domain/ports/password-hasher.port';
-import {
-  ITokenProvider,
-  TokenPair,
-} from '../../domain/ports/token-provider.port';
+import { ITokenProvider, TokenPair } from '../../domain/ports/token-provider.port';
+import { IRefreshTokenRepository } from '../../domain/repository/refresh-token.repository';
+import { RefreshToken } from '../../domain/entities/refresh-token.entity';
+import { sha256 } from '../utils/token-hash.util';
 
 export interface RegisterDto {
   name: string;
@@ -18,6 +19,7 @@ export class RegisterUseCase {
     private readonly createUser: CreateUserUseCase,
     private readonly passwordHasher: IPasswordHasher,
     private readonly tokenProvider: ITokenProvider,
+    private readonly refreshTokenRepo: IRefreshTokenRepository,
   ) {}
 
   async execute(dto: RegisterDto): Promise<TokenPair> {
@@ -29,9 +31,25 @@ export class RegisterUseCase {
       passwordHash,
     });
 
-    return this.tokenProvider.generateTokens({
-      sub: user.id,
-      email: user.email.getValue(),
+    const email = user.email.getValue();
+    const jti = uuidv4();
+    const familyId = uuidv4();
+
+    const [accessToken, refreshToken] = await Promise.all([
+      this.tokenProvider.generateAccessToken({ sub: user.id, email }),
+      this.tokenProvider.generateRefreshToken({ sub: user.id, email, jti }),
+    ]);
+
+    const tokenEntity = RefreshToken.create({
+      id: jti,
+      userId: user.id,
+      familyId,
+      tokenHash: sha256(refreshToken),
+      expiresAt: this.tokenProvider.getRefreshTokenExpiresAt(),
     });
+
+    await this.refreshTokenRepo.save(tokenEntity);
+
+    return { accessToken, refreshToken };
   }
 }
