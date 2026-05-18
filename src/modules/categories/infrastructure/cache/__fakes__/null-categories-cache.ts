@@ -5,7 +5,10 @@ export class NullCategoriesCache extends ICategoriesCache {
   async getListByUser(_userId: string): Promise<Category[] | null> {
     return null;
   }
-  async setListByUser(_userId: string, _categories: Category[]): Promise<void> {}
+  async setListByUser(
+    _userId: string,
+    _categories: Category[],
+  ): Promise<void> {}
   async getById(_id: string): Promise<Category | null> {
     return null;
   }

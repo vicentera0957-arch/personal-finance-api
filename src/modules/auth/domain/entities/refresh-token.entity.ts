@@ -76,12 +76,28 @@ export class RefreshToken {
     return !this.isRevoked() && !this.isExpired();
   }
 
-  get id(): string { return this._id; }
-  get userId(): string { return this._userId; }
-  get familyId(): string { return this._familyId; }
-  get tokenHash(): string { return this._tokenHash; }
-  get expiresAt(): Date { return this._expiresAt; }
-  get createdAt(): Date { return this._createdAt; }
-  get revokedAt(): Date | null { return this._revokedAt; }
-  get replacedById(): string | null { return this._replacedById; }
+  get id(): string {
+    return this._id;
+  }
+  get userId(): string {
+    return this._userId;
+  }
+  get familyId(): string {
+    return this._familyId;
+  }
+  get tokenHash(): string {
+    return this._tokenHash;
+  }
+  get expiresAt(): Date {
+    return this._expiresAt;
+  }
+  get createdAt(): Date {
+    return this._createdAt;
+  }
+  get revokedAt(): Date | null {
+    return this._revokedAt;
+  }
+  get replacedById(): string | null {
+    return this._replacedById;
+  }
 }

@@ -27,9 +27,15 @@ describe('UsersController', () => {
   };
 
   beforeEach(() => {
-    getUserByIdUseCase = { execute: jest.fn() } as unknown as jest.Mocked<GetUserByIdUseCase>;
-    updateUserProfileUseCase = { execute: jest.fn() } as unknown as jest.Mocked<UpdateUserProfileUseCase>;
-    deleteUserUseCase = { execute: jest.fn() } as unknown as jest.Mocked<DeleteUserUseCase>;
+    getUserByIdUseCase = {
+      execute: jest.fn(),
+    } as unknown as jest.Mocked<GetUserByIdUseCase>;
+    updateUserProfileUseCase = {
+      execute: jest.fn(),
+    } as unknown as jest.Mocked<UpdateUserProfileUseCase>;
+    deleteUserUseCase = {
+      execute: jest.fn(),
+    } as unknown as jest.Mocked<DeleteUserUseCase>;
 
     controller = new UsersController(
       getUserByIdUseCase,
@@ -40,7 +46,11 @@ describe('UsersController', () => {
 
   describe('findById', () => {
     it('should return the user as response DTO when found', async () => {
-      const user = makeUser({ id: 'user-1', email: 'test@example.com', name: 'Alice' });
+      const user = makeUser({
+        id: 'user-1',
+        email: 'test@example.com',
+        name: 'Alice',
+      });
       getUserByIdUseCase.execute.mockResolvedValue(user);
 
       const result = await controller.findById('user-1', currentUser);
@@ -55,7 +65,9 @@ describe('UsersController', () => {
     });
 
     it('should map UserNotFoundException to 404', async () => {
-      getUserByIdUseCase.execute.mockRejectedValue(new UserNotFoundException('user-1'));
+      getUserByIdUseCase.execute.mockRejectedValue(
+        new UserNotFoundException('user-1'),
+      );
 
       await expect(controller.findById('user-1', currentUser)).rejects.toThrow(
         NotFoundException,
@@ -93,7 +105,9 @@ describe('UsersController', () => {
     });
 
     it('should map InvalidNameException to 400', async () => {
-      updateUserProfileUseCase.execute.mockRejectedValue(new InvalidNameException());
+      updateUserProfileUseCase.execute.mockRejectedValue(
+        new InvalidNameException(),
+      );
 
       await expect(
         controller.updateProfile('user-1', { name: '' }, currentUser),
@@ -101,7 +115,9 @@ describe('UsersController', () => {
     });
 
     it('should map UserNotFoundException to 404', async () => {
-      updateUserProfileUseCase.execute.mockRejectedValue(new UserNotFoundException('user-1'));
+      updateUserProfileUseCase.execute.mockRejectedValue(
+        new UserNotFoundException('user-1'),
+      );
 
       await expect(
         controller.updateProfile('user-1', { name: 'X' }, currentUser),
@@ -133,7 +149,9 @@ describe('UsersController', () => {
     });
 
     it('should map UserNotFoundException to 404', async () => {
-      deleteUserUseCase.execute.mockRejectedValue(new UserNotFoundException('user-1'));
+      deleteUserUseCase.execute.mockRejectedValue(
+        new UserNotFoundException('user-1'),
+      );
 
       await expect(controller.delete('user-1', currentUser)).rejects.toThrow(
         NotFoundException,

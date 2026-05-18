@@ -23,7 +23,7 @@ export class GetUserByIdUseCase {
     }
 
     const cached = await this.cache.getById(dto.id);
-    const user = cached ?? await this.userRepository.findById(dto.id);
+    const user = cached ?? (await this.userRepository.findById(dto.id));
 
     if (!user) throw new UserNotFoundException(dto.id);
 

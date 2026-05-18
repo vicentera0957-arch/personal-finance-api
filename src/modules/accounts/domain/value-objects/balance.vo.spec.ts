@@ -116,14 +116,18 @@ describe('Balance', () => {
       const balance = Balance.create(50);
       const toSubtract = Balance.create(100);
 
-      expect(() => balance.subtract(toSubtract)).toThrow(InsufficientFundsException);
+      expect(() => balance.subtract(toSubtract)).toThrow(
+        InsufficientFundsException,
+      );
     });
 
     it('should throw InsufficientFundsException when subtracting from zero', () => {
       const balance = Balance.zero();
       const toSubtract = Balance.create(1);
 
-      expect(() => balance.subtract(toSubtract)).toThrow(InsufficientFundsException);
+      expect(() => balance.subtract(toSubtract)).toThrow(
+        InsufficientFundsException,
+      );
     });
 
     it('should not throw when subtracting zero', () => {

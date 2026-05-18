@@ -48,10 +48,12 @@ describe('CreateTransactionUseCase', () => {
     );
   });
 
-  const seedValidExpenseContext = (opts: {
-    budgetLimit?: number;
-    existingSpent?: number;
-  } = {}) => {
+  const seedValidExpenseContext = (
+    opts: {
+      budgetLimit?: number;
+      existingSpent?: number;
+    } = {},
+  ) => {
     accountRepo.seed([
       makeAccount({
         id: 'a1',

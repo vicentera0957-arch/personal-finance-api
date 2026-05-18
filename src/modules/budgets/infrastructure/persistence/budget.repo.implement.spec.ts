@@ -109,7 +109,9 @@ describe('BudgetRepositoryImpl', () => {
     it('should translate unique violation (23505) into BudgetAlreadyExistsException', async () => {
       ormRepo.save.mockRejectedValue({ code: '23505' });
 
-      await expect(repo.save(makeBudget())).rejects.toThrow(BudgetAlreadyExistsException);
+      await expect(repo.save(makeBudget())).rejects.toThrow(
+        BudgetAlreadyExistsException,
+      );
     });
 
     it('should rethrow unrelated errors', async () => {

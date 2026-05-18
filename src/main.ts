@@ -33,7 +33,8 @@ async function bootstrap() {
   // CORS — lista de orígenes separados por coma, o '*' en dev
   const corsOrigin = config.getOrThrow<string>('CORS_ORIGIN');
   app.enableCors({
-    origin: corsOrigin === '*' ? true : corsOrigin.split(',').map((s) => s.trim()),
+    origin:
+      corsOrigin === '*' ? true : corsOrigin.split(',').map((s) => s.trim()),
     credentials: true,
   });
 

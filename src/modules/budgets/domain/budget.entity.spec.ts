@@ -6,7 +6,9 @@ import {
 } from './exceptions/budget.exceptions';
 
 describe('Budget', () => {
-  const createValidBudget = (overrides?: Partial<any>) => {
+  const createValidBudget = (
+    overrides?: Partial<Parameters<typeof Budget.create>[0]>,
+  ) => {
     return Budget.create({
       id: 'budget-123',
       userId: 'user-1',
@@ -63,55 +65,55 @@ describe('Budget', () => {
     });
 
     it('should throw InvalidBudgetMonthException if month is not integer', () => {
-      expect(() =>
-        createValidBudget({ month: 1.5 }),
-      ).toThrow(InvalidBudgetMonthException);
+      expect(() => createValidBudget({ month: 1.5 })).toThrow(
+        InvalidBudgetMonthException,
+      );
     });
 
     it('should throw InvalidBudgetMonthException if month is less than 1', () => {
-      expect(() =>
-        createValidBudget({ month: 0 }),
-      ).toThrow(InvalidBudgetMonthException);
-      expect(() =>
-        createValidBudget({ month: -1 }),
-      ).toThrow(InvalidBudgetMonthException);
+      expect(() => createValidBudget({ month: 0 })).toThrow(
+        InvalidBudgetMonthException,
+      );
+      expect(() => createValidBudget({ month: -1 })).toThrow(
+        InvalidBudgetMonthException,
+      );
     });
 
     it('should throw InvalidBudgetMonthException if month is greater than 12', () => {
-      expect(() =>
-        createValidBudget({ month: 13 }),
-      ).toThrow(InvalidBudgetMonthException);
-      expect(() =>
-        createValidBudget({ month: 100 }),
-      ).toThrow(InvalidBudgetMonthException);
+      expect(() => createValidBudget({ month: 13 })).toThrow(
+        InvalidBudgetMonthException,
+      );
+      expect(() => createValidBudget({ month: 100 })).toThrow(
+        InvalidBudgetMonthException,
+      );
     });
 
     it('should throw InvalidBudgetYearException if year is not integer', () => {
-      expect(() =>
-        createValidBudget({ year: 2024.5 }),
-      ).toThrow(InvalidBudgetYearException);
+      expect(() => createValidBudget({ year: 2024.5 })).toThrow(
+        InvalidBudgetYearException,
+      );
     });
 
     it('should throw InvalidBudgetYearException if year is zero', () => {
-      expect(() =>
-        createValidBudget({ year: 0 }),
-      ).toThrow(InvalidBudgetYearException);
+      expect(() => createValidBudget({ year: 0 })).toThrow(
+        InvalidBudgetYearException,
+      );
     });
 
     it('should throw InvalidBudgetYearException if year is negative', () => {
-      expect(() =>
-        createValidBudget({ year: -1 }),
-      ).toThrow(InvalidBudgetYearException);
-      expect(() =>
-        createValidBudget({ year: -2024 }),
-      ).toThrow(InvalidBudgetYearException);
+      expect(() => createValidBudget({ year: -1 })).toThrow(
+        InvalidBudgetYearException,
+      );
+      expect(() => createValidBudget({ year: -2024 })).toThrow(
+        InvalidBudgetYearException,
+      );
     });
 
     it('should validate month before year', () => {
       // When both are invalid, month exception is thrown first
-      expect(() =>
-        createValidBudget({ month: 13, year: 0 }),
-      ).toThrow(InvalidBudgetMonthException);
+      expect(() => createValidBudget({ month: 13, year: 0 })).toThrow(
+        InvalidBudgetMonthException,
+      );
     });
   });
 

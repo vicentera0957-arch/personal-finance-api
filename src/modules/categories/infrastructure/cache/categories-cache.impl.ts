@@ -58,13 +58,19 @@ export class CategoriesCacheImpl extends ICategoriesCache {
   }
 
   async getListByUser(userId: string): Promise<Category[] | null> {
-    const shapes = await this.store.get<CategoryCacheShape[]>(this.listKey(userId));
+    const shapes = await this.store.get<CategoryCacheShape[]>(
+      this.listKey(userId),
+    );
     if (!shapes) return null;
     return shapes.map(fromShape);
   }
 
   async setListByUser(userId: string, categories: Category[]): Promise<void> {
-    await this.store.set(this.listKey(userId), categories.map(toShape), TTL_SECONDS);
+    await this.store.set(
+      this.listKey(userId),
+      categories.map(toShape),
+      TTL_SECONDS,
+    );
   }
 
   async getById(id: string): Promise<Category | null> {
@@ -74,7 +80,11 @@ export class CategoriesCacheImpl extends ICategoriesCache {
   }
 
   async setById(category: Category): Promise<void> {
-    await this.store.set(this.itemKey(category.id), toShape(category), TTL_SECONDS);
+    await this.store.set(
+      this.itemKey(category.id),
+      toShape(category),
+      TTL_SECONDS,
+    );
   }
 
   async invalidateUser(userId: string): Promise<void> {

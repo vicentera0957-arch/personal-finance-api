@@ -12,7 +12,10 @@ export class DeleteCategoryUseCase {
   ) {}
 
   async execute(id: string, requestUserId: string): Promise<void> {
-    const category = await this.getCategoryByIdUseCase.execute(id, requestUserId);
+    const category = await this.getCategoryByIdUseCase.execute(
+      id,
+      requestUserId,
+    );
     await this.categoryRepository.delete(id);
     await Promise.all([
       this.cache.invalidateUser(category.userId),

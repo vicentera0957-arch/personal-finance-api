@@ -12,7 +12,9 @@ import {
 } from '../exceptions/account.exceptions';
 
 describe('Account', () => {
-  const createValidAccount = (overrides?: Partial<any>) => {
+  const createValidAccount = (
+    overrides?: Partial<Parameters<typeof Account.create>[0]>,
+  ) => {
     return Account.create({
       id: '123',
       userId: 'user1',
@@ -62,18 +64,18 @@ describe('Account', () => {
     });
 
     it('should throw InvalidAccountNameException if name is empty string', () => {
-      expect(() =>
-        createValidAccount({ name: '' }),
-      ).toThrow(InvalidAccountNameException);
+      expect(() => createValidAccount({ name: '' })).toThrow(
+        InvalidAccountNameException,
+      );
     });
 
     it('should throw InvalidAccountNameException if name is only whitespace', () => {
-      expect(() =>
-        createValidAccount({ name: '   ' }),
-      ).toThrow(InvalidAccountNameException);
-      expect(() =>
-        createValidAccount({ name: '\t\n' }),
-      ).toThrow(InvalidAccountNameException);
+      expect(() => createValidAccount({ name: '   ' })).toThrow(
+        InvalidAccountNameException,
+      );
+      expect(() => createValidAccount({ name: '\t\n' })).toThrow(
+        InvalidAccountNameException,
+      );
     });
 
     it('should always start with isArchived=false', () => {
@@ -148,7 +150,9 @@ describe('Account', () => {
 
       account.inflow(Balance.create(500));
 
-      expect(account.getCurrentBalance().getValue()).toBe(originalBalance + 500);
+      expect(account.getCurrentBalance().getValue()).toBe(
+        originalBalance + 500,
+      );
     });
 
     it('should update updatedAt timestamp', () => {
@@ -196,7 +200,9 @@ describe('Account', () => {
 
       account.outflow(Balance.create(300));
 
-      expect(account.getCurrentBalance().getValue()).toBe(originalBalance - 300);
+      expect(account.getCurrentBalance().getValue()).toBe(
+        originalBalance - 300,
+      );
     });
 
     it('should update updatedAt timestamp', () => {
@@ -453,8 +459,6 @@ describe('Account', () => {
     it('should return correct values from all getters', () => {
       const accountType = AccountType.create('corriente');
       const initialBalance = Balance.create(2000);
-      const createdAt = new Date();
-
       const account = Account.create({
         id: 'test-id',
         userId: 'test-user',
@@ -496,7 +500,9 @@ describe('Account', () => {
       expect(() => account.getName()).not.toThrow();
       expect(() => account.getCurrentBalance()).not.toThrow();
       expect(() => account.getIsArchived()).not.toThrow();
-      expect(() => account.hasSufficientFunds(Balance.create(100))).not.toThrow();
+      expect(() =>
+        account.hasSufficientFunds(Balance.create(100)),
+      ).not.toThrow();
     });
 
     it('should allow unarchive to restore mutability', () => {

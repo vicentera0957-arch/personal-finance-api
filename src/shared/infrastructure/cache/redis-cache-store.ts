@@ -4,7 +4,10 @@ import Redis from 'ioredis';
 import { ICacheStore } from '../../domain/cache/cache-store.port';
 
 @Injectable()
-export class RedisCacheStore extends ICacheStore implements OnModuleInit, OnModuleDestroy {
+export class RedisCacheStore
+  extends ICacheStore
+  implements OnModuleInit, OnModuleDestroy
+{
   private readonly client: Redis;
   private readonly keyPrefix: string;
 
@@ -39,7 +42,12 @@ export class RedisCacheStore extends ICacheStore implements OnModuleInit, OnModu
   }
 
   async set<T>(key: string, value: T, ttlSeconds: number): Promise<void> {
-    await this.client.set(this.prefixed(key), JSON.stringify(value), 'EX', ttlSeconds);
+    await this.client.set(
+      this.prefixed(key),
+      JSON.stringify(value),
+      'EX',
+      ttlSeconds,
+    );
   }
 
   async del(key: string): Promise<void> {

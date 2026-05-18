@@ -58,7 +58,8 @@ export class UserRepositoryImpl extends IUserRepository {
       // Con esto, mapeamos a domain exception → controller mapea a 409.
       if (
         err instanceof QueryFailedError &&
-        (err as any).driverError?.code === '23505'
+        (err as QueryFailedError & { driverError?: { code?: string } })
+          .driverError?.code === '23505'
       ) {
         throw new UserAlreadyExistsException(user.email.getValue());
       }

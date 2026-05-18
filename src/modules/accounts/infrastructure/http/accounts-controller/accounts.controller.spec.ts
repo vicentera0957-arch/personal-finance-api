@@ -41,13 +41,27 @@ describe('AccountsController', () => {
   };
 
   beforeEach(() => {
-    createUseCase = { execute: jest.fn() } as unknown as jest.Mocked<CreateAccountUseCase>;
-    getByIdUseCase = { execute: jest.fn() } as unknown as jest.Mocked<GetAccountByIdUseCase>;
-    getByUserUseCase = { execute: jest.fn() } as unknown as jest.Mocked<GetAccountsByUserIdUseCase>;
-    renameUseCase = { execute: jest.fn() } as unknown as jest.Mocked<RenameAccountUseCase>;
-    archiveUseCase = { execute: jest.fn() } as unknown as jest.Mocked<ArchiveAccountUseCase>;
-    unarchiveUseCase = { execute: jest.fn() } as unknown as jest.Mocked<UnarchiveAccountUseCase>;
-    deleteUseCase = { execute: jest.fn() } as unknown as jest.Mocked<DeleteAccountUseCase>;
+    createUseCase = {
+      execute: jest.fn(),
+    } as unknown as jest.Mocked<CreateAccountUseCase>;
+    getByIdUseCase = {
+      execute: jest.fn(),
+    } as unknown as jest.Mocked<GetAccountByIdUseCase>;
+    getByUserUseCase = {
+      execute: jest.fn(),
+    } as unknown as jest.Mocked<GetAccountsByUserIdUseCase>;
+    renameUseCase = {
+      execute: jest.fn(),
+    } as unknown as jest.Mocked<RenameAccountUseCase>;
+    archiveUseCase = {
+      execute: jest.fn(),
+    } as unknown as jest.Mocked<ArchiveAccountUseCase>;
+    unarchiveUseCase = {
+      execute: jest.fn(),
+    } as unknown as jest.Mocked<UnarchiveAccountUseCase>;
+    deleteUseCase = {
+      execute: jest.fn(),
+    } as unknown as jest.Mocked<DeleteAccountUseCase>;
 
     controller = new AccountsController(
       createUseCase,
@@ -80,18 +94,28 @@ describe('AccountsController', () => {
     });
 
     it('should map InvalidAccountTypeException to 400', async () => {
-      createUseCase.execute.mockRejectedValue(new InvalidAccountTypeException('x'));
+      createUseCase.execute.mockRejectedValue(
+        new InvalidAccountTypeException('x'),
+      );
 
       await expect(
-        controller.create({ name: 'M', type: 'x', initialBalance: 0 }, currentUser),
+        controller.create(
+          { name: 'M', type: 'x', initialBalance: 0 },
+          currentUser,
+        ),
       ).rejects.toThrow(BadRequestException);
     });
 
     it('should map InvalidBalanceException to 400', async () => {
-      createUseCase.execute.mockRejectedValue(new InvalidBalanceException('NaN'));
+      createUseCase.execute.mockRejectedValue(
+        new InvalidBalanceException('NaN'),
+      );
 
       await expect(
-        controller.create({ name: 'M', type: 'corriente', initialBalance: NaN }, currentUser),
+        controller.create(
+          { name: 'M', type: 'corriente', initialBalance: NaN },
+          currentUser,
+        ),
       ).rejects.toThrow(BadRequestException);
     });
   });
@@ -113,7 +137,9 @@ describe('AccountsController', () => {
     });
 
     it('should map AccountNotFoundException to 404', async () => {
-      getByIdUseCase.execute.mockRejectedValue(new AccountNotFoundException('acc-1'));
+      getByIdUseCase.execute.mockRejectedValue(
+        new AccountNotFoundException('acc-1'),
+      );
 
       await expect(controller.findById('acc-1', currentUser)).rejects.toThrow(
         NotFoundException,
@@ -121,7 +147,9 @@ describe('AccountsController', () => {
     });
 
     it('should map ResourceOwnershipException to 403', async () => {
-      getByIdUseCase.execute.mockRejectedValue(new ResourceOwnershipException('acc-1'));
+      getByIdUseCase.execute.mockRejectedValue(
+        new ResourceOwnershipException('acc-1'),
+      );
 
       await expect(controller.findById('acc-1', currentUser)).rejects.toThrow(
         ForbiddenException,
@@ -139,13 +167,17 @@ describe('AccountsController', () => {
       const result = await controller.findByUserId(currentUser);
 
       expect(result).toHaveLength(2);
-      expect(getByUserUseCase.execute).toHaveBeenCalledWith({ userId: 'user-1' });
+      expect(getByUserUseCase.execute).toHaveBeenCalledWith({
+        userId: 'user-1',
+      });
     });
   });
 
   describe('rename', () => {
     it('should map CannotOperateOnArchivedAccountException to 409', async () => {
-      renameUseCase.execute.mockRejectedValue(new CannotOperateOnArchivedAccountException());
+      renameUseCase.execute.mockRejectedValue(
+        new CannotOperateOnArchivedAccountException(),
+      );
 
       await expect(
         controller.rename('acc-1', { name: 'X' }, currentUser),
@@ -153,7 +185,9 @@ describe('AccountsController', () => {
     });
 
     it('should map AccountNotFoundException to 404', async () => {
-      renameUseCase.execute.mockRejectedValue(new AccountNotFoundException('acc-1'));
+      renameUseCase.execute.mockRejectedValue(
+        new AccountNotFoundException('acc-1'),
+      );
 
       await expect(
         controller.rename('acc-1', { name: 'X' }, currentUser),
@@ -163,7 +197,9 @@ describe('AccountsController', () => {
 
   describe('archive', () => {
     it('should map AccountAlreadyArchivedDomainException to 409', async () => {
-      archiveUseCase.execute.mockRejectedValue(new AccountAlreadyArchivedDomainException());
+      archiveUseCase.execute.mockRejectedValue(
+        new AccountAlreadyArchivedDomainException(),
+      );
 
       await expect(controller.archive('acc-1', currentUser)).rejects.toThrow(
         ConflictException,
@@ -173,7 +209,9 @@ describe('AccountsController', () => {
 
   describe('unarchive', () => {
     it('should map AccountNotArchivedDomainException to 409', async () => {
-      unarchiveUseCase.execute.mockRejectedValue(new AccountNotArchivedDomainException());
+      unarchiveUseCase.execute.mockRejectedValue(
+        new AccountNotArchivedDomainException(),
+      );
 
       await expect(controller.unarchive('acc-1', currentUser)).rejects.toThrow(
         ConflictException,
@@ -183,7 +221,9 @@ describe('AccountsController', () => {
 
   describe('delete', () => {
     it('should map AccountInUseException to 409', async () => {
-      deleteUseCase.execute.mockRejectedValue(new AccountInUseException('acc-1'));
+      deleteUseCase.execute.mockRejectedValue(
+        new AccountInUseException('acc-1'),
+      );
 
       await expect(controller.delete('acc-1', currentUser)).rejects.toThrow(
         ConflictException,

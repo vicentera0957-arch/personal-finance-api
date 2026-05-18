@@ -7,7 +7,9 @@ import {
 } from '../exceptions/category.exceptions';
 
 describe('Category', () => {
-  const createValidCategory = (overrides?: Partial<any>) => {
+  const createValidCategory = (
+    overrides?: Partial<Parameters<typeof Category.create>[0]>,
+  ) => {
     return Category.create({
       id: 'cat-123',
       userId: 'user-1',
@@ -56,18 +58,18 @@ describe('Category', () => {
     });
 
     it('should throw InvalidCategoryNameException if name is empty', () => {
-      expect(() =>
-        createValidCategory({ name: '' }),
-      ).toThrow(InvalidCategoryNameException);
+      expect(() => createValidCategory({ name: '' })).toThrow(
+        InvalidCategoryNameException,
+      );
     });
 
     it('should throw InvalidCategoryNameException if name is only whitespace', () => {
-      expect(() =>
-        createValidCategory({ name: '   ' }),
-      ).toThrow(InvalidCategoryNameException);
-      expect(() =>
-        createValidCategory({ name: '\t\n' }),
-      ).toThrow(InvalidCategoryNameException);
+      expect(() => createValidCategory({ name: '   ' })).toThrow(
+        InvalidCategoryNameException,
+      );
+      expect(() => createValidCategory({ name: '\t\n' })).toThrow(
+        InvalidCategoryNameException,
+      );
     });
 
     it('should accept null color (omitted from props)', () => {
@@ -91,51 +93,47 @@ describe('Category', () => {
     });
 
     it('should throw InvalidCategoryColorException if color is empty string', () => {
-      expect(() =>
-        createValidCategory({ color: '' }),
-      ).toThrow(InvalidCategoryColorException);
+      expect(() => createValidCategory({ color: '' })).toThrow(
+        InvalidCategoryColorException,
+      );
     });
 
     it('should throw InvalidCategoryColorException if color is only whitespace', () => {
-      expect(() =>
-        createValidCategory({ color: '   ' }),
-      ).toThrow(InvalidCategoryColorException);
+      expect(() => createValidCategory({ color: '   ' })).toThrow(
+        InvalidCategoryColorException,
+      );
     });
 
     it('should throw InvalidCategoryIconException if icon is empty string', () => {
-      expect(() =>
-        createValidCategory({ icon: '' }),
-      ).toThrow(InvalidCategoryIconException);
+      expect(() => createValidCategory({ icon: '' })).toThrow(
+        InvalidCategoryIconException,
+      );
     });
 
     it('should throw InvalidCategoryIconException if icon is only whitespace', () => {
-      expect(() =>
-        createValidCategory({ icon: '   ' }),
-      ).toThrow(InvalidCategoryIconException);
+      expect(() => createValidCategory({ icon: '   ' })).toThrow(
+        InvalidCategoryIconException,
+      );
     });
 
     it('should validate only if color is defined in props', () => {
       // color: undefined should not validate (skip validation)
-      expect(() =>
-        createValidCategory({ color: undefined }),
-      ).not.toThrow();
+      expect(() => createValidCategory({ color: undefined })).not.toThrow();
 
       // color: '' (empty string) should validate and throw
-      expect(() =>
-        createValidCategory({ color: '' }),
-      ).toThrow(InvalidCategoryColorException);
+      expect(() => createValidCategory({ color: '' })).toThrow(
+        InvalidCategoryColorException,
+      );
     });
 
     it('should validate only if icon is defined in props', () => {
       // icon: undefined should not validate
-      expect(() =>
-        createValidCategory({ icon: undefined }),
-      ).not.toThrow();
+      expect(() => createValidCategory({ icon: undefined })).not.toThrow();
 
       // icon: '' should validate and throw
-      expect(() =>
-        createValidCategory({ icon: '' }),
-      ).toThrow(InvalidCategoryIconException);
+      expect(() => createValidCategory({ icon: '' })).toThrow(
+        InvalidCategoryIconException,
+      );
     });
 
     it('should support income categories', () => {

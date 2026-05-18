@@ -77,7 +77,7 @@ export class BudgetRepositoryImpl extends IBudgetRepository {
       return this.mapper.toDomain(saved);
     } catch (error) {
       // PostgreSQL unique constraint violation on (userId, categoryId, month, year)
-      if ((error as any)?.code === '23505') {
+      if ((error as { code?: string })?.code === '23505') {
         throw new BudgetAlreadyExistsException(
           budget.userId,
           budget.categoryId,

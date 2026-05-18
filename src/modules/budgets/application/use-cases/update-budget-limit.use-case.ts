@@ -29,12 +29,18 @@ export class UpdateBudgetLimitUseCase {
 
       const budget = await budgetRepo.findById(command.id);
       if (!budget) throw new BudgetNotFoundException(command.id);
-      if (budget.userId !== command.requestUserId) throw new ResourceOwnershipException(command.id);
+      if (budget.userId !== command.requestUserId)
+        throw new ResourceOwnershipException(command.id);
 
       const limit = AmountLimit.create(command.limit);
       const spentInPeriod = await this.uow
         .getScopedExpenseChecker()
-        .sumExpenseAmountInPeriod(budget.userId, budget.categoryId, budget.month, budget.year);
+        .sumExpenseAmountInPeriod(
+          budget.userId,
+          budget.categoryId,
+          budget.month,
+          budget.year,
+        );
 
       if (limit.getValue() < spentInPeriod) {
         throw new BudgetLimitBelowSpentException(

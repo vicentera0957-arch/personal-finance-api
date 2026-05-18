@@ -36,7 +36,7 @@ export default tseslint.config(
       '@typescript-eslint/explicit-function-return-type': 'warn', // Obliga a tipar retornos
       '@typescript-eslint/no-unused-vars': [
         'error',
-        { argsIgnorePattern: '^_' },
+        { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
       ],
 
       // --- REGLAS DE NESTJS / CALIDAD ---

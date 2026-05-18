@@ -58,15 +58,15 @@ describe('CategoryNature', () => {
     });
 
     it('should throw InvalidCategoryNatureException if value is null', () => {
-      expect(() => CategoryNature.create(null as any)).toThrow(
+      expect(() => CategoryNature.create(null as unknown as string)).toThrow(
         InvalidCategoryNatureException,
       );
     });
 
     it('should throw InvalidCategoryNatureException if value is undefined', () => {
-      expect(() => CategoryNature.create(undefined as any)).toThrow(
-        InvalidCategoryNatureException,
-      );
+      expect(() =>
+        CategoryNature.create(undefined as unknown as string),
+      ).toThrow(InvalidCategoryNatureException);
     });
 
     it('should throw InvalidCategoryNatureException for invalid nature after normalization', () => {

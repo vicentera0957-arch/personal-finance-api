@@ -27,7 +27,8 @@ function parseDurationMs(duration: string): number {
     s: 1_000,
   };
   const match = /^(\d+)([dhms])$/.exec(duration);
-  if (!match) throw new Error(`No se puede parsear duración JWT: "${duration}"`);
+  if (!match)
+    throw new Error(`No se puede parsear duración JWT: "${duration}"`);
   return parseInt(match[1], 10) * units[match[2]];
 }
 
@@ -52,9 +53,14 @@ export class JwtTokenProvider extends ITokenProvider {
   ) {
     super();
     this.jwtSecret = configService.getOrThrow<string>('JWT_SECRET');
-    this.jwtRefreshSecret = configService.getOrThrow<string>('JWT_REFRESH_SECRET');
-    this.accessExpiresIn = configService.getOrThrow<string>('JWT_ACCESS_EXPIRES_IN');
-    this.refreshExpiresIn = configService.getOrThrow<string>('JWT_REFRESH_EXPIRES_IN');
+    this.jwtRefreshSecret =
+      configService.getOrThrow<string>('JWT_REFRESH_SECRET');
+    this.accessExpiresIn = configService.getOrThrow<string>(
+      'JWT_ACCESS_EXPIRES_IN',
+    );
+    this.refreshExpiresIn = configService.getOrThrow<string>(
+      'JWT_REFRESH_EXPIRES_IN',
+    );
     this.refreshExpiresInMs = parseDurationMs(this.refreshExpiresIn);
   }
 

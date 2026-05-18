@@ -24,7 +24,6 @@ describe('CategoryMapper', () => {
       expect(category.getColor()).toBe('#fff');
       expect(category.getIcon()).toBe('ic');
     });
-
   });
 
   describe('toOrm', () => {

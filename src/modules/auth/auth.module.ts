@@ -64,7 +64,11 @@ import { AuthController } from './infrastructure/http/auth-controller/auth.contr
     RefreshTokenMapper,
 
     // UoW — REQUEST scope para que el mismo QueryRunner se use en toda la operación
-    { provide: AuthUnitOfWorkImpl, useClass: AuthUnitOfWorkImpl, scope: Scope.REQUEST },
+    {
+      provide: AuthUnitOfWorkImpl,
+      useClass: AuthUnitOfWorkImpl,
+      scope: Scope.REQUEST,
+    },
     { provide: IAuthUnitOfWork, useExisting: AuthUnitOfWorkImpl },
 
     // Passport

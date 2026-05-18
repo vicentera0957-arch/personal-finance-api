@@ -61,14 +61,27 @@ export class BudgetsCacheImpl extends IBudgetsCache {
     return `budgets:item:${id}`;
   }
 
-  async getListByUser(userId: string, options?: BudgetQueryOptions): Promise<Budget[] | null> {
-    const shapes = await this.store.get<BudgetCacheShape[]>(this.listKey(userId, options));
+  async getListByUser(
+    userId: string,
+    options?: BudgetQueryOptions,
+  ): Promise<Budget[] | null> {
+    const shapes = await this.store.get<BudgetCacheShape[]>(
+      this.listKey(userId, options),
+    );
     if (!shapes) return null;
     return shapes.map(fromShape);
   }
 
-  async setListByUser(userId: string, options: BudgetQueryOptions | undefined, budgets: Budget[]): Promise<void> {
-    await this.store.set(this.listKey(userId, options), budgets.map(toShape), TTL_SECONDS);
+  async setListByUser(
+    userId: string,
+    options: BudgetQueryOptions | undefined,
+    budgets: Budget[],
+  ): Promise<void> {
+    await this.store.set(
+      this.listKey(userId, options),
+      budgets.map(toShape),
+      TTL_SECONDS,
+    );
   }
 
   async getById(id: string): Promise<Budget | null> {

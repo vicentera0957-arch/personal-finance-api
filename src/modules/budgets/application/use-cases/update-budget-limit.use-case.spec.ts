@@ -43,7 +43,10 @@ describe('UpdateBudgetLimitUseCase', () => {
         .fn()
         .mockReturnValue(new FakeExpenseChecker(0)),
     };
-    useCase = new UpdateBudgetLimitUseCase(mockUow as IBudgetUnitOfWork, new NullBudgetsCache());
+    useCase = new UpdateBudgetLimitUseCase(
+      mockUow as IBudgetUnitOfWork,
+      new NullBudgetsCache(),
+    );
   });
 
   it('should update the budget limit within a transaction', async () => {

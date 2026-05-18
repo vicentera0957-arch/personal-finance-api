@@ -28,11 +28,17 @@ describe('LoginUseCase', () => {
     };
 
     tokenProvider = {
-      generateAccessToken: jest.fn().mockResolvedValue(mockTokenPair.accessToken),
-      generateRefreshToken: jest.fn().mockResolvedValue(mockTokenPair.refreshToken),
+      generateAccessToken: jest
+        .fn()
+        .mockResolvedValue(mockTokenPair.accessToken),
+      generateRefreshToken: jest
+        .fn()
+        .mockResolvedValue(mockTokenPair.refreshToken),
       verifyAccessToken: jest.fn(),
       verifyRefreshToken: jest.fn(),
-      getRefreshTokenExpiresAt: jest.fn().mockReturnValue(new Date(Date.now() + 86_400_000)),
+      getRefreshTokenExpiresAt: jest
+        .fn()
+        .mockReturnValue(new Date(Date.now() + 86_400_000)),
     };
 
     refreshTokenRepo = {

@@ -41,7 +41,11 @@ describe('TransactionMapper', () => {
 
   describe('round trip', () => {
     it('should preserve fields through toOrm + toDomain', () => {
-      const original = makeTransaction({ id: 't1', amount: 100, description: 'lunch' });
+      const original = makeTransaction({
+        id: 't1',
+        amount: 100,
+        description: 'lunch',
+      });
       const rt = mapper.toDomain(mapper.toOrm(original));
       expect(rt.id).toBe(original.id);
       expect(rt.amount.getValue()).toBe(100);

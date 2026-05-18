@@ -38,10 +38,18 @@ export class CreateRefreshTokens1746230400000 implements MigrationInterface {
   }
 
   async down(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(`DROP INDEX IF EXISTS "idx_refresh_tokens_expires_at"`);
-    await queryRunner.query(`DROP INDEX IF EXISTS "idx_refresh_tokens_user_id"`);
-    await queryRunner.query(`DROP INDEX IF EXISTS "idx_refresh_tokens_family_id"`);
-    await queryRunner.query(`DROP INDEX IF EXISTS "idx_refresh_tokens_token_hash"`);
+    await queryRunner.query(
+      `DROP INDEX IF EXISTS "idx_refresh_tokens_expires_at"`,
+    );
+    await queryRunner.query(
+      `DROP INDEX IF EXISTS "idx_refresh_tokens_user_id"`,
+    );
+    await queryRunner.query(
+      `DROP INDEX IF EXISTS "idx_refresh_tokens_family_id"`,
+    );
+    await queryRunner.query(
+      `DROP INDEX IF EXISTS "idx_refresh_tokens_token_hash"`,
+    );
     await queryRunner.query(`DROP TABLE "refresh_tokens"`);
   }
 }

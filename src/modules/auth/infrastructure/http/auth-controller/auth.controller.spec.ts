@@ -25,10 +25,18 @@ describe('AuthController', () => {
   const tokens = { accessToken: 'access', refreshToken: 'refresh' };
 
   beforeEach(() => {
-    loginUseCase = { execute: jest.fn() } as unknown as jest.Mocked<LoginUseCase>;
-    registerUseCase = { execute: jest.fn() } as unknown as jest.Mocked<RegisterUseCase>;
-    refreshTokenUseCase = { execute: jest.fn() } as unknown as jest.Mocked<RefreshTokenUseCase>;
-    logoutUseCase = { execute: jest.fn() } as unknown as jest.Mocked<LogoutUseCase>;
+    loginUseCase = {
+      execute: jest.fn(),
+    } as unknown as jest.Mocked<LoginUseCase>;
+    registerUseCase = {
+      execute: jest.fn(),
+    } as unknown as jest.Mocked<RegisterUseCase>;
+    refreshTokenUseCase = {
+      execute: jest.fn(),
+    } as unknown as jest.Mocked<RefreshTokenUseCase>;
+    logoutUseCase = {
+      execute: jest.fn(),
+    } as unknown as jest.Mocked<LogoutUseCase>;
 
     controller = new AuthController(
       loginUseCase,
@@ -63,7 +71,9 @@ describe('AuthController', () => {
     });
 
     it('should map UserNotFoundException to 401 (not 404, to avoid user enumeration)', async () => {
-      loginUseCase.execute.mockRejectedValue(new UserNotFoundException('a@b.cl'));
+      loginUseCase.execute.mockRejectedValue(
+        new UserNotFoundException('a@b.cl'),
+      );
 
       await expect(
         controller.login({ email: 'a@b.cl', password: 'pw' }),
@@ -111,15 +121,19 @@ describe('AuthController', () => {
     });
 
     it('maps InvalidRefreshTokenException to 401', async () => {
-      refreshTokenUseCase.execute.mockRejectedValue(new InvalidRefreshTokenException());
+      refreshTokenUseCase.execute.mockRejectedValue(
+        new InvalidRefreshTokenException(),
+      );
 
-      await expect(
-        controller.refresh({ refreshToken: 'bad' }),
-      ).rejects.toThrow(UnauthorizedException);
+      await expect(controller.refresh({ refreshToken: 'bad' })).rejects.toThrow(
+        UnauthorizedException,
+      );
     });
 
     it('maps RefreshTokenExpiredException to 401', async () => {
-      refreshTokenUseCase.execute.mockRejectedValue(new RefreshTokenExpiredException());
+      refreshTokenUseCase.execute.mockRejectedValue(
+        new RefreshTokenExpiredException(),
+      );
 
       await expect(
         controller.refresh({ refreshToken: 'expired' }),
@@ -127,7 +141,9 @@ describe('AuthController', () => {
     });
 
     it('maps RefreshTokenReplayDetectedException to 401', async () => {
-      refreshTokenUseCase.execute.mockRejectedValue(new RefreshTokenReplayDetectedException());
+      refreshTokenUseCase.execute.mockRejectedValue(
+        new RefreshTokenReplayDetectedException(),
+      );
 
       await expect(
         controller.refresh({ refreshToken: 'replayed' }),
@@ -135,11 +151,13 @@ describe('AuthController', () => {
     });
 
     it('propagates unexpected errors (does NOT swallow as 401)', async () => {
-      refreshTokenUseCase.execute.mockRejectedValue(new Error('db connection lost'));
+      refreshTokenUseCase.execute.mockRejectedValue(
+        new Error('db connection lost'),
+      );
 
-      await expect(
-        controller.refresh({ refreshToken: 'bad' }),
-      ).rejects.toThrow(Error);
+      await expect(controller.refresh({ refreshToken: 'bad' })).rejects.toThrow(
+        Error,
+      );
     });
   });
 
@@ -154,11 +172,13 @@ describe('AuthController', () => {
     });
 
     it('maps InvalidRefreshTokenException to 401', async () => {
-      logoutUseCase.execute.mockRejectedValue(new InvalidRefreshTokenException());
+      logoutUseCase.execute.mockRejectedValue(
+        new InvalidRefreshTokenException(),
+      );
 
-      await expect(
-        controller.logout({ refreshToken: 'bad' }),
-      ).rejects.toThrow(UnauthorizedException);
+      await expect(controller.logout({ refreshToken: 'bad' })).rejects.toThrow(
+        UnauthorizedException,
+      );
     });
   });
 });

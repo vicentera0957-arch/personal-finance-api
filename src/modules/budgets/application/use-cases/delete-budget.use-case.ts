@@ -21,14 +21,24 @@ export class DeleteBudgetUseCase {
 
       const budget = await budgetRepo.findById(id);
       if (!budget) throw new BudgetNotFoundException(id);
-      if (budget.userId !== requestUserId) throw new ResourceOwnershipException(id);
+      if (budget.userId !== requestUserId)
+        throw new ResourceOwnershipException(id);
 
       const hasExpenses = await this.uow
         .getScopedExpenseChecker()
-        .hasExpensesInPeriod(budget.userId, budget.categoryId, budget.month, budget.year);
+        .hasExpensesInPeriod(
+          budget.userId,
+          budget.categoryId,
+          budget.month,
+          budget.year,
+        );
 
       if (hasExpenses) {
-        throw new BudgetHasTransactionsInPeriodException(id, budget.month, budget.year);
+        throw new BudgetHasTransactionsInPeriodException(
+          id,
+          budget.month,
+          budget.year,
+        );
       }
 
       await budgetRepo.delete(id);
