@@ -158,6 +158,49 @@ describe('Concurrencia — Pessimistic Locks (Integration)', () => {
       const expectedBalance = 10_000 - 90 - successes.length * amount;
       expect(accountRes.body.currentBalance).toBe(expectedBalance);
     });
+
+    // Regresión: período vacío. El test anterior arrancaba con $90 ya gastados,
+    // así que el FOR UPDATE sobre el SUM agarraba filas reales y serializaba
+    // por casualidad. Con período vacío no hay filas que lockear, y la única
+    // serialización viable es el lock sobre la fila del budget. Antes del fix
+    // (orden SUM → budget) este test falla porque ambas TX leen sum=0 antes de
+    // tocar el budget. Con el orden invertido (budget → SUM) cada SUM se ejecuta
+    // post-gate y ve los commits previos.
+    it('respeta el límite también cuando el período arranca vacío', async () => {
+      // Budget: limit=$100, sin gasto previo. amount=60 → solo uno puede pasar
+      // (0+60 ≤ 100 ✓; el siguiente sería 60+60=120 > 100 ✗).
+      const N = 5;
+      const amount = 60;
+
+      const results = await Promise.all(
+        Array.from({ length: N }, () =>
+          request(app.getHttpServer())
+            .post('/transactions')
+            .set('Authorization', `Bearer ${accessToken}`)
+            .send({
+              accountId,
+              categoryId: expenseCategoryId,
+              amount,
+              nature: 'expense',
+              transactionDate: now.toISOString(),
+              description: 'Gasto concurrente en período vacío',
+            }),
+        ),
+      );
+
+      const successes = results.filter((r) => r.status === 201);
+      const failures = results.filter((r) => r.status === 422);
+
+      expect(successes).toHaveLength(1);
+      expect(failures).toHaveLength(N - 1);
+
+      const accountRes = await request(app.getHttpServer())
+        .get(`/accounts/${accountId}`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(200);
+
+      expect(accountRes.body.currentBalance).toBe(10_000 - amount);
+    });
   });
 
   // ── Bug A — PATCH vs POST ─────────────────────────────────────────────────

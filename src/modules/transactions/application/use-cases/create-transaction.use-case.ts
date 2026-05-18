@@ -96,14 +96,10 @@ export class CreateTransactionUseCase {
         const month = command.transactionDate.getMonth() + 1;
         const year = command.transactionDate.getFullYear();
 
-        const spentInPeriod =
-          await txRepo.sumExpenseAmountByUserCategoryAndPeriod(
-            command.userId,
-            command.categoryId,
-            month,
-            year,
-          );
-
+        // El budget row es el gate de serialización del invariante de período.
+        // Debe lockearse ANTES del SUM: un FOR UPDATE sobre un rango de
+        // transactions no previene phantoms (inserts concurrentes en el rango),
+        // así que la sumatoria solo es consistente si se lee bajo el lock del budget.
         const budget = await budgetRepo.findByUserIdAndCategoryIdAndPeriod(
           command.userId,
           command.categoryId,
@@ -118,6 +114,14 @@ export class CreateTransactionUseCase {
             year,
           );
         }
+
+        const spentInPeriod =
+          await txRepo.sumExpenseAmountByUserCategoryAndPeriod(
+            command.userId,
+            command.categoryId,
+            month,
+            year,
+          );
 
         const projectedSpent = spentInPeriod + amount.getValue();
         const limit = budget.getLimit().getValue();

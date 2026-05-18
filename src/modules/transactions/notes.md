@@ -62,8 +62,8 @@ Los repositorios escopados comparten el `EntityManager` del `QueryRunner` activo
 
 **Flujo dentro del UoW:**
 1. `uow.begin()` — abre `QueryRunner`, inicia transacción de PG
-2. `txRepo.sumExpenseAmountByUserCategoryAndPeriod(...)` con `setLock('pessimistic_write')` — lock en las filas de gasto del período
-3. `budgetRepo.findByUserIdAndCategoryIdAndPeriod(...)` (repo escopado, lock pesimista implícito) — releé el budget bajo `FOR UPDATE` para verificar el límite vigente al momento del COMMIT
+2. `budgetRepo.findByUserIdAndCategoryIdAndPeriod(...)` (repo escopado, `FOR UPDATE` implícito) — **gate del invariante**: lockea la fila del budget del período antes de leer cualquier dato que entre en la decisión. Es el único objeto que existe siempre y por el que pasan todos los escritores concurrentes del período.
+3. `txRepo.sumExpenseAmountByUserCategoryAndPeriod(...)` (sin lock propio) — se ejecuta post-gate, así que en `READ COMMITTED` ve los commits previos. La consistencia la da el lock del budget, no un `FOR UPDATE` sobre el rango (que no previene phantoms).
 4. `UpdateAccountBalanceUseCase(acctRepo).execute(...)` — actualiza balance usando el repositorio escopado (lock pesimista implícito en `findById`)
 5. `txRepo.save(transaction)` — persiste la transacción
 6. `uow.commit()` / `uow.rollback()` en `finally`
@@ -169,6 +169,29 @@ Exports: `IExpenseChecker` (implementación usada por `BudgetsModule` para valid
 
 **Por qué funciona:** ambos flujos (`CreateTransaction` y `UpdateBudgetLimit`) ahora compiten por el mismo lock de fila sobre el budget. PostgreSQL serializa: el segundo en llegar espera al COMMIT del primero antes de leer, garantizando que el limit visto sea el vigente.
 
+### Bug A.2 — Stale sum vs phantom inserts en período vacío (RESUELTO)
+
+**Escenario original (post Bug A):** dos `POST /transactions` concurrentes de expense sobre un período **vacío** (sin gasto previo). El flujo era `SUM FOR UPDATE` → `SELECT budget FOR UPDATE` → validar → insertar.
+
+1. TX A ejecuta `SUM ... FOR UPDATE` sobre 0 filas → sum=0. **`FOR UPDATE` sobre un resultset vacío no lockea nada** (no hay filas que lockear; phantoms no se previenen).
+2. TX B ejecuta `SUM ... FOR UPDATE` sobre 0 filas → sum=0. Tampoco lockea nada.
+3. TX A toma `SELECT budget FOR UPDATE`, valida `0 + 60 ≤ 100` ✓, inserta, COMMIT.
+4. TX B espera el lock del budget, despierta, valida con el `sum=0` **stale** que leyó en (2), `0 + 60 ≤ 100` ✓, inserta, COMMIT.
+5. Total real $120 > $100. R8 violada.
+
+**Por qué el test original no lo detectaba:** partía de $90 ya gastados → el `FOR UPDATE` del `SUM` agarraba filas reales y serializaba **por casualidad**. La corrección no debía depender del estado de los datos.
+
+**Archivos afectados:** `create-transaction.use-case.ts` (orden de operaciones dentro del UoW) y `unit-of-work.impl.ts` (`ScopedTransactionRepository.sumExpenseAmountByUserCategoryAndPeriod`).
+
+**Solución aplicada:**
+1. **Reordenar** el bloque expense en `CreateTransactionUseCase`: primero `budgetRepo.findByUserIdAndCategoryIdAndPeriod(...)` (gate), después `txRepo.sumExpenseAmountByUserCategoryAndPeriod(...)`.
+2. **Quitar** el `setLock('pessimistic_write')` redundante de `ScopedTransactionRepository.sumExpenseAmountByUserCategoryAndPeriod`. Con el gate del budget, ese lock no agrega correctitud y sí agrega contención con lecturas concurrentes.
+3. Test de regresión en `test/integration/concurrency/concurrency.integration.spec.ts` que reproduce el escenario de período vacío.
+
+**Por qué funciona:** una vez que el budget row es el mutex, dos TX competidoras se serializan en el `SELECT budget FOR UPDATE`. La que despierta segunda ejecuta su `SUM` como un **statement nuevo** post-COMMIT del ganador; en `READ COMMITTED` ese statement ve los datos commiteados al momento de ejecutarse, así que el `sum` incluye el INSERT de la ganadora. El invariante se valida con datos frescos sin necesidad de elevar a `SERIALIZABLE`.
+
+**Patrón:** `UpdateBudgetLimitUseCase` ya lo aplicaba (lock del budget primero, luego recalcular sumatoria). Este cambio alinea `CreateTransaction` con el mismo patrón. La regla generalizada: **cualquier dato que entre en la decisión del invariante debe leerse después de adquirir el lock del gate**.
+
 ### Bug B — Lost update en balance de cuenta (RESUELTO)
 
 **Escenario original:** Dos requests concurrentes `POST /transactions` sobre la misma cuenta.
@@ -200,9 +223,9 @@ Exports: `IExpenseChecker` (implementación usada por `BudgetsModule` para valid
 
 ## Conceptos de aislamiento relevantes
 
-`sumExpenseAmountByUserCategoryAndPeriod` toma `pessimistic_write` sobre las filas de transacciones del período. Antes era el único lock en juego — insuficiente porque no bloqueaba el budget ni la cuenta. Hoy actúa como capa adicional sobre las transacciones del período; el budget y el account ya tienen sus propios locks vía los scoped repos.
+**Regla operativa:** el budget row es el **gate de serialización** del invariante "Σ expenses + nuevo expense ≤ budget.limit". Toda la decisión debe construirse con datos leídos **después** de adquirir `SELECT budget FOR UPDATE` y antes del `COMMIT` del UoW — ese es el período crítico. El gate funciona porque la fila del budget siempre existe (unique constraint sobre `(user, category, month, year)` + fail-fast pre-UoW) y todos los flujos que mutan el período (`CreateTransaction`, `UpdateBudgetLimit`, `DeleteBudget`) pasan por él.
 
-**Punto importante:** el budget actúa como **gate de serialización del invariante** "suma de transactions ≤ limit". Lockear el budget al momento de insertar una transaction bloquea cualquier modificación concurrente del limit, y viceversa. El lock se sostiene desde el `SELECT FOR UPDATE` hasta el `COMMIT` del UoW — ese es exactamente el período crítico.
+`sumExpenseAmountByUserCategoryAndPeriod` (versión scoped en el UoW) **no** toma `FOR UPDATE`. No haría falta: un `FOR UPDATE` sobre `WHERE` por rango solo bloquea las filas existentes que matchean, no previene inserts concurrentes en el rango (phantoms). El único lock confiable es el del budget. Las versiones equivalentes en `ScopedExpenseChecker` (`hasExpensesInPeriod`, `sumExpenseAmountInPeriod`) sí mantienen el `FOR UPDATE`, pero los consumen `UpdateBudgetLimitUseCase` y `DeleteBudgetUseCase` que ya tomaron el lock del budget antes — son redundantes pero defensivas; el `setLock` ahí no se removió porque su contención es despreciable y refuerza el invariante a nivel de repo.
 
 El default de Postgres es `READ COMMITTED`. Dentro de la misma transacción, dos lecturas del mismo row pueden ver valores distintos si otro commit ocurrió entre medio ("non-repeatable reads"). `SERIALIZABLE` detectaría el conflicto en el commit y abortaría con `40001` — requeriría retry en la aplicación.
 
