@@ -20,7 +20,8 @@ export class UnarchiveAccountUseCase {
 
       const account = await accountRepo.findById(dto.id);
       if (!account) throw new AccountNotFoundException(dto.id);
-      if (account.userId !== dto.requestUserId) throw new ResourceOwnershipException(dto.id);
+      if (account.userId !== dto.requestUserId)
+        throw new ResourceOwnershipException(dto.id);
 
       account.unarchive();
       const saved = await accountRepo.save(account);

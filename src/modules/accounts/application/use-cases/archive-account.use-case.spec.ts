@@ -6,6 +6,7 @@ import {
 } from '../../domain/exceptions/account.exceptions';
 import { ResourceOwnershipException } from '../../../../shared/domain/exceptions/resource-ownership.exception';
 import { makeAccount } from '../../../../test-support/factories';
+import { IAccountUnitOfWork } from '../../domain/IAccountUnitOfWork';
 
 const makeMockUow = (repo: InMemoryAccountRepository) => ({
   begin: jest.fn().mockResolvedValue(undefined),
@@ -27,7 +28,12 @@ describe('ArchiveAccountUseCase', () => {
     repo.seed([makeAccount({ id: 'a1', userId: 'user-1' })]);
     const uow = makeMockUow(repo);
 
-    const result = await new ArchiveAccountUseCase(uow as any).execute({ id: 'a1', requestUserId: 'user-1' });
+    const result = await new ArchiveAccountUseCase(
+      uow as unknown as IAccountUnitOfWork,
+    ).execute({
+      id: 'a1',
+      requestUserId: 'user-1',
+    });
 
     expect(result.getIsArchived()).toBe(true);
     expect(uow.commit).toHaveBeenCalledTimes(1);
@@ -38,8 +44,12 @@ describe('ArchiveAccountUseCase', () => {
     repo.seed([makeAccount({ id: 'a1', userId: 'user-1', isArchived: true })]);
     const uow = makeMockUow(repo);
 
-    await expect(new ArchiveAccountUseCase(uow as any).execute({ id: 'a1', requestUserId: 'user-1' }))
-      .rejects.toThrow(AccountAlreadyArchivedDomainException);
+    await expect(
+      new ArchiveAccountUseCase(uow as unknown as IAccountUnitOfWork).execute({
+        id: 'a1',
+        requestUserId: 'user-1',
+      }),
+    ).rejects.toThrow(AccountAlreadyArchivedDomainException);
 
     expect(uow.rollback).toHaveBeenCalledTimes(1);
     expect(uow.release).toHaveBeenCalledTimes(1);
@@ -48,8 +58,12 @@ describe('ArchiveAccountUseCase', () => {
   it('should throw AccountNotFoundException when account does not exist', async () => {
     const uow = makeMockUow(repo);
 
-    await expect(new ArchiveAccountUseCase(uow as any).execute({ id: 'ghost', requestUserId: 'user-1' }))
-      .rejects.toThrow(AccountNotFoundException);
+    await expect(
+      new ArchiveAccountUseCase(uow as unknown as IAccountUnitOfWork).execute({
+        id: 'ghost',
+        requestUserId: 'user-1',
+      }),
+    ).rejects.toThrow(AccountNotFoundException);
 
     expect(uow.rollback).toHaveBeenCalledTimes(1);
   });
@@ -58,8 +72,12 @@ describe('ArchiveAccountUseCase', () => {
     repo.seed([makeAccount({ id: 'a1', userId: 'owner' })]);
     const uow = makeMockUow(repo);
 
-    await expect(new ArchiveAccountUseCase(uow as any).execute({ id: 'a1', requestUserId: 'intruder' }))
-      .rejects.toThrow(ResourceOwnershipException);
+    await expect(
+      new ArchiveAccountUseCase(uow as unknown as IAccountUnitOfWork).execute({
+        id: 'a1',
+        requestUserId: 'intruder',
+      }),
+    ).rejects.toThrow(ResourceOwnershipException);
 
     expect(uow.rollback).toHaveBeenCalledTimes(1);
   });

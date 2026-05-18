@@ -41,8 +41,12 @@ describe('Email', () => {
     });
 
     it('should throw EmptyEmailException if email is null or undefined', () => {
-      expect(() => Email.create(null as any)).toThrow(EmptyEmailException);
-      expect(() => Email.create(undefined as any)).toThrow(EmptyEmailException);
+      expect(() => Email.create(null as unknown as string)).toThrow(
+        EmptyEmailException,
+      );
+      expect(() => Email.create(undefined as unknown as string)).toThrow(
+        EmptyEmailException,
+      );
     });
 
     it('should throw InvalidEmailFormatException for invalid format', () => {
@@ -236,8 +240,8 @@ describe('Email', () => {
       const email = Email.create('user@example.com');
 
       // Verify no setters exist
-      expect((email as any).setValue).toBeUndefined();
-      expect((email as any).changeDomain).toBeUndefined();
+      expect((email as Record<string, unknown>).setValue).toBeUndefined();
+      expect((email as Record<string, unknown>).changeDomain).toBeUndefined();
 
       // Value should remain constant
       expect(email.getValue()).toBe('user@example.com');

@@ -6,9 +6,7 @@ import { IRefreshTokenRepository } from '../../domain/repository/refresh-token.r
 export class CleanupExpiredTokensScheduler {
   private readonly logger = new Logger(CleanupExpiredTokensScheduler.name);
 
-  constructor(
-    private readonly refreshTokenRepo: IRefreshTokenRepository,
-  ) {}
+  constructor(private readonly refreshTokenRepo: IRefreshTokenRepository) {}
 
   /** Limpieza diaria a las 3am — borra tokens expirados para acotar el crecimiento de la tabla. */
   @Cron('0 3 * * *')

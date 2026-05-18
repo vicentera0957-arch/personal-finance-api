@@ -19,18 +19,17 @@ describe('ExpenseCheckerImpl', () => {
       const result = await checker.hasExpensesInPeriod('user-1', 'c1', 3, 2026);
 
       expect(result).toBe(true);
-      expect(txRepo.sumExpenseAmountByUserCategoryAndPeriod).toHaveBeenCalledWith(
-        'user-1',
-        'c1',
-        3,
-        2026,
-      );
+      expect(
+        txRepo.sumExpenseAmountByUserCategoryAndPeriod,
+      ).toHaveBeenCalledWith('user-1', 'c1', 3, 2026);
     });
 
     it('should return false when the period sum is 0', async () => {
       txRepo.sumExpenseAmountByUserCategoryAndPeriod.mockResolvedValue(0);
 
-      expect(await checker.hasExpensesInPeriod('user-1', 'c1', 3, 2026)).toBe(false);
+      expect(await checker.hasExpensesInPeriod('user-1', 'c1', 3, 2026)).toBe(
+        false,
+      );
     });
   });
 });

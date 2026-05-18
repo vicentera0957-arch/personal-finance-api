@@ -13,7 +13,9 @@ describe('AccountRepositoryImpl', () => {
   let ormRepo: OrmMock;
   let repo: AccountRepositoryImpl;
 
-  const buildOrm = (overrides: Partial<AccountOrmEntity> = {}): AccountOrmEntity => {
+  const buildOrm = (
+    overrides: Partial<AccountOrmEntity> = {},
+  ): AccountOrmEntity => {
     const orm = new AccountOrmEntity();
     orm.id = overrides.id ?? 'a1';
     orm.userId = overrides.userId ?? 'user-1';
@@ -58,11 +60,16 @@ describe('AccountRepositoryImpl', () => {
 
   describe('findByUserId', () => {
     it('should map all rows to domain accounts', async () => {
-      ormRepo.find.mockResolvedValue([buildOrm({ id: 'a1' }), buildOrm({ id: 'a2' })]);
+      ormRepo.find.mockResolvedValue([
+        buildOrm({ id: 'a1' }),
+        buildOrm({ id: 'a2' }),
+      ]);
 
       const accounts = await repo.findByUserId('user-1');
 
-      expect(ormRepo.find).toHaveBeenCalledWith({ where: { userId: 'user-1' } });
+      expect(ormRepo.find).toHaveBeenCalledWith({
+        where: { userId: 'user-1' },
+      });
       expect(accounts.map((a) => a.id)).toEqual(['a1', 'a2']);
     });
   });

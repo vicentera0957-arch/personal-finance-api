@@ -6,7 +6,9 @@ import {
 } from '../exceptions/user.exceptions';
 
 describe('User', () => {
-  const createValidUser = (overrides?: Partial<any>) => {
+  const createValidUser = (
+    overrides?: Partial<Parameters<typeof User.create>[0]>,
+  ) => {
     return User.create({
       id: 'user-123',
       email: Email.create('user@example.com'),
@@ -52,18 +54,16 @@ describe('User', () => {
     });
 
     it('should throw InvalidNameException if name is empty string', () => {
-      expect(() =>
-        createValidUser({ name: '' }),
-      ).toThrow(InvalidNameException);
+      expect(() => createValidUser({ name: '' })).toThrow(InvalidNameException);
     });
 
     it('should throw InvalidNameException if name is only whitespace', () => {
-      expect(() =>
-        createValidUser({ name: '   ' }),
-      ).toThrow(InvalidNameException);
-      expect(() =>
-        createValidUser({ name: '\t\n' }),
-      ).toThrow(InvalidNameException);
+      expect(() => createValidUser({ name: '   ' })).toThrow(
+        InvalidNameException,
+      );
+      expect(() => createValidUser({ name: '\t\n' })).toThrow(
+        InvalidNameException,
+      );
     });
 
     it('should accept any non-empty passwordHash at creation', () => {
@@ -80,7 +80,9 @@ describe('User', () => {
     });
 
     it('should accept complex email values', () => {
-      const complexEmail = Email.create('first.last+tag@subdomain.example.co.uk');
+      const complexEmail = Email.create(
+        'first.last+tag@subdomain.example.co.uk',
+      );
       const user = User.create({
         id: 'user-1',
         email: complexEmail,
@@ -229,7 +231,7 @@ describe('User', () => {
     it('should throw InvalidPasswordHashException if hash is null', () => {
       const user = createValidUser();
 
-      expect(() => user.changePassword(null as any)).toThrow(
+      expect(() => user.changePassword(null as unknown as string)).toThrow(
         InvalidPasswordHashException,
       );
     });
@@ -237,7 +239,7 @@ describe('User', () => {
     it('should throw InvalidPasswordHashException if hash is undefined', () => {
       const user = createValidUser();
 
-      expect(() => user.changePassword(undefined as any)).toThrow(
+      expect(() => user.changePassword(undefined as unknown as string)).toThrow(
         InvalidPasswordHashException,
       );
     });

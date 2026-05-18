@@ -28,7 +28,9 @@ export class AppController {
   @Public()
   @Get('/health')
   @ApiTags('health')
-  @ApiOperation({ summary: 'Liveness probe — responde 200 si el proceso vive.' })
+  @ApiOperation({
+    summary: 'Liveness probe — responde 200 si el proceso vive.',
+  })
   health(): { status: string; timestamp: string } {
     return { status: 'ok', timestamp: new Date().toISOString() };
   }

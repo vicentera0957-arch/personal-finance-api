@@ -5,7 +5,9 @@ import { UserOrmEntity } from './user.orm.entity';
 import { UserAlreadyExistsException } from '../../domain/exceptions/user.exceptions';
 import { makeUser } from '../../../../test-support/factories';
 
-type OrmMock = jest.Mocked<Pick<Repository<UserOrmEntity>, 'findOne' | 'save' | 'delete'>>;
+type OrmMock = jest.Mocked<
+  Pick<Repository<UserOrmEntity>, 'findOne' | 'save' | 'delete'>
+>;
 
 describe('UserRepositoryImpl', () => {
   let ormRepo: OrmMock;
@@ -19,7 +21,10 @@ describe('UserRepositoryImpl', () => {
       delete: jest.fn(),
     };
     mapper = new UserMapper();
-    repo = new UserRepositoryImpl(ormRepo as unknown as Repository<UserOrmEntity>, mapper);
+    repo = new UserRepositoryImpl(
+      ormRepo as unknown as Repository<UserOrmEntity>,
+      mapper,
+    );
   });
 
   const buildOrm = (): UserOrmEntity => {
@@ -59,7 +64,9 @@ describe('UserRepositoryImpl', () => {
 
       const user = await repo.findByEmail('a@b.cl');
 
-      expect(ormRepo.findOne).toHaveBeenCalledWith({ where: { email: 'a@b.cl' } });
+      expect(ormRepo.findOne).toHaveBeenCalledWith({
+        where: { email: 'a@b.cl' },
+      });
       expect(user?.email.getValue()).toBe('a@b.cl');
     });
 
@@ -92,9 +99,12 @@ describe('UserRepositoryImpl', () => {
       const user = makeUser({ id: 'user-1', email: 'a@b.cl' });
 
       // Simula que Postgres rechaza el INSERT por constraint de unicidad
-      const dbError = Object.assign(new QueryFailedError('INSERT', [], new Error()), {
-        driverError: { code: '23505' },
-      });
+      const dbError = Object.assign(
+        new QueryFailedError('INSERT', [], new Error()),
+        {
+          driverError: { code: '23505' },
+        },
+      );
       ormRepo.save.mockRejectedValue(dbError);
 
       await expect(repo.save(user)).rejects.toThrow(UserAlreadyExistsException);
@@ -104,9 +114,12 @@ describe('UserRepositoryImpl', () => {
     it('should rethrow non-23505 QueryFailedErrors as-is', async () => {
       const user = makeUser({ id: 'user-1', email: 'a@b.cl' });
 
-      const dbError = Object.assign(new QueryFailedError('INSERT', [], new Error()), {
-        driverError: { code: '23503' }, // FK violation — distinto error
-      });
+      const dbError = Object.assign(
+        new QueryFailedError('INSERT', [], new Error()),
+        {
+          driverError: { code: '23503' }, // FK violation — distinto error
+        },
+      );
       ormRepo.save.mockRejectedValue(dbError);
 
       await expect(repo.save(user)).rejects.toBeInstanceOf(QueryFailedError);

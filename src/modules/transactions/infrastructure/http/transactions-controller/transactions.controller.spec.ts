@@ -42,11 +42,21 @@ describe('TransactionsController', () => {
   const currentUser: AuthenticatedUser = { userId: 'user-1', email: 'a@b.cl' };
 
   beforeEach(() => {
-    createUseCase = { execute: jest.fn() } as unknown as jest.Mocked<CreateTransactionUseCase>;
-    getByIdUseCase = { execute: jest.fn() } as unknown as jest.Mocked<GetTransactionByIdUseCase>;
-    getByAccountUseCase = { execute: jest.fn() } as unknown as jest.Mocked<GetTransactionsByAccountIdUseCase>;
-    getByUserUseCase = { execute: jest.fn() } as unknown as jest.Mocked<GetTransactionsByUserIdUseCase>;
-    deleteUseCase = { execute: jest.fn() } as unknown as jest.Mocked<DeleteTransactionUseCase>;
+    createUseCase = {
+      execute: jest.fn(),
+    } as unknown as jest.Mocked<CreateTransactionUseCase>;
+    getByIdUseCase = {
+      execute: jest.fn(),
+    } as unknown as jest.Mocked<GetTransactionByIdUseCase>;
+    getByAccountUseCase = {
+      execute: jest.fn(),
+    } as unknown as jest.Mocked<GetTransactionsByAccountIdUseCase>;
+    getByUserUseCase = {
+      execute: jest.fn(),
+    } as unknown as jest.Mocked<GetTransactionsByUserIdUseCase>;
+    deleteUseCase = {
+      execute: jest.fn(),
+    } as unknown as jest.Mocked<DeleteTransactionUseCase>;
 
     controller = new TransactionsController(
       createUseCase,
@@ -79,11 +89,15 @@ describe('TransactionsController', () => {
       expect(call.userId).toBe('user-1');
       expect(call.accountId).toBe('a1');
       expect(call.transactionDate).toBeInstanceOf(Date);
-      expect(call.transactionDate.toISOString()).toBe('2026-03-15T12:00:00.000Z');
+      expect(call.transactionDate.toISOString()).toBe(
+        '2026-03-15T12:00:00.000Z',
+      );
     });
 
     it('should map AccountNotFoundException to 404', async () => {
-      createUseCase.execute.mockRejectedValue(new AccountNotFoundException('a1'));
+      createUseCase.execute.mockRejectedValue(
+        new AccountNotFoundException('a1'),
+      );
 
       await expect(
         controller.create(
@@ -100,7 +114,9 @@ describe('TransactionsController', () => {
     });
 
     it('should map CategoryNotFoundException to 404', async () => {
-      createUseCase.execute.mockRejectedValue(new CategoryNotFoundException('c1'));
+      createUseCase.execute.mockRejectedValue(
+        new CategoryNotFoundException('c1'),
+      );
 
       await expect(
         controller.create(
@@ -136,7 +152,9 @@ describe('TransactionsController', () => {
     });
 
     it('should map InvalidAmountException to 400', async () => {
-      createUseCase.execute.mockRejectedValue(new InvalidAmountException('negative'));
+      createUseCase.execute.mockRejectedValue(
+        new InvalidAmountException('negative'),
+      );
 
       await expect(
         controller.create(
@@ -172,7 +190,9 @@ describe('TransactionsController', () => {
     });
 
     it('should map CannotOperateOnArchivedAccountException to 409', async () => {
-      createUseCase.execute.mockRejectedValue(new CannotOperateOnArchivedAccountException());
+      createUseCase.execute.mockRejectedValue(
+        new CannotOperateOnArchivedAccountException(),
+      );
 
       await expect(
         controller.create(
@@ -225,7 +245,9 @@ describe('TransactionsController', () => {
     });
 
     it('should map ResourceOwnershipException to 403 (account or category belongs to another user)', async () => {
-      createUseCase.execute.mockRejectedValue(new ResourceOwnershipException('a1'));
+      createUseCase.execute.mockRejectedValue(
+        new ResourceOwnershipException('a1'),
+      );
 
       await expect(
         controller.create(
@@ -244,7 +266,9 @@ describe('TransactionsController', () => {
 
   describe('findByUserId', () => {
     it('should compute offset from page/limit and scope to current user', async () => {
-      getByUserUseCase.execute.mockResolvedValue([makeTransaction({ id: 't1' })]);
+      getByUserUseCase.execute.mockResolvedValue([
+        makeTransaction({ id: 't1' }),
+      ]);
 
       await controller.findByUserId(currentUser, {
         page: 2,
@@ -292,7 +316,9 @@ describe('TransactionsController', () => {
 
   describe('findById', () => {
     it('should map TransactionNotFoundException to 404', async () => {
-      getByIdUseCase.execute.mockRejectedValue(new TransactionNotFoundException('t1'));
+      getByIdUseCase.execute.mockRejectedValue(
+        new TransactionNotFoundException('t1'),
+      );
 
       await expect(controller.findById('t1', currentUser)).rejects.toThrow(
         NotFoundException,
@@ -300,7 +326,9 @@ describe('TransactionsController', () => {
     });
 
     it('should map ResourceOwnershipException to 403', async () => {
-      getByIdUseCase.execute.mockRejectedValue(new ResourceOwnershipException('t1'));
+      getByIdUseCase.execute.mockRejectedValue(
+        new ResourceOwnershipException('t1'),
+      );
 
       await expect(controller.findById('t1', currentUser)).rejects.toThrow(
         ForbiddenException,
@@ -310,7 +338,9 @@ describe('TransactionsController', () => {
 
   describe('delete', () => {
     it('should map CannotDeleteTransactionException to 409', async () => {
-      deleteUseCase.execute.mockRejectedValue(new CannotDeleteTransactionException('t1'));
+      deleteUseCase.execute.mockRejectedValue(
+        new CannotDeleteTransactionException('t1'),
+      );
 
       await expect(controller.delete('t1', currentUser)).rejects.toThrow(
         ConflictException,
@@ -318,7 +348,9 @@ describe('TransactionsController', () => {
     });
 
     it('should map ResourceOwnershipException to 403', async () => {
-      deleteUseCase.execute.mockRejectedValue(new ResourceOwnershipException('t1'));
+      deleteUseCase.execute.mockRejectedValue(
+        new ResourceOwnershipException('t1'),
+      );
 
       await expect(controller.delete('t1', currentUser)).rejects.toThrow(
         ForbiddenException,

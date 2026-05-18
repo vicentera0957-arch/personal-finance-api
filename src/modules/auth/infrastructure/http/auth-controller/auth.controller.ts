@@ -78,9 +78,14 @@ export class AuthController {
 
   @Public()
   @Post('refresh')
-  @ApiOperation({ summary: 'Intercambiar refresh token por un nuevo par de tokens' })
+  @ApiOperation({
+    summary: 'Intercambiar refresh token por un nuevo par de tokens',
+  })
   @ApiResponse({ status: 201, description: 'Nuevo par de tokens' })
-  @ApiResponse({ status: 401, description: 'Refresh token inválido, expirado o replay detectado' })
+  @ApiResponse({
+    status: 401,
+    description: 'Refresh token inválido, expirado o replay detectado',
+  })
   async refresh(@Body() dto: RefreshTokenDto) {
     try {
       return await this.refreshTokenUseCase.execute(dto.refreshToken);

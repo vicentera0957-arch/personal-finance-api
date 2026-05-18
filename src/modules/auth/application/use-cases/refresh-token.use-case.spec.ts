@@ -10,10 +10,12 @@ import {
   RefreshTokenReplayDetectedException,
 } from '../../domain/exceptions/auth.exceptions';
 
-function makeToken(overrides: Partial<Parameters<typeof RefreshToken.create>[0]> & {
-  revokedAt?: Date | null;
-  expiresAt?: Date;
-} = {}): RefreshToken {
+function makeToken(
+  overrides: Partial<Parameters<typeof RefreshToken.create>[0]> & {
+    revokedAt?: Date | null;
+    expiresAt?: Date;
+  } = {},
+): RefreshToken {
   const base = RefreshToken.create({
     id: 'jti-1',
     userId: 'user-1',
@@ -57,7 +59,9 @@ describe('RefreshTokenUseCase', () => {
       generateRefreshToken: jest.fn().mockResolvedValue('new-refresh'),
       verifyAccessToken: jest.fn(),
       verifyRefreshToken: jest.fn(),
-      getRefreshTokenExpiresAt: jest.fn().mockReturnValue(new Date(Date.now() + 86_400_000)),
+      getRefreshTokenExpiresAt: jest
+        .fn()
+        .mockReturnValue(new Date(Date.now() + 86_400_000)),
     };
 
     useCase = new RefreshTokenUseCase(tokenProvider, uow);

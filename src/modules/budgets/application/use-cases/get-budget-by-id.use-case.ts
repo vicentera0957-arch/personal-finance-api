@@ -14,10 +14,11 @@ export class GetBudgetByIdUseCase {
 
   async execute(id: string, requestUserId: string): Promise<Budget> {
     const cached = await this.cache.getById(id);
-    const budget = cached ?? await this.budgetRepository.findById(id);
+    const budget = cached ?? (await this.budgetRepository.findById(id));
 
     if (!budget) throw new BudgetNotFoundException(id);
-    if (budget.userId !== requestUserId) throw new ResourceOwnershipException(id);
+    if (budget.userId !== requestUserId)
+      throw new ResourceOwnershipException(id);
 
     if (!cached) await this.cache.setById(budget);
     return budget;

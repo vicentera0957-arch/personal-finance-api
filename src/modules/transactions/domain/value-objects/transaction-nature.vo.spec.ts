@@ -61,12 +61,12 @@ describe('TransactionNature', () => {
     });
 
     it('should throw EmptyTransactionNatureException if value is null/undefined', () => {
-      expect(() => TransactionNature.create(null as any)).toThrow(
+      expect(() => TransactionNature.create(null as unknown as string)).toThrow(
         EmptyTransactionNatureException,
       );
-      expect(() => TransactionNature.create(undefined as any)).toThrow(
-        EmptyTransactionNatureException,
-      );
+      expect(() =>
+        TransactionNature.create(undefined as unknown as string),
+      ).toThrow(EmptyTransactionNatureException);
     });
 
     it('should throw InvalidTransactionNatureException for invalid nature after normalization', () => {

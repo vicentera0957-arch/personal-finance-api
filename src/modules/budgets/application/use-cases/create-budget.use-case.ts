@@ -39,12 +39,13 @@ export class CreateBudgetUseCase {
       );
     }
 
-    const existing = await this.budgetRepository.findByUserIdAndCategoryIdAndPeriod(
-      command.userId,
-      command.categoryId,
-      command.month,
-      command.year,
-    );
+    const existing =
+      await this.budgetRepository.findByUserIdAndCategoryIdAndPeriod(
+        command.userId,
+        command.categoryId,
+        command.month,
+        command.year,
+      );
 
     if (existing) {
       throw new BudgetAlreadyExistsException(

@@ -38,7 +38,8 @@ describe('Transaction Entity', () => {
     });
 
     it('debe asignar null a description cuando no se provee', () => {
-      const { description, ...propsWithoutDescription } = mockProps;
+      const { description: _description, ...propsWithoutDescription } =
+        mockProps;
 
       const tx = Transaction.create(propsWithoutDescription);
 
@@ -80,7 +81,8 @@ describe('Transaction Entity', () => {
     });
 
     it('debe asignar null a description cuando no se provee', () => {
-      const { description, ...propsWithoutDescription } = reconstructProps;
+      const { description: _description, ...propsWithoutDescription } =
+        reconstructProps;
 
       const tx = Transaction.reconstitute(propsWithoutDescription);
 

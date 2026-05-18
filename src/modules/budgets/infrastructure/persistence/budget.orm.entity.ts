@@ -13,7 +13,12 @@ import { UserOrmEntity } from '../../../users/infrastructure/persistence/user.or
 import { CategoryOrmEntity } from '../../../categories/infrastructure/persistence/category.orm.entity';
 
 @Entity('budgets')
-@Unique('UQ_budgets_user_category_period', ['userId', 'categoryId', 'month', 'year'])
+@Unique('UQ_budgets_user_category_period', [
+  'userId',
+  'categoryId',
+  'month',
+  'year',
+])
 @Index(['userId', 'month', 'year'])
 export class BudgetOrmEntity {
   @PrimaryColumn('uuid')

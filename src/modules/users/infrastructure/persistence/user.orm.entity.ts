@@ -1,9 +1,4 @@
-import {
-  Entity,
-  Column,
-  PrimaryGeneratedColumn,
-  Index,
-} from 'typeorm';
+import { Entity, Column, PrimaryGeneratedColumn, Index } from 'typeorm';
 
 // `@Index({ unique: true })` en email es CRÍTICO:
 //   1. Cierra race condition de "registrar dos veces el mismo email simultáneamente"

@@ -15,7 +15,9 @@ describe('TransactionRepositoryImpl', () => {
   let ormRepo: OrmMock;
   let repo: TransactionRepositoryImpl;
 
-  const buildOrm = (o: Partial<TransactionOrmEntity> = {}): TransactionOrmEntity => {
+  const buildOrm = (
+    o: Partial<TransactionOrmEntity> = {},
+  ): TransactionOrmEntity => {
     const orm = new TransactionOrmEntity();
     orm.id = o.id ?? 't1';
     orm.userId = o.userId ?? 'user-1';
@@ -104,7 +106,10 @@ describe('TransactionRepositoryImpl', () => {
     });
 
     it('should map all rows through the mapper', async () => {
-      ormRepo.find.mockResolvedValue([buildOrm({ id: 't1' }), buildOrm({ id: 't2' })]);
+      ormRepo.find.mockResolvedValue([
+        buildOrm({ id: 't1' }),
+        buildOrm({ id: 't2' }),
+      ]);
 
       const txs = await repo.findByAccountId('a1');
 
@@ -115,7 +120,9 @@ describe('TransactionRepositoryImpl', () => {
 
   describe('save', () => {
     it('should save using ormRepository', async () => {
-      ormRepo.save.mockImplementation(async (orm) => orm as TransactionOrmEntity);
+      ormRepo.save.mockImplementation(
+        async (orm) => orm as TransactionOrmEntity,
+      );
 
       const saved = await repo.save(makeTransaction({ id: 't1' }));
 
@@ -132,7 +139,13 @@ describe('TransactionRepositoryImpl', () => {
       const where = jest.fn().mockReturnThis();
       const select = jest.fn().mockReturnThis();
 
-      const qb: any = { select, where, andWhere, setLock, getRawOne };
+      const qb = {
+        select,
+        where,
+        andWhere,
+        setLock,
+        getRawOne,
+      } as unknown as ReturnType<typeof ormRepo.createQueryBuilder>;
       ormRepo.createQueryBuilder.mockReturnValue(qb);
 
       const total = await repo.sumExpenseAmountByUserCategoryAndPeriod(
@@ -143,16 +156,18 @@ describe('TransactionRepositoryImpl', () => {
       );
 
       expect(ormRepo.createQueryBuilder).toHaveBeenCalledWith('transaction');
-      expect(andWhere).toHaveBeenCalledWith('transaction.categoryId = :categoryId', {
-        categoryId: 'c1',
-      });
+      expect(andWhere).toHaveBeenCalledWith(
+        'transaction.categoryId = :categoryId',
+        {
+          categoryId: 'c1',
+        },
+      );
       expect(andWhere).toHaveBeenCalledWith('transaction.nature = :nature', {
         nature: 'expense',
       });
       expect(setLock).not.toHaveBeenCalled();
       expect(total).toBe(250);
     });
-
   });
 
   describe('delete', () => {

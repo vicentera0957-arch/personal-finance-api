@@ -11,8 +11,6 @@ import { AccountsController } from './infrastructure/http/accounts-controller/ac
 
 // Domain
 import { IAccountRepository } from './domain/repository/accounts.repository';
-import { IAccountUnitOfWork } from './domain/IAccountUnitOfWork';
-
 // Módulos vecinos
 import { TransactionsModule } from '../transactions/transactions.module';
 

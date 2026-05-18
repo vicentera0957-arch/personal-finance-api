@@ -16,7 +16,9 @@ describe('CategoryRepositoryImpl', () => {
   let ormRepo: OrmMock;
   let repo: CategoryRepositoryImpl;
 
-  const buildOrm = (overrides: Partial<CategoryOrmEntity> = {}): CategoryOrmEntity => {
+  const buildOrm = (
+    overrides: Partial<CategoryOrmEntity> = {},
+  ): CategoryOrmEntity => {
     const orm = new CategoryOrmEntity();
     orm.id = overrides.id ?? 'c1';
     orm.userId = overrides.userId ?? 'user-1';
@@ -60,11 +62,16 @@ describe('CategoryRepositoryImpl', () => {
 
   describe('findByUserId', () => {
     it('should return all rows mapped to domain', async () => {
-      ormRepo.find.mockResolvedValue([buildOrm({ id: 'c1' }), buildOrm({ id: 'c2' })]);
+      ormRepo.find.mockResolvedValue([
+        buildOrm({ id: 'c1' }),
+        buildOrm({ id: 'c2' }),
+      ]);
 
       const categories = await repo.findByUserId('user-1');
 
-      expect(ormRepo.find).toHaveBeenCalledWith({ where: { userId: 'user-1' } });
+      expect(ormRepo.find).toHaveBeenCalledWith({
+        where: { userId: 'user-1' },
+      });
       expect(categories).toHaveLength(2);
     });
   });
@@ -81,9 +88,9 @@ describe('CategoryRepositoryImpl', () => {
     it('should translate unique-constraint violation (23505) into DuplicateCategoryException', async () => {
       ormRepo.save.mockRejectedValue({ code: '23505' });
 
-      await expect(repo.save(makeCategory({ name: 'Food', nature: 'expense' }))).rejects.toThrow(
-        DuplicateCategoryException,
-      );
+      await expect(
+        repo.save(makeCategory({ name: 'Food', nature: 'expense' })),
+      ).rejects.toThrow(DuplicateCategoryException);
     });
 
     it('should rethrow unrelated errors', async () => {

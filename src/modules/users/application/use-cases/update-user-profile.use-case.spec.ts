@@ -35,7 +35,10 @@ describe('UpdateUserProfileUseCase', () => {
   it('should leave name unchanged when not provided', async () => {
     repo.seed([makeUser({ id: 'user-1', name: 'Stable' })]);
 
-    const result = await useCase.execute({ id: 'user-1', requestUserId: 'user-1' });
+    const result = await useCase.execute({
+      id: 'user-1',
+      requestUserId: 'user-1',
+    });
 
     expect(result.getName()).toBe('Stable');
   });
@@ -44,7 +47,11 @@ describe('UpdateUserProfileUseCase', () => {
     repo.seed([makeUser({ id: 'user-1' })]);
 
     await expect(
-      useCase.execute({ id: 'user-1', requestUserId: 'user-2', name: 'Hacker' }),
+      useCase.execute({
+        id: 'user-1',
+        requestUserId: 'user-2',
+        name: 'Hacker',
+      }),
     ).rejects.toThrow(ResourceOwnershipException);
   });
 

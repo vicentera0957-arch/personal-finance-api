@@ -2,7 +2,10 @@ import { Injectable } from '@nestjs/common';
 import { v4 as uuidv4 } from 'uuid';
 import { CreateUserUseCase } from '../../../users/application/use-cases/create-user.use-case';
 import { IPasswordHasher } from '../../domain/ports/password-hasher.port';
-import { ITokenProvider, TokenPair } from '../../domain/ports/token-provider.port';
+import {
+  ITokenProvider,
+  TokenPair,
+} from '../../domain/ports/token-provider.port';
 import { IRefreshTokenRepository } from '../../domain/repository/refresh-token.repository';
 import { RefreshToken } from '../../domain/entities/refresh-token.entity';
 import { sha256 } from '../utils/token-hash.util';

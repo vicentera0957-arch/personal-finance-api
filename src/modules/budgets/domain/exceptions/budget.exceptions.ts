@@ -88,4 +88,3 @@ export class BudgetLimitBelowSpentException extends BudgetException {
     );
   }
 }
-

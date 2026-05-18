@@ -14,10 +14,11 @@ export class GetCategoryByIdUseCase {
 
   async execute(id: string, requestUserId: string): Promise<Category> {
     const cached = await this.cache.getById(id);
-    const category = cached ?? await this.categoryRepository.findById(id);
+    const category = cached ?? (await this.categoryRepository.findById(id));
 
     if (!category) throw new CategoryNotFoundException(id);
-    if (category.userId !== requestUserId) throw new ResourceOwnershipException(id);
+    if (category.userId !== requestUserId)
+      throw new ResourceOwnershipException(id);
 
     if (!cached) await this.cache.setById(category);
     return category;

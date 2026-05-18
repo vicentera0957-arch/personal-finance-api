@@ -91,6 +91,12 @@ class ScopedTransactionRepository extends ITransactionRepository {
     const periodStart = new Date(year, month - 1, 1);
     const periodEnd = new Date(year, month, 1);
 
+    // Sin FOR UPDATE: la serialización la garantiza el lock pesimista sobre
+    // la fila del budget en findByUserIdAndCategoryIdAndPeriod, que el
+    // CreateTransactionUseCase adquiere antes de invocar esta sumatoria.
+    // Un FOR UPDATE aquí no agregaría correctitud (los phantoms inserts en el
+    // rango no se bloquean por lockear filas existentes) y sí introduciría
+    // contención con lecturas concurrentes ajenas a la escritura.
     const raw = await this.manager
       .getRepository(TransactionOrmEntity)
       .createQueryBuilder('transaction')
@@ -100,7 +106,6 @@ class ScopedTransactionRepository extends ITransactionRepository {
       .andWhere('transaction.nature = :nature', { nature: 'expense' })
       .andWhere('transaction.transactionDate >= :periodStart', { periodStart })
       .andWhere('transaction.transactionDate < :periodEnd', { periodEnd })
-      .setLock('pessimistic_write')
       .getRawOne<{ total: string }>();
 
     return Number(raw?.total ?? 0);

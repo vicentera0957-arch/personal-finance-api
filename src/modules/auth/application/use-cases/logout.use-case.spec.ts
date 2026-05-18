@@ -18,7 +18,9 @@ function makeToken(expiresAt?: Date): RefreshToken {
 describe('LogoutUseCase', () => {
   let useCase: LogoutUseCase;
   let tokenProvider: jest.Mocked<Pick<ITokenProvider, 'verifyRefreshToken'>>;
-  let repo: jest.Mocked<Pick<IRefreshTokenRepository, 'findByTokenHash' | 'save'>>;
+  let repo: jest.Mocked<
+    Pick<IRefreshTokenRepository, 'findByTokenHash' | 'save'>
+  >;
 
   beforeEach(() => {
     tokenProvider = {

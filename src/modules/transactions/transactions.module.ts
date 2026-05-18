@@ -77,6 +77,11 @@ import { BudgetsModule } from '../budgets/budgets.module';
       useExisting: TypeOrmUnitOfWorkImpl,
     },
   ],
-  exports: [IExpenseChecker, ITransactionUnitOfWork, IBudgetUnitOfWork, IAccountUnitOfWork],
+  exports: [
+    IExpenseChecker,
+    ITransactionUnitOfWork,
+    IBudgetUnitOfWork,
+    IAccountUnitOfWork,
+  ],
 })
 export class TransactionsModule {}

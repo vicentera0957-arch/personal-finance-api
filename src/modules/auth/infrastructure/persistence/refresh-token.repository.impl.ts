@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { IsNull, LessThan, Repository } from 'typeorm';
+import { LessThan, Repository } from 'typeorm';
 import { IRefreshTokenRepository } from '../../domain/repository/refresh-token.repository';
 import { RefreshToken } from '../../domain/entities/refresh-token.entity';
 import { RefreshTokenOrmEntity } from './refresh-token.orm.entity';

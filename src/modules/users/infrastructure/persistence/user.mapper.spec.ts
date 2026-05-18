@@ -40,7 +40,11 @@ describe('UserMapper', () => {
 
   describe('round trip', () => {
     it('should preserve all fields through toOrm then toDomain', () => {
-      const original = makeUser({ id: 'user-1', email: 'a@b.cl', name: 'Alice' });
+      const original = makeUser({
+        id: 'user-1',
+        email: 'a@b.cl',
+        name: 'Alice',
+      });
 
       const roundTripped = mapper.toDomain(mapper.toOrm(original));
 

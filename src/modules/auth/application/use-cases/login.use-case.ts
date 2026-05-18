@@ -3,7 +3,10 @@ import { v4 as uuidv4 } from 'uuid';
 import { GetUserByEmailUseCase } from '../../../users/application/use-cases/get-user-by-email.use-case';
 import { UserNotFoundException } from '../../../users/domain/exceptions/user.exceptions';
 import { IPasswordHasher } from '../../domain/ports/password-hasher.port';
-import { ITokenProvider, TokenPair } from '../../domain/ports/token-provider.port';
+import {
+  ITokenProvider,
+  TokenPair,
+} from '../../domain/ports/token-provider.port';
 import { IRefreshTokenRepository } from '../../domain/repository/refresh-token.repository';
 import { RefreshToken } from '../../domain/entities/refresh-token.entity';
 import { InvalidCredentialsException } from '../../domain/exceptions/auth.exceptions';

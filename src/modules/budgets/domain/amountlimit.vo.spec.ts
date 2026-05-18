@@ -45,9 +45,7 @@ describe('AmountLimit', () => {
     });
 
     it('should throw InvalidAmountLimitException if amount is negative', () => {
-      expect(() => AmountLimit.create(-1)).toThrow(
-        InvalidAmountLimitException,
-      );
+      expect(() => AmountLimit.create(-1)).toThrow(InvalidAmountLimitException);
       expect(() => AmountLimit.create(-100)).toThrow(
         InvalidAmountLimitException,
       );
@@ -65,9 +63,7 @@ describe('AmountLimit', () => {
       );
 
       // Zero fails on positive check (after finite and integer pass)
-      expect(() => AmountLimit.create(0)).toThrow(
-        InvalidAmountLimitException,
-      );
+      expect(() => AmountLimit.create(0)).toThrow(InvalidAmountLimitException);
     });
   });
 

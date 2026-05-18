@@ -21,7 +21,8 @@ export class RenameAccountUseCase {
 
       const account = await accountRepo.findById(dto.id);
       if (!account) throw new AccountNotFoundException(dto.id);
-      if (account.userId !== dto.requestUserId) throw new ResourceOwnershipException(dto.id);
+      if (account.userId !== dto.requestUserId)
+        throw new ResourceOwnershipException(dto.id);
 
       account.rename(dto.name);
       const saved = await accountRepo.save(account);

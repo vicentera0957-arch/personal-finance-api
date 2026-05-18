@@ -73,7 +73,9 @@ describe('JwtTokenProvider', () => {
       const after = Date.now();
 
       const sevenDaysMs = 7 * 86_400_000;
-      expect(result.getTime()).toBeGreaterThanOrEqual(before + sevenDaysMs - 100);
+      expect(result.getTime()).toBeGreaterThanOrEqual(
+        before + sevenDaysMs - 100,
+      );
       expect(result.getTime()).toBeLessThanOrEqual(after + sevenDaysMs + 100);
     });
   });
@@ -112,7 +114,11 @@ describe('JwtTokenProvider', () => {
 
       const result = await provider.verifyRefreshToken('r-token');
 
-      expect(result).toEqual({ sub: 'user-1', email: 'a@b.cl', jti: 'some-uuid' });
+      expect(result).toEqual({
+        sub: 'user-1',
+        email: 'a@b.cl',
+        jti: 'some-uuid',
+      });
       expect(jwtService.verifyAsync).toHaveBeenCalledWith('r-token', {
         secret: 'refresh-secret',
       });

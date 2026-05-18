@@ -47,9 +47,7 @@ describe('UpdateAccountBalanceUseCase', () => {
   });
 
   it('should throw CannotOperateOnArchivedAccountException on archived account', async () => {
-    repo.seed([
-      makeAccount({ id: 'a1', userId: 'user-1', isArchived: true }),
-    ]);
+    repo.seed([makeAccount({ id: 'a1', userId: 'user-1', isArchived: true })]);
 
     await expect(useCase.execute('a1', 10, 'inflow')).rejects.toThrow(
       CannotOperateOnArchivedAccountException,

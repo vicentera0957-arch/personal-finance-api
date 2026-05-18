@@ -7,7 +7,8 @@ import { IExpenseChecker } from '../../../../budgets/domain/repository/expense-c
 
 export class InMemoryUnitOfWork
   extends ITransactionUnitOfWork
-  implements IBudgetUnitOfWork {
+  implements IBudgetUnitOfWork
+{
   private _commits = 0;
   private _rollbacks = 0;
   private active = false;

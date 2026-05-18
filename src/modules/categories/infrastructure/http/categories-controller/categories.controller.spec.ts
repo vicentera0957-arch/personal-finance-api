@@ -31,11 +31,21 @@ describe('CategoriesController', () => {
   const currentUser: AuthenticatedUser = { userId: 'user-1', email: 'a@b.cl' };
 
   beforeEach(() => {
-    createUseCase = { execute: jest.fn() } as unknown as jest.Mocked<CreateCategoryUseCase>;
-    getByIdUseCase = { execute: jest.fn() } as unknown as jest.Mocked<GetCategoryByIdUseCase>;
-    getByUserUseCase = { execute: jest.fn() } as unknown as jest.Mocked<GetCategoriesByUserIdUseCase>;
-    updateUseCase = { execute: jest.fn() } as unknown as jest.Mocked<UpdateCategoryUseCase>;
-    deleteUseCase = { execute: jest.fn() } as unknown as jest.Mocked<DeleteCategoryUseCase>;
+    createUseCase = {
+      execute: jest.fn(),
+    } as unknown as jest.Mocked<CreateCategoryUseCase>;
+    getByIdUseCase = {
+      execute: jest.fn(),
+    } as unknown as jest.Mocked<GetCategoryByIdUseCase>;
+    getByUserUseCase = {
+      execute: jest.fn(),
+    } as unknown as jest.Mocked<GetCategoriesByUserIdUseCase>;
+    updateUseCase = {
+      execute: jest.fn(),
+    } as unknown as jest.Mocked<UpdateCategoryUseCase>;
+    deleteUseCase = {
+      execute: jest.fn(),
+    } as unknown as jest.Mocked<DeleteCategoryUseCase>;
 
     controller = new CategoriesController(
       createUseCase,
@@ -52,10 +62,7 @@ describe('CategoriesController', () => {
         makeCategory({ id: 'cat-1', userId: 'user-1', name: 'Food' }),
       );
 
-      await controller.create(
-        { name: 'Food', nature: 'expense' },
-        currentUser,
-      );
+      await controller.create({ name: 'Food', nature: 'expense' }, currentUser);
 
       expect(createUseCase.execute).toHaveBeenCalledWith({
         userId: 'user-1',
@@ -67,7 +74,9 @@ describe('CategoriesController', () => {
     });
 
     it('should map InvalidCategoryNameException to 400', async () => {
-      createUseCase.execute.mockRejectedValue(new InvalidCategoryNameException(''));
+      createUseCase.execute.mockRejectedValue(
+        new InvalidCategoryNameException(''),
+      );
 
       await expect(
         controller.create({ name: '', nature: 'expense' }, currentUser),
@@ -75,7 +84,9 @@ describe('CategoriesController', () => {
     });
 
     it('should map DuplicateCategoryException to 409', async () => {
-      createUseCase.execute.mockRejectedValue(new DuplicateCategoryException('Food', 'expense'));
+      createUseCase.execute.mockRejectedValue(
+        new DuplicateCategoryException('Food', 'expense'),
+      );
 
       await expect(
         controller.create({ name: 'Food', nature: 'expense' }, currentUser),
@@ -96,7 +107,9 @@ describe('CategoriesController', () => {
 
   describe('findById', () => {
     it('should map CategoryNotFoundException to 404', async () => {
-      getByIdUseCase.execute.mockRejectedValue(new CategoryNotFoundException('c1'));
+      getByIdUseCase.execute.mockRejectedValue(
+        new CategoryNotFoundException('c1'),
+      );
 
       await expect(controller.findById('c1', currentUser)).rejects.toThrow(
         NotFoundException,
@@ -104,7 +117,9 @@ describe('CategoriesController', () => {
     });
 
     it('should map ResourceOwnershipException to 403', async () => {
-      getByIdUseCase.execute.mockRejectedValue(new ResourceOwnershipException('c1'));
+      getByIdUseCase.execute.mockRejectedValue(
+        new ResourceOwnershipException('c1'),
+      );
 
       await expect(controller.findById('c1', currentUser)).rejects.toThrow(
         ForbiddenException,
@@ -112,8 +127,7 @@ describe('CategoriesController', () => {
     });
   });
 
-  describe('update', () => {
-  });
+  describe('update', () => {});
 
   describe('delete', () => {
     it('should map CategoryInUseException to 409', async () => {
