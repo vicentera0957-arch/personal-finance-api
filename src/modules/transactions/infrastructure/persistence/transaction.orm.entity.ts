@@ -2,7 +2,6 @@ import {
   Entity,
   PrimaryColumn,
   Column,
-  CreateDateColumn,
   ManyToOne,
   JoinColumn,
   Index,
@@ -85,6 +84,6 @@ export class TransactionOrmEntity {
   @Column({ name: 'transaction_date', type: 'timestamp' })
   transactionDate: Date;
 
-  @CreateDateColumn({ name: 'created_at' })
+  @Column({ name: 'created_at', type: 'timestamp' })
   createdAt: Date;
 }

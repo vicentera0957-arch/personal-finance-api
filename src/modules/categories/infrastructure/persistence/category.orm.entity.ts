@@ -2,8 +2,6 @@ import {
   Entity,
   PrimaryColumn,
   Column,
-  CreateDateColumn,
-  UpdateDateColumn,
   Unique,
   Index,
   ManyToOne,
@@ -46,10 +44,9 @@ export class CategoryOrmEntity {
   @Column({ type: 'varchar', length: 50, nullable: true })
   icon: string | null;
 
-  @CreateDateColumn({ name: 'created_at' })
+  @Column({ name: 'created_at', type: 'timestamp' })
   createdAt: Date;
 
-  // updatedAt agregado al esquema original para soportar actualizaciones
-  @UpdateDateColumn({ name: 'updated_at' })
+  @Column({ name: 'updated_at', type: 'timestamp' })
   updatedAt: Date;
 }

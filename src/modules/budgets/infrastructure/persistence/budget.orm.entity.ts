@@ -2,8 +2,6 @@ import {
   Entity,
   PrimaryColumn,
   Column,
-  CreateDateColumn,
-  UpdateDateColumn,
   Unique,
   Index,
   ManyToOne,
@@ -55,9 +53,9 @@ export class BudgetOrmEntity {
   @Column({ name: 'amount_limit', type: 'int' })
   limit: number;
 
-  @CreateDateColumn({ name: 'created_at' })
+  @Column({ name: 'created_at', type: 'timestamp' })
   createdAt: Date;
 
-  @UpdateDateColumn({ name: 'updated_at' })
+  @Column({ name: 'updated_at', type: 'timestamp' })
   updatedAt: Date;
 }
