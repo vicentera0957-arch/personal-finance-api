@@ -44,7 +44,7 @@ export class AuthController {
   @Public()
   @Post('login')
   @ApiOperation({ summary: 'Login → devuelve access + refresh token' })
-  @ApiResponse({ status: 201, description: 'Tokens emitidos' })
+  @ApiResponse({ status: 200, description: 'Tokens emitidos' })
   @ApiResponse({ status: 401, description: 'Credenciales inválidas' })
   async login(@Body() dto: LoginDto) {
     try {
