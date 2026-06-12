@@ -14,7 +14,14 @@ import {
   ForbiddenException,
   ParseUUIDPipe,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiBody,
+  ApiOperation,
+  ApiParam,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { CurrentUser } from '../../../../auth/infrastructure/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../../../auth/infrastructure/decorators/current-user.decorator';
 // Use cases
@@ -51,7 +58,6 @@ export class CategoriesController {
     private readonly deleteCategoryUseCase: DeleteCategoryUseCase,
   ) {}
 
-  // Convierte la entidad de dominio al DTO de respuesta HTTP
   private toResponse(category: Category): CategoryResponseDto {
     const dto = new CategoryResponseDto();
     dto.id = category.id;
@@ -66,6 +72,11 @@ export class CategoriesController {
   }
 
   @Post()
+  @ApiOperation({ summary: 'Crear categoría' })
+  @ApiBody({ type: CreateCategoryDto })
+  @ApiResponse({ status: 201, description: 'Categoría creada', type: CategoryResponseDto })
+  @ApiResponse({ status: 400, description: 'Nombre, color o icono inválido' })
+  @ApiResponse({ status: 409, description: 'Categoría duplicada (mismo nombre y naturaleza)' })
   async create(
     @Body() dto: CreateCategoryDto,
     @CurrentUser() user: AuthenticatedUser,
@@ -95,6 +106,8 @@ export class CategoriesController {
   }
 
   @Get()
+  @ApiOperation({ summary: 'Listar categorías del usuario autenticado' })
+  @ApiResponse({ status: 200, description: 'Lista de categorías', type: [CategoryResponseDto] })
   async findByUserId(
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<CategoryResponseDto[]> {
@@ -105,6 +118,11 @@ export class CategoriesController {
   }
 
   @Get(':id')
+  @ApiOperation({ summary: 'Obtener categoría por ID' })
+  @ApiParam({ name: 'id', description: 'UUID de la categoría' })
+  @ApiResponse({ status: 200, description: 'Categoría encontrada', type: CategoryResponseDto })
+  @ApiResponse({ status: 404, description: 'Categoría no encontrada' })
+  @ApiResponse({ status: 403, description: 'No autorizado para ver esta categoría' })
   async findById(
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() user: AuthenticatedUser,
@@ -127,6 +145,13 @@ export class CategoriesController {
   }
 
   @Patch(':id')
+  @ApiOperation({ summary: 'Actualizar categoría (nombre, color, icono)' })
+  @ApiParam({ name: 'id', description: 'UUID de la categoría' })
+  @ApiBody({ type: UpdateCategoryDto })
+  @ApiResponse({ status: 200, description: 'Categoría actualizada', type: CategoryResponseDto })
+  @ApiResponse({ status: 400, description: 'Nombre, color o icono inválido' })
+  @ApiResponse({ status: 404, description: 'Categoría no encontrada' })
+  @ApiResponse({ status: 403, description: 'No autorizado' })
   async update(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateCategoryDto,
@@ -161,6 +186,12 @@ export class CategoriesController {
 
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Eliminar categoría' })
+  @ApiParam({ name: 'id', description: 'UUID de la categoría' })
+  @ApiResponse({ status: 204, description: 'Categoría eliminada' })
+  @ApiResponse({ status: 404, description: 'Categoría no encontrada' })
+  @ApiResponse({ status: 403, description: 'No autorizado' })
+  @ApiResponse({ status: 409, description: 'Categoría en uso por presupuestos o transacciones' })
   async delete(
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() user: AuthenticatedUser,

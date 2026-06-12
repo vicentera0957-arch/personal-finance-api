@@ -14,7 +14,14 @@ import {
   ForbiddenException,
   ParseUUIDPipe,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiBody,
+  ApiOperation,
+  ApiParam,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { CurrentUser } from '../../../../auth/infrastructure/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../../../auth/infrastructure/decorators/current-user.decorator';
 // Use cases
@@ -72,6 +79,11 @@ export class AccountsController {
   }
 
   @Post()
+  @ApiOperation({ summary: 'Crear cuenta financiera' })
+  @ApiBody({ type: CreateAccountDto })
+  @ApiResponse({ status: 201, description: 'Cuenta creada', type: AccountResponseDto })
+  @ApiResponse({ status: 400, description: 'Tipo de cuenta o balance inválido' })
+  @ApiResponse({ status: 403, description: 'No autorizado' })
   async create(
     @Body() dto: CreateAccountDto,
     @CurrentUser() user: AuthenticatedUser,
@@ -100,6 +112,11 @@ export class AccountsController {
   }
 
   @Get(':id')
+  @ApiOperation({ summary: 'Obtener cuenta por ID' })
+  @ApiParam({ name: 'id', description: 'UUID de la cuenta' })
+  @ApiResponse({ status: 200, description: 'Cuenta encontrada', type: AccountResponseDto })
+  @ApiResponse({ status: 404, description: 'Cuenta no encontrada' })
+  @ApiResponse({ status: 403, description: 'No autorizado para ver esta cuenta' })
   async findById(
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() user: AuthenticatedUser,
@@ -122,6 +139,8 @@ export class AccountsController {
   }
 
   @Get()
+  @ApiOperation({ summary: 'Listar cuentas del usuario autenticado' })
+  @ApiResponse({ status: 200, description: 'Lista de cuentas', type: [AccountResponseDto] })
   async findByUserId(
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<AccountResponseDto[]> {
@@ -132,6 +151,13 @@ export class AccountsController {
   }
 
   @Patch(':id/name')
+  @ApiOperation({ summary: 'Renombrar cuenta' })
+  @ApiParam({ name: 'id', description: 'UUID de la cuenta' })
+  @ApiBody({ type: RenameAccountDto })
+  @ApiResponse({ status: 200, description: 'Cuenta renombrada', type: AccountResponseDto })
+  @ApiResponse({ status: 404, description: 'Cuenta no encontrada' })
+  @ApiResponse({ status: 403, description: 'No autorizado' })
+  @ApiResponse({ status: 409, description: 'Cuenta archivada — no se puede renombrar' })
   async rename(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: RenameAccountDto,
@@ -159,6 +185,12 @@ export class AccountsController {
   }
 
   @Patch(':id/archive')
+  @ApiOperation({ summary: 'Archivar cuenta' })
+  @ApiParam({ name: 'id', description: 'UUID de la cuenta' })
+  @ApiResponse({ status: 200, description: 'Cuenta archivada', type: AccountResponseDto })
+  @ApiResponse({ status: 404, description: 'Cuenta no encontrada' })
+  @ApiResponse({ status: 403, description: 'No autorizado' })
+  @ApiResponse({ status: 409, description: 'La cuenta ya está archivada' })
   async archive(
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() user: AuthenticatedUser,
@@ -184,6 +216,12 @@ export class AccountsController {
   }
 
   @Patch(':id/unarchive')
+  @ApiOperation({ summary: 'Desarchivar cuenta' })
+  @ApiParam({ name: 'id', description: 'UUID de la cuenta' })
+  @ApiResponse({ status: 200, description: 'Cuenta desarchivada', type: AccountResponseDto })
+  @ApiResponse({ status: 404, description: 'Cuenta no encontrada' })
+  @ApiResponse({ status: 403, description: 'No autorizado' })
+  @ApiResponse({ status: 409, description: 'La cuenta no está archivada' })
   async unarchive(
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() user: AuthenticatedUser,
@@ -210,6 +248,12 @@ export class AccountsController {
 
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Eliminar cuenta' })
+  @ApiParam({ name: 'id', description: 'UUID de la cuenta' })
+  @ApiResponse({ status: 204, description: 'Cuenta eliminada' })
+  @ApiResponse({ status: 404, description: 'Cuenta no encontrada' })
+  @ApiResponse({ status: 403, description: 'No autorizado' })
+  @ApiResponse({ status: 409, description: 'Cuenta tiene transacciones asociadas' })
   async delete(
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() user: AuthenticatedUser,

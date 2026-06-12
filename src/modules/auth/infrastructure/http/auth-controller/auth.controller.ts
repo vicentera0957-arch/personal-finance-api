@@ -6,7 +6,12 @@ import {
   Post,
   UnauthorizedException,
 } from '@nestjs/common';
-import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBody,
+  ApiOperation,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { LoginUseCase } from '../../../application/use-cases/login.use-case';
 import { RegisterUseCase } from '../../../application/use-cases/register.use-case';
@@ -43,7 +48,9 @@ export class AuthController {
 
   @Public()
   @Post('login')
-  @ApiOperation({ summary: 'Login → devuelve access + refresh token' })
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Iniciar sesión → devuelve access + refresh token' })
+  @ApiBody({ type: LoginDto })
   @ApiResponse({ status: 200, description: 'Tokens emitidos' })
   @ApiResponse({ status: 401, description: 'Credenciales inválidas' })
   async login(@Body() dto: LoginDto) {
@@ -63,6 +70,7 @@ export class AuthController {
   @Public()
   @Post('register')
   @ApiOperation({ summary: 'Registrar un nuevo usuario' })
+  @ApiBody({ type: RegisterDto })
   @ApiResponse({ status: 201, description: 'Usuario creado' })
   @ApiResponse({ status: 409, description: 'Email ya registrado' })
   async register(@Body() dto: RegisterDto) {
@@ -78,10 +86,10 @@ export class AuthController {
 
   @Public()
   @Post('refresh')
-  @ApiOperation({
-    summary: 'Intercambiar refresh token por un nuevo par de tokens',
-  })
-  @ApiResponse({ status: 201, description: 'Nuevo par de tokens' })
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Rotar refresh token → nuevo par de tokens' })
+  @ApiBody({ type: RefreshTokenDto })
+  @ApiResponse({ status: 200, description: 'Nuevo par de tokens' })
   @ApiResponse({
     status: 401,
     description: 'Refresh token inválido, expirado o replay detectado',
@@ -105,6 +113,7 @@ export class AuthController {
   @Post('logout')
   @HttpCode(204)
   @ApiOperation({ summary: 'Revocar refresh token (cierre de sesión)' })
+  @ApiBody({ type: LogoutDto })
   @ApiResponse({ status: 204, description: 'Sesión cerrada' })
   @ApiResponse({ status: 401, description: 'Refresh token inválido' })
   async logout(@Body() dto: LogoutDto) {

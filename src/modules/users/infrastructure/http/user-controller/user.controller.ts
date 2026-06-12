@@ -1,4 +1,3 @@
-// users.controller.ts
 import {
   Controller,
   Get,
@@ -13,7 +12,14 @@ import {
   ForbiddenException,
   ParseUUIDPipe,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiBody,
+  ApiOperation,
+  ApiParam,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { CurrentUser } from '../../../../auth/infrastructure/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../../../auth/infrastructure/decorators/current-user.decorator';
 //use cases
@@ -51,6 +57,11 @@ export class UsersController {
   }
 
   @Get(':id')
+  @ApiOperation({ summary: 'Obtener usuario por ID' })
+  @ApiParam({ name: 'id', description: 'UUID del usuario' })
+  @ApiResponse({ status: 200, description: 'Usuario encontrado', type: UserResponseDto })
+  @ApiResponse({ status: 404, description: 'Usuario no encontrado' })
+  @ApiResponse({ status: 403, description: 'No autorizado para ver este usuario' })
   async findById(
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() user: AuthenticatedUser,
@@ -63,16 +74,23 @@ export class UsersController {
       return this.toResponse(foundUser);
     } catch (e) {
       if (e instanceof UserNotFoundException) {
-        throw new NotFoundException(e.message); // 404
+        throw new NotFoundException(e.message);
       }
       if (e instanceof ResourceOwnershipException) {
-        throw new ForbiddenException(e.message); // 403
+        throw new ForbiddenException(e.message);
       }
       throw e;
     }
   }
 
   @Patch(':id/profile')
+  @ApiOperation({ summary: 'Actualizar perfil del usuario' })
+  @ApiParam({ name: 'id', description: 'UUID del usuario' })
+  @ApiBody({ type: UpdateUserProfileDto })
+  @ApiResponse({ status: 200, description: 'Perfil actualizado', type: UserResponseDto })
+  @ApiResponse({ status: 400, description: 'Nombre inválido' })
+  @ApiResponse({ status: 404, description: 'Usuario no encontrado' })
+  @ApiResponse({ status: 403, description: 'No autorizado para modificar este usuario' })
   async updateProfile(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateUserProfileDto,
@@ -87,20 +105,25 @@ export class UsersController {
       return this.toResponse(updatedUser);
     } catch (e) {
       if (e instanceof UserNotFoundException) {
-        throw new NotFoundException(e.message); // 404
+        throw new NotFoundException(e.message);
       }
       if (e instanceof ResourceOwnershipException) {
-        throw new ForbiddenException(e.message); // 403
+        throw new ForbiddenException(e.message);
       }
       if (e instanceof InvalidNameException) {
-        throw new BadRequestException(e.message); // 400
+        throw new BadRequestException(e.message);
       }
       throw e;
     }
   }
 
   @Delete(':id')
-  @HttpCode(HttpStatus.NO_CONTENT) // 204 — delete exitoso no devuelve body
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Eliminar cuenta de usuario' })
+  @ApiParam({ name: 'id', description: 'UUID del usuario' })
+  @ApiResponse({ status: 204, description: 'Usuario eliminado' })
+  @ApiResponse({ status: 404, description: 'Usuario no encontrado' })
+  @ApiResponse({ status: 403, description: 'No autorizado para eliminar este usuario' })
   async delete(
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() user: AuthenticatedUser,
@@ -112,10 +135,10 @@ export class UsersController {
       });
     } catch (e) {
       if (e instanceof UserNotFoundException) {
-        throw new NotFoundException(e.message); // 404
+        throw new NotFoundException(e.message);
       }
       if (e instanceof ResourceOwnershipException) {
-        throw new ForbiddenException(e.message); // 403
+        throw new ForbiddenException(e.message);
       }
       throw e;
     }

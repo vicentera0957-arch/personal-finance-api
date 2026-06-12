@@ -15,7 +15,15 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiBody,
+  ApiOperation,
+  ApiParam,
+  ApiQuery,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { CurrentUser } from '../../../../auth/infrastructure/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../../../auth/infrastructure/decorators/current-user.decorator';
 import { CreateBudgetUseCase } from '../../../application/use-cases/create-budget.use-case';
@@ -67,6 +75,12 @@ export class BudgetsController {
   }
 
   @Post()
+  @ApiOperation({ summary: 'Crear presupuesto mensual para una categoría de gasto' })
+  @ApiBody({ type: CreateBudgetDto })
+  @ApiResponse({ status: 201, description: 'Presupuesto creado', type: BudgetResponseDto })
+  @ApiResponse({ status: 400, description: 'Datos inválidos (mes, año o límite fuera de rango)' })
+  @ApiResponse({ status: 404, description: 'Categoría no encontrada' })
+  @ApiResponse({ status: 409, description: 'Ya existe un presupuesto para ese período, o la categoría no es de gasto' })
   async create(
     @Body() dto: CreateBudgetDto,
     @CurrentUser() user: AuthenticatedUser,
@@ -105,6 +119,10 @@ export class BudgetsController {
   }
 
   @Get()
+  @ApiOperation({ summary: 'Listar presupuestos del usuario (filtro opcional por mes/año)' })
+  @ApiQuery({ name: 'month', required: false, type: Number, example: 6 })
+  @ApiQuery({ name: 'year', required: false, type: Number, example: 2026 })
+  @ApiResponse({ status: 200, description: 'Lista de presupuestos', type: [BudgetResponseDto] })
   async findByUserId(
     @CurrentUser() user: AuthenticatedUser,
     @Query() query: GetBudgetsQueryDto,
@@ -117,6 +135,11 @@ export class BudgetsController {
   }
 
   @Get(':id')
+  @ApiOperation({ summary: 'Obtener presupuesto por ID' })
+  @ApiParam({ name: 'id', description: 'UUID del presupuesto' })
+  @ApiResponse({ status: 200, description: 'Presupuesto encontrado', type: BudgetResponseDto })
+  @ApiResponse({ status: 404, description: 'Presupuesto no encontrado' })
+  @ApiResponse({ status: 403, description: 'No autorizado para ver este presupuesto' })
   async findById(
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() user: AuthenticatedUser,
@@ -136,6 +159,14 @@ export class BudgetsController {
   }
 
   @Patch(':id/limit')
+  @ApiOperation({ summary: 'Actualizar límite de presupuesto' })
+  @ApiParam({ name: 'id', description: 'UUID del presupuesto' })
+  @ApiBody({ type: UpdateBudgetLimitDto })
+  @ApiResponse({ status: 200, description: 'Límite actualizado', type: BudgetResponseDto })
+  @ApiResponse({ status: 400, description: 'Límite inválido' })
+  @ApiResponse({ status: 404, description: 'Presupuesto no encontrado' })
+  @ApiResponse({ status: 403, description: 'No autorizado' })
+  @ApiResponse({ status: 409, description: 'Nuevo límite menor que el gasto ya registrado en el período' })
   async updateLimit(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateBudgetLimitDto,
@@ -167,6 +198,12 @@ export class BudgetsController {
 
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Eliminar presupuesto' })
+  @ApiParam({ name: 'id', description: 'UUID del presupuesto' })
+  @ApiResponse({ status: 204, description: 'Presupuesto eliminado' })
+  @ApiResponse({ status: 404, description: 'Presupuesto no encontrado' })
+  @ApiResponse({ status: 403, description: 'No autorizado' })
+  @ApiResponse({ status: 409, description: 'El presupuesto tiene gastos registrados en el período' })
   async delete(
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() user: AuthenticatedUser,
