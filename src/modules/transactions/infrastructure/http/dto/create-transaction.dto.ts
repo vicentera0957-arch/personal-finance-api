@@ -9,7 +9,6 @@ import {
   MaxLength,
   Min,
 } from 'class-validator';
-import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CreateTransactionDto {
@@ -40,6 +39,5 @@ export class CreateTransactionDto {
 
   @ApiProperty({ example: '2026-06-12' })
   @IsDateString()
-  @Type(() => Date)
-  transactionDate: Date;
+  transactionDate: string;
 }
