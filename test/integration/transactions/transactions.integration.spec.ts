@@ -3,7 +3,7 @@ import request from 'supertest';
 import { createTestApp } from '../../helpers/app-bootstrap';
 import { cleanDatabase } from '../../helpers/db-cleaner';
 
-describe('Transactions (integration)', () => {
+describe('Transacciones: movimientos y sus invariantes de saldo y presupuesto', () => {
   let app: INestApplication;
   let accessToken: string;
   let accountId: string;
@@ -29,14 +29,14 @@ describe('Transactions (integration)', () => {
     // Usuario base
     const authRes = await request(app.getHttpServer())
       .post('/auth/register')
-      .send({ email: 'user@example.com', password: 'Password1!' });
+      .send({ name: 'Test User', email: 'user@example.com', password: 'Password1!' });
     accessToken = authRes.body.accessToken;
 
     // Cuenta con saldo suficiente
     const accountRes = await request(app.getHttpServer())
       .post('/accounts')
       .set('Authorization', `Bearer ${accessToken}`)
-      .send({ name: 'Cuenta Corriente', type: 'checking', initialBalance: 5000 });
+      .send({ name: 'Cuenta Corriente', type: 'corriente', initialBalance: 5000 });
     accountId = accountRes.body.id;
 
     // Categoría expense + budgetable
@@ -74,101 +74,74 @@ describe('Transactions (integration)', () => {
     transactionId = txRes.body.id;
   });
 
-  // -----------------------------------------------------------------------
+  // =======================================================================
   // POST /transactions
-  // -----------------------------------------------------------------------
+  // =======================================================================
   describe('POST /transactions', () => {
-    it('crea una transacción expense y descuenta el saldo', async () => {
-      const res = await request(app.getHttpServer())
-        .post('/transactions')
-        .set('Authorization', `Bearer ${accessToken}`)
-        .send({
-          accountId,
-          categoryId: expenseCategoryId,
-          amount: 50,
-          nature: 'expense',
-          transactionDate: now.toISOString(),
-          description: 'Café',
-        })
-        .expect(201);
+    describe('cuando el movimiento es válido', () => {
+      it('crea un expense y descuenta el saldo', async () => {
+        const res = await request(app.getHttpServer())
+          .post('/transactions')
+          .set('Authorization', `Bearer ${accessToken}`)
+          .send({
+            accountId,
+            categoryId: expenseCategoryId,
+            amount: 50,
+            nature: 'expense',
+            transactionDate: now.toISOString(),
+            description: 'Café',
+          })
+          .expect(201);
 
-      expect(res.body).toHaveProperty('id');
-      expect(res.body).toHaveProperty('amount', 50);
+        expect(res.body).toHaveProperty('id');
+        expect(res.body).toHaveProperty('amount', 50);
+      });
+
+      it('crea un income y aumenta el saldo', async () => {
+        const res = await request(app.getHttpServer())
+          .post('/transactions')
+          .set('Authorization', `Bearer ${accessToken}`)
+          .send({
+            accountId,
+            categoryId: incomeCategoryId,
+            amount: 2000,
+            nature: 'income',
+            transactionDate: now.toISOString(),
+            description: 'Sueldo',
+          })
+          .expect(201);
+
+        expect(res.body).toHaveProperty('nature', 'income');
+      });
     });
 
-    it('crea una transacción income y suma el saldo', async () => {
-      const res = await request(app.getHttpServer())
-        .post('/transactions')
-        .set('Authorization', `Bearer ${accessToken}`)
-        .send({
-          accountId,
-          categoryId: incomeCategoryId,
-          amount: 2000,
-          nature: 'income',
-          transactionDate: now.toISOString(),
-          description: 'Sueldo',
-        })
-        .expect(201);
-
-      expect(res.body).toHaveProperty('nature', 'income');
+    describe('cuando viola una regla de negocio', () => {
+      it('rechaza nature y categoría incompatibles (400)', async () => {
+        // expense con categoría income
+        await request(app.getHttpServer())
+          .post('/transactions')
+          .set('Authorization', `Bearer ${accessToken}`)
+          .send({
+            accountId,
+            categoryId: incomeCategoryId,
+            amount: 50,
+            nature: 'expense',
+            transactionDate: now.toISOString(),
+          })
+          .expect(400);
+      });
     });
 
-    it('rechaza expense que supera el límite del presupuesto con 422', async () => {
-      await request(app.getHttpServer())
-        .post('/transactions')
-        .set('Authorization', `Bearer ${accessToken}`)
-        .send({
-          accountId,
-          categoryId: expenseCategoryId,
-          amount: 950, // presupuesto 1000, ya hay 100 → total sería 1050
-          nature: 'expense',
-          transactionDate: now.toISOString(),
-          description: 'Compra grande',
-        })
-        .expect(422);
-    });
-
-    it('rechaza missmatch entre nature y categoría con 422', async () => {
-      // expense con categoría income
-      await request(app.getHttpServer())
-        .post('/transactions')
-        .set('Authorization', `Bearer ${accessToken}`)
-        .send({
-          accountId,
-          categoryId: incomeCategoryId,
-          amount: 50,
-          nature: 'expense',
-          transactionDate: now.toISOString(),
-        })
-        .expect(400);
-    });
-
-    it('rechaza cuenta archivada con 422', async () => {
-      await request(app.getHttpServer())
-        .patch(`/accounts/${accountId}/archive`)
-        .set('Authorization', `Bearer ${accessToken}`);
-
-      await request(app.getHttpServer())
-        .post('/transactions')
-        .set('Authorization', `Bearer ${accessToken}`)
-        .send({
-          accountId,
-          categoryId: expenseCategoryId,
-          amount: 10,
-          nature: 'expense',
-          transactionDate: now.toISOString(),
-        })
-        .expect(409);
-    });
-
-    it('devuelve 401 sin token', async () => {
-      await request(app.getHttpServer()).post('/transactions').send({}).expect(401);
+    describe('cuando la petición no está autenticada', () => {
+      it('responde 401 sin token', async () => {
+        await request(app.getHttpServer()).post('/transactions').send({}).expect(401);
+      });
     });
   });
 
-  // -----------------------------------------------------------------------
+  // =======================================================================
   // GET /transactions
-  // -----------------------------------------------------------------------
+  // =======================================================================
   describe('GET /transactions', () => {
     it('devuelve las transacciones del usuario con paginación', async () => {
       const res = await request(app.getHttpServer())
@@ -180,11 +153,11 @@ describe('Transactions (integration)', () => {
     });
   });
 
-  // -----------------------------------------------------------------------
+  // =======================================================================
   // GET /transactions/account/:accountId
-  // -----------------------------------------------------------------------
+  // =======================================================================
   describe('GET /transactions/account/:accountId', () => {
-    it('devuelve transacciones de la cuenta indicada', async () => {
+    it('devuelve las transacciones de la cuenta indicada', async () => {
       const res = await request(app.getHttpServer())
         .get(`/transactions/account/${accountId}`)
         .set('Authorization', `Bearer ${accessToken}`)
@@ -193,10 +166,10 @@ describe('Transactions (integration)', () => {
       expect(Array.isArray(res.body.data ?? res.body)).toBe(true);
     });
 
-    it('devuelve 403 al consultar cuenta ajena', async () => {
+    it('rechaza el acceso a una cuenta ajena (403)', async () => {
       const other = await request(app.getHttpServer())
         .post('/auth/register')
-        .send({ email: 'other@example.com', password: 'Password1!' });
+        .send({ name: 'Other User', email: 'other@example.com', password: 'Password1!' });
 
       await request(app.getHttpServer())
         .get(`/transactions/account/${accountId}`)
@@ -205,11 +178,11 @@ describe('Transactions (integration)', () => {
     });
   });
 
-  // -----------------------------------------------------------------------
+  // =======================================================================
   // GET /transactions/:id
-  // -----------------------------------------------------------------------
+  // =======================================================================
   describe('GET /transactions/:id', () => {
-    it('devuelve la transacción por id', async () => {
+    it('devuelve la transacción solicitada', async () => {
       const res = await request(app.getHttpServer())
         .get(`/transactions/${transactionId}`)
         .set('Authorization', `Bearer ${accessToken}`)
@@ -218,7 +191,7 @@ describe('Transactions (integration)', () => {
       expect(res.body).toHaveProperty('id', transactionId);
     });
 
-    it('devuelve 404 para id inexistente', async () => {
+    it('responde 404 para un id inexistente', async () => {
       await request(app.getHttpServer())
         .get('/transactions/00000000-0000-0000-0000-000000000000')
         .set('Authorization', `Bearer ${accessToken}`)
@@ -226,27 +199,27 @@ describe('Transactions (integration)', () => {
     });
   });
 
-  // -----------------------------------------------------------------------
-  // DELETE /transactions/:id
-  // -----------------------------------------------------------------------
+  // =======================================================================
+  // DELETE /transactions/:id  (contrato HTTP — la reversión de saldo vive en
+  // el bloque de invariante de saldo)
+  // =======================================================================
   describe('DELETE /transactions/:id', () => {
-    it('elimina la transacción y revierte el saldo de la cuenta', async () => {
+    it('elimina la transacción y la deja inaccesible (204 → 404)', async () => {
       await request(app.getHttpServer())
         .delete(`/transactions/${transactionId}`)
         .set('Authorization', `Bearer ${accessToken}`)
         .expect(204);
 
-      // Verificar que ya no existe
       await request(app.getHttpServer())
         .get(`/transactions/${transactionId}`)
         .set('Authorization', `Bearer ${accessToken}`)
         .expect(404);
     });
 
-    it('devuelve 403 al intentar eliminar transacción ajena', async () => {
+    it('rechaza eliminar una transacción ajena (403)', async () => {
       const other = await request(app.getHttpServer())
         .post('/auth/register')
-        .send({ email: 'other@example.com', password: 'Password1!' });
+        .send({ name: 'Other User', email: 'other@example.com', password: 'Password1!' });
 
       await request(app.getHttpServer())
         .delete(`/transactions/${transactionId}`)
@@ -255,11 +228,11 @@ describe('Transactions (integration)', () => {
     });
   });
 
-  // -----------------------------------------------------------------------
-  // Cross-module: verificación de balance tras transacciones
-  // -----------------------------------------------------------------------
-  describe('Cross-module: verificación de balance tras transacciones', () => {
-    it('expense reduce currentBalance de la cuenta', async () => {
+  // =======================================================================
+  // Invariante: el saldo de la cuenta refleja los movimientos
+  // =======================================================================
+  describe('Invariante: el saldo de la cuenta refleja los movimientos', () => {
+    it('un expense reduce el currentBalance', async () => {
       await request(app.getHttpServer())
         .post('/transactions')
         .set('Authorization', `Bearer ${accessToken}`)
@@ -282,7 +255,7 @@ describe('Transactions (integration)', () => {
       expect(accountRes.body.currentBalance).toBe(4700);
     });
 
-    it('income aumenta currentBalance de la cuenta', async () => {
+    it('un income aumenta el currentBalance', async () => {
       await request(app.getHttpServer())
         .post('/transactions')
         .set('Authorization', `Bearer ${accessToken}`)
@@ -305,7 +278,7 @@ describe('Transactions (integration)', () => {
       expect(accountRes.body.currentBalance).toBe(7900);
     });
 
-    it('balance acumulativo es correcto tras múltiples transacciones', async () => {
+    it('el saldo es correcto tras múltiples movimientos', async () => {
       await request(app.getHttpServer())
         .post('/transactions')
         .set('Authorization', `Bearer ${accessToken}`)
@@ -350,13 +323,8 @@ describe('Transactions (integration)', () => {
       // 5000 - 100(base) - 200 - 300 + 1000 = 5400
       expect(accountRes.body.currentBalance).toBe(5400);
     });
-  });
 
-  // -----------------------------------------------------------------------
-  // Cross-module: reversión de balance al eliminar transacción
-  // -----------------------------------------------------------------------
-  describe('Cross-module: reversión de balance al eliminar transacción', () => {
-    it('eliminar expense restaura el balance previo', async () => {
+    it('al eliminar un expense se restaura el saldo previo', async () => {
       // Verificar balance actual (5000 - 100 base = 4900)
       const before = await request(app.getHttpServer())
         .get(`/accounts/${accountId}`)
@@ -374,7 +342,7 @@ describe('Transactions (integration)', () => {
       expect(after.body.currentBalance).toBe(5000);
     });
 
-    it('eliminar income revierte el crédito en la cuenta', async () => {
+    it('al eliminar un income se revierte el crédito', async () => {
       const incomeRes = await request(app.getHttpServer())
         .post('/transactions')
         .set('Authorization', `Bearer ${accessToken}`)
@@ -409,11 +377,90 @@ describe('Transactions (integration)', () => {
     });
   });
 
-  // -----------------------------------------------------------------------
-  // Cross-module: fondos insuficientes
-  // -----------------------------------------------------------------------
-  describe('Cross-module: fondos insuficientes', () => {
-    it('rechaza expense que excede el balance de la cuenta con 422', async () => {
+  // =======================================================================
+  // Invariante: el límite del presupuesto se respeta
+  // beforeEach crea budget limit=1000 y una transacción base de 100 → gastado=100
+  // =======================================================================
+  describe('Invariante: el límite del presupuesto se respeta', () => {
+    it('permite un expense que alcanza exactamente el límite', async () => {
+      // 100 (base) + 900 = 1000 = limit exacto → debe pasar
+      await request(app.getHttpServer())
+        .post('/transactions')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({
+          accountId,
+          categoryId: expenseCategoryId,
+          amount: 900,
+          nature: 'expense',
+          transactionDate: now.toISOString(),
+          description: 'Hasta el límite',
+        })
+        .expect(201);
+    });
+
+    it('rechaza el expense que supera el límite acumulado (422)', async () => {
+      // Primera: 100(base) + 400 = 500 → ok
+      await request(app.getHttpServer())
+        .post('/transactions')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({
+          accountId,
+          categoryId: expenseCategoryId,
+          amount: 400,
+          nature: 'expense',
+          transactionDate: now.toISOString(),
+          description: 'Primera compra',
+        })
+        .expect(201);
+
+      // Segunda: 500 + 600 = 1100 > 1000 → debe fallar
+      await request(app.getHttpServer())
+        .post('/transactions')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({
+          accountId,
+          categoryId: expenseCategoryId,
+          amount: 600,
+          nature: 'expense',
+          transactionDate: now.toISOString(),
+          description: 'Segunda compra que excede',
+        })
+        .expect(422);
+    });
+  });
+
+  // =======================================================================
+  // Regla: las categorías de gasto requieren un budget en el período
+  // =======================================================================
+  describe('Regla: las categorías de gasto requieren un budget en el período', () => {
+    it('rechaza un expense sin budget en el período (409)', async () => {
+      // Nueva categoría expense sin budget creado
+      const catRes = await request(app.getHttpServer())
+        .post('/categories')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ name: 'Transporte', nature: 'expense' })
+        .expect(201);
+
+      // NO crear budget → debe fallar con 409
+      await request(app.getHttpServer())
+        .post('/transactions')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({
+          accountId,
+          categoryId: catRes.body.id,
+          amount: 50,
+          nature: 'expense',
+          transactionDate: now.toISOString(),
+        })
+        .expect(409);
+    });
+  });
+
+  // =======================================================================
+  // Regla: la cuenta debe tener fondos suficientes
+  // =======================================================================
+  describe('Regla: la cuenta debe tener fondos suficientes', () => {
+    it('rechaza un expense que excede el balance (422)', async () => {
       // Crear cuenta propia con balance pequeño
       const smallAccountRes = await request(app.getHttpServer())
         .post('/accounts')
@@ -449,7 +496,7 @@ describe('Transactions (integration)', () => {
         .expect(422);
     });
 
-    it('rechaza expense en cuenta con balance cero con 422', async () => {
+    it('rechaza un expense en una cuenta con balance cero (422)', async () => {
       const zeroAccountRes = await request(app.getHttpServer())
         .post('/accounts')
         .set('Authorization', `Bearer ${accessToken}`)
@@ -484,111 +531,11 @@ describe('Transactions (integration)', () => {
     });
   });
 
-  // -----------------------------------------------------------------------
-  // Cross-module: enforcement acumulativo de budget limit
-  // -----------------------------------------------------------------------
-  describe('Cross-module: enforcement acumulativo de budget limit', () => {
-    // beforeEach crea budget limit=1000 y una transacción base de 100 → gastado=100
-
-    it('permite expense que alcanza exactamente el límite del budget', async () => {
-      // 100 (base) + 900 = 1000 = limit exacto → debe pasar
-      await request(app.getHttpServer())
-        .post('/transactions')
-        .set('Authorization', `Bearer ${accessToken}`)
-        .send({
-          accountId,
-          categoryId: expenseCategoryId,
-          amount: 900,
-          nature: 'expense',
-          transactionDate: now.toISOString(),
-          description: 'Hasta el límite',
-        })
-        .expect(201);
-    });
-
-    it('rechaza segunda expense que supera el límite acumulado con 422', async () => {
-      // Primera: 100(base) + 400 = 500 → ok
-      await request(app.getHttpServer())
-        .post('/transactions')
-        .set('Authorization', `Bearer ${accessToken}`)
-        .send({
-          accountId,
-          categoryId: expenseCategoryId,
-          amount: 400,
-          nature: 'expense',
-          transactionDate: now.toISOString(),
-          description: 'Primera compra',
-        })
-        .expect(201);
-
-      // Segunda: 500 + 600 = 1100 > 1000 → debe fallar
-      await request(app.getHttpServer())
-        .post('/transactions')
-        .set('Authorization', `Bearer ${accessToken}`)
-        .send({
-          accountId,
-          categoryId: expenseCategoryId,
-          amount: 600,
-          nature: 'expense',
-          transactionDate: now.toISOString(),
-          description: 'Segunda compra que excede',
-        })
-        .expect(422);
-    });
-  });
-
-  // -----------------------------------------------------------------------
-  // Cross-module: budget requerido y categoría budgetable
-  // -----------------------------------------------------------------------
-  describe('Cross-module: budget requerido y categoría budgetable', () => {
-    it('rechaza expense en categoría budgetable sin budget en el período con 409', async () => {
-      // Nueva categoría expense+budgetable sin budget creado
-      const catRes = await request(app.getHttpServer())
-        .post('/categories')
-        .set('Authorization', `Bearer ${accessToken}`)
-        .send({ name: 'Transporte', nature: 'expense' })
-        .expect(201);
-
-      // NO crear budget → debe fallar con 409
-      await request(app.getHttpServer())
-        .post('/transactions')
-        .set('Authorization', `Bearer ${accessToken}`)
-        .send({
-          accountId,
-          categoryId: catRes.body.id,
-          amount: 50,
-          nature: 'expense',
-          transactionDate: now.toISOString(),
-        })
-        .expect(409);
-    });
-
-    it('rechaza expense en categoría expense no-budgetable con 409', async () => {
-      const catRes = await request(app.getHttpServer())
-        .post('/categories')
-        .set('Authorization', `Bearer ${accessToken}`)
-        .send({ name: 'Misceláneos', nature: 'expense' })
-        .expect(201);
-
-      await request(app.getHttpServer())
-        .post('/transactions')
-        .set('Authorization', `Bearer ${accessToken}`)
-        .send({
-          accountId,
-          categoryId: catRes.body.id,
-          amount: 50,
-          nature: 'expense',
-          transactionDate: now.toISOString(),
-        })
-        .expect(409);
-    });
-  });
-
-  // -----------------------------------------------------------------------
-  // Cross-module: cuenta archivada bloquea transacciones
-  // -----------------------------------------------------------------------
-  describe('Cross-module: cuenta archivada bloquea transacciones', () => {
-    it('rechaza transacción en cuenta archivada con 409', async () => {
+  // =======================================================================
+  // Regla: las cuentas archivadas no aceptan movimientos
+  // =======================================================================
+  describe('Regla: las cuentas archivadas no aceptan movimientos', () => {
+    it('rechaza una transacción en una cuenta archivada (409)', async () => {
       await request(app.getHttpServer())
         .patch(`/accounts/${accountId}/archive`)
         .set('Authorization', `Bearer ${accessToken}`)
@@ -607,7 +554,7 @@ describe('Transactions (integration)', () => {
         .expect(409);
     });
 
-    it('permite transacción en cuenta después de desarchivarla', async () => {
+    it('permite la transacción tras desarchivar la cuenta', async () => {
       await request(app.getHttpServer())
         .patch(`/accounts/${accountId}/archive`)
         .set('Authorization', `Bearer ${accessToken}`)
