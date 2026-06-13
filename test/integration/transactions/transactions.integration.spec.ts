@@ -176,6 +176,13 @@ describe('Transacciones: movimientos y sus invariantes de saldo y presupuesto', 
         .set('Authorization', `Bearer ${other.body.accessToken}`)
         .expect(403);
     });
+
+    it('responde 404 para una cuenta inexistente', async () => {
+      await request(app.getHttpServer())
+        .get('/transactions/account/00000000-0000-0000-0000-000000000000')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(404);
+    });
   });
 
   // =======================================================================

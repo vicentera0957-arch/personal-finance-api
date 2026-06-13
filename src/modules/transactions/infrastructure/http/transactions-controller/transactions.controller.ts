@@ -58,6 +58,9 @@ import {
 import { CategoryNotFoundException } from '../../../../categories/domain/exceptions/category.exceptions';
 import { ResourceOwnershipException } from '../../../../../shared/domain/exceptions/resource-ownership.exception';
 
+// TODO(tech-debt): reemplazar los try/catch por un filtro global @Catch() que centralice
+// el mapping domain-exception → HTTP. Todos los controllers siguen el mismo patrón hoy.
+
 @ApiTags('transactions')
 @ApiBearerAuth('access-token')
 @Controller('transactions')
@@ -175,6 +178,8 @@ export class TransactionsController {
   @ApiQuery({ name: 'from', required: false, type: String, example: '2026-01-01' })
   @ApiQuery({ name: 'to', required: false, type: String, example: '2026-12-31' })
   @ApiResponse({ status: 200, description: 'Lista de transacciones de la cuenta', type: [TransactionResponseDto] })
+  @ApiResponse({ status: 404, description: 'Cuenta no encontrada' })
+  @ApiResponse({ status: 403, description: 'No autorizado para ver esta cuenta' })
   async findByAccountId(
     @Param('accountId', ParseUUIDPipe) accountId: string,
     @CurrentUser() user: AuthenticatedUser,
@@ -182,17 +187,27 @@ export class TransactionsController {
   ): Promise<TransactionResponseDto[]> {
     const offset =
       query.page && query.limit ? (query.page - 1) * query.limit : undefined;
-    const transactions = await this.getTransactionsByAccountIdUseCase.execute(
-      accountId,
-      user.userId,
-      {
-        limit: query.limit,
-        offset,
-        from: query.from ? new Date(query.from) : undefined,
-        to: query.to ? new Date(query.to) : undefined,
-      },
-    );
-    return transactions.map((t) => this.toResponse(t));
+    try {
+      const transactions = await this.getTransactionsByAccountIdUseCase.execute(
+        accountId,
+        user.userId,
+        {
+          limit: query.limit,
+          offset,
+          from: query.from ? new Date(query.from) : undefined,
+          to: query.to ? new Date(query.to) : undefined,
+        },
+      );
+      return transactions.map((t) => this.toResponse(t));
+    } catch (e) {
+      if (e instanceof AccountNotFoundException) {
+        throw new NotFoundException(e.message);
+      }
+      if (e instanceof ResourceOwnershipException) {
+        throw new ForbiddenException(e.message);
+      }
+      throw e;
+    }
   }
 
   @Get(':id')
