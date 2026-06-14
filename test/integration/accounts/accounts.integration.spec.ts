@@ -3,12 +3,14 @@ import request from 'supertest';
 import { createTestApp } from '../../helpers/app-bootstrap';
 import { cleanDatabase } from '../../helpers/db-cleaner';
 
-describe('Accounts (integration)', () => {
+describe('Cuentas: persistencia del ciclo de vida y bloqueo por referencias reales', () => {
   let app: INestApplication;
   let accessToken: string;
   let accountId: string;
 
-  const accountPayload = { name: 'Cuenta Corriente', type: 'checking', initialBalance: 1000 };
+  const now = new Date();
+  const month = now.getMonth() + 1;
+  const year = now.getFullYear();
 
   beforeAll(async () => {
     app = await createTestApp();
@@ -21,229 +23,115 @@ describe('Accounts (integration)', () => {
   beforeEach(async () => {
     await cleanDatabase(app);
 
-    const res = await request(app.getHttpServer())
+    const auth = await request(app.getHttpServer())
       .post('/auth/register')
-      .send({ email: 'user@example.com', password: 'Password1!' });
-
-    accessToken = res.body.accessToken;
+      .send({ name: 'Test User', email: 'user@example.com', password: 'Password1!' });
+    accessToken = auth.body.accessToken;
 
     const account = await request(app.getHttpServer())
       .post('/accounts')
       .set('Authorization', `Bearer ${accessToken}`)
-      .send(accountPayload);
-
+      .send({ name: 'Cuenta Corriente', type: 'corriente', initialBalance: 5000 });
     accountId = account.body.id;
   });
 
-  // -----------------------------------------------------------------------
-  // POST /accounts
-  // -----------------------------------------------------------------------
-  describe('POST /accounts', () => {
-    it('crea una cuenta y devuelve 201', async () => {
-      const res = await request(app.getHttpServer())
-        .post('/accounts')
-        .set('Authorization', `Bearer ${accessToken}`)
-        .send({ name: 'Ahorro', type: 'savings', initialBalance: 500 })
-        .expect(201);
+  // Crea una transacción expense en la cuenta (requiere categoría expense + budget).
+  const createExpenseTransaction = async (): Promise<string> => {
+    const cat = await request(app.getHttpServer())
+      .post('/categories')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .send({ name: 'Alimentación', nature: 'expense' });
 
-      expect(res.body).toHaveProperty('id');
-      expect(res.body).toHaveProperty('name', 'Ahorro');
-    });
+    await request(app.getHttpServer())
+      .post('/budgets')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .send({ categoryId: cat.body.id, limit: 1000, month, year });
 
-    it('devuelve 401 sin token', async () => {
-      await request(app.getHttpServer())
-        .post('/accounts')
-        .send(accountPayload)
-        .expect(401);
-    });
-  });
+    const tx = await request(app.getHttpServer())
+      .post('/transactions')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .send({
+        accountId,
+        categoryId: cat.body.id,
+        amount: 100,
+        nature: 'expense',
+        transactionDate: now.toISOString(),
+        description: 'Compra',
+      });
+    return tx.body.id;
+  };
 
-  // -----------------------------------------------------------------------
-  // GET /accounts
-  // -----------------------------------------------------------------------
-  describe('GET /accounts', () => {
-    it('devuelve las cuentas del usuario autenticado', async () => {
-      const res = await request(app.getHttpServer())
-        .get('/accounts')
-        .set('Authorization', `Bearer ${accessToken}`)
-        .expect(200);
-
-      expect(Array.isArray(res.body)).toBe(true);
-      expect(res.body.length).toBeGreaterThanOrEqual(1);
-    });
-  });
-
-  // -----------------------------------------------------------------------
-  // GET /accounts/:id
-  // -----------------------------------------------------------------------
-  describe('GET /accounts/:id', () => {
-    it('devuelve la cuenta por id', async () => {
+  // =======================================================================
+  // Round-trip de creación: el POST persiste y el GET lo devuelve con el saldo
+  // inicial sembrado. Prueba que mapper + esquema migrado + ORM concuerdan.
+  // =======================================================================
+  describe('POST /accounts → GET /accounts/:id', () => {
+    it('crea y recupera la cuenta con el saldo inicial sembrado', async () => {
       const res = await request(app.getHttpServer())
         .get(`/accounts/${accountId}`)
         .set('Authorization', `Bearer ${accessToken}`)
         .expect(200);
 
       expect(res.body).toHaveProperty('id', accountId);
+      expect(res.body).toHaveProperty('name', 'Cuenta Corriente');
+      expect(res.body).toHaveProperty('currentBalance', 5000);
+      expect(res.body).toHaveProperty('isArchived', false);
     });
+  });
 
-    it('devuelve 404 para id inexistente', async () => {
+  // =======================================================================
+  // El ciclo de vida PERSISTE: la regla (no archivar dos veces, etc.) ya está
+  // en el dominio/use case; aquí probamos que el UoW real commitea el flag a Postgres.
+  // =======================================================================
+  describe('PATCH /accounts/:id/archive · /unarchive', () => {
+    it('archiva y el GET posterior muestra isArchived=true; desarchiva y vuelve a false', async () => {
       await request(app.getHttpServer())
-        .get('/accounts/00000000-0000-0000-0000-000000000000')
+        .patch(`/accounts/${accountId}/archive`)
         .set('Authorization', `Bearer ${accessToken}`)
-        .expect(404);
-    });
+        .expect(200);
 
-    it('devuelve 403 al acceder a cuenta de otro usuario', async () => {
-      const other = await request(app.getHttpServer())
-        .post('/auth/register')
-        .send({ email: 'other@example.com', password: 'Password1!' });
-
-      await request(app.getHttpServer())
+      const archived = await request(app.getHttpServer())
         .get(`/accounts/${accountId}`)
-        .set('Authorization', `Bearer ${other.body.accessToken}`)
-        .expect(403);
-    });
-  });
-
-  // -----------------------------------------------------------------------
-  // PATCH /accounts/:id/name
-  // -----------------------------------------------------------------------
-  describe('PATCH /accounts/:id/name', () => {
-    it('renombra la cuenta', async () => {
-      const res = await request(app.getHttpServer())
-        .patch(`/accounts/${accountId}/name`)
-        .set('Authorization', `Bearer ${accessToken}`)
-        .send({ name: 'Nuevo nombre' })
-        .expect(200);
-
-      expect(res.body).toHaveProperty('name', 'Nuevo nombre');
-    });
-  });
-
-  // -----------------------------------------------------------------------
-  // PATCH /accounts/:id/archive  &  /unarchive
-  // -----------------------------------------------------------------------
-  describe('PATCH /accounts/:id/archive', () => {
-    it('archiva la cuenta', async () => {
-      await request(app.getHttpServer())
-        .patch(`/accounts/${accountId}/archive`)
         .set('Authorization', `Bearer ${accessToken}`)
         .expect(200);
-    });
-
-    it('desarchiva la cuenta previamente archivada', async () => {
-      await request(app.getHttpServer())
-        .patch(`/accounts/${accountId}/archive`)
-        .set('Authorization', `Bearer ${accessToken}`);
+      expect(archived.body.isArchived).toBe(true);
 
       await request(app.getHttpServer())
         .patch(`/accounts/${accountId}/unarchive`)
         .set('Authorization', `Bearer ${accessToken}`)
         .expect(200);
+
+      const restored = await request(app.getHttpServer())
+        .get(`/accounts/${accountId}`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(200);
+      expect(restored.body.isArchived).toBe(false);
     });
   });
 
-  // -----------------------------------------------------------------------
-  // DELETE /accounts/:id
-  // -----------------------------------------------------------------------
-  describe('DELETE /accounts/:id', () => {
-    it('elimina la cuenta', async () => {
-      await request(app.getHttpServer())
-        .delete(`/accounts/${accountId}`)
-        .set('Authorization', `Bearer ${accessToken}`)
-        .expect(204);
-    });
+  // =======================================================================
+  // Cross-module: el FK real (transactions → accounts) bloquea el borrado.
+  // El unit del controller mockea AccountInUseException; sólo la DB real prueba
+  // que el FK existe y dispara (catch 23503).
+  // =======================================================================
+  describe('Cross-module: DELETE /accounts/:id con movimientos', () => {
+    it('rechaza eliminar una cuenta con una transacción asociada (409)', async () => {
+      await createExpenseTransaction();
 
-    it('devuelve 403 al intentar eliminar cuenta ajena', async () => {
-      const other = await request(app.getHttpServer())
-        .post('/auth/register')
-        .send({ email: 'other@example.com', password: 'Password1!' });
-
-      await request(app.getHttpServer())
-        .delete(`/accounts/${accountId}`)
-        .set('Authorization', `Bearer ${other.body.accessToken}`)
-        .expect(403);
-    });
-  });
-
-  // -----------------------------------------------------------------------
-  // Cross-module: account deletion bloqueada por transacciones
-  // -----------------------------------------------------------------------
-  describe('Cross-module: account deletion bloqueada por transacciones', () => {
-    const now = new Date();
-    const month = now.getMonth() + 1;
-    const year = now.getFullYear();
-
-    it('rechaza eliminar cuenta con transacciones asociadas con 409', async () => {
-      // Crear categoría expense budgetable y budget
-      const catRes = await request(app.getHttpServer())
-        .post('/categories')
-        .set('Authorization', `Bearer ${accessToken}`)
-        .send({ name: 'Alimentación', nature: 'expense' })
-        .expect(201);
-      const categoryId = catRes.body.id;
-
-      await request(app.getHttpServer())
-        .post('/budgets')
-        .set('Authorization', `Bearer ${accessToken}`)
-        .send({ categoryId, limit: 1000, month, year })
-        .expect(201);
-
-      // Crear transacción en la cuenta
-      await request(app.getHttpServer())
-        .post('/transactions')
-        .set('Authorization', `Bearer ${accessToken}`)
-        .send({
-          accountId,
-          categoryId,
-          amount: 100,
-          nature: 'expense',
-          transactionDate: now.toISOString(),
-          description: 'Compra test',
-        })
-        .expect(201);
-
-      // Intentar eliminar la cuenta → falla por FK con transacciones
       await request(app.getHttpServer())
         .delete(`/accounts/${accountId}`)
         .set('Authorization', `Bearer ${accessToken}`)
         .expect(409);
     });
 
-    it('permite eliminar cuenta después de remover todas las transacciones', async () => {
-      const catRes = await request(app.getHttpServer())
-        .post('/categories')
-        .set('Authorization', `Bearer ${accessToken}`)
-        .send({ name: 'Transporte', nature: 'expense' })
-        .expect(201);
-      const categoryId = catRes.body.id;
+    it('permite eliminar la cuenta tras borrar la transacción (204)', async () => {
+      const transactionId = await createExpenseTransaction();
 
-      await request(app.getHttpServer())
-        .post('/budgets')
-        .set('Authorization', `Bearer ${accessToken}`)
-        .send({ categoryId, limit: 1000, month, year })
-        .expect(201);
-
-      const txRes = await request(app.getHttpServer())
-        .post('/transactions')
-        .set('Authorization', `Bearer ${accessToken}`)
-        .send({
-          accountId,
-          categoryId,
-          amount: 100,
-          nature: 'expense',
-          transactionDate: now.toISOString(),
-        })
-        .expect(201);
-      const transactionId = txRes.body.id;
-
-      // Eliminar transacción primero
       await request(app.getHttpServer())
         .delete(`/transactions/${transactionId}`)
         .set('Authorization', `Bearer ${accessToken}`)
         .expect(204);
 
-      // Ahora se puede eliminar la cuenta
       await request(app.getHttpServer())
         .delete(`/accounts/${accountId}`)
         .set('Authorization', `Bearer ${accessToken}`)
@@ -251,41 +139,19 @@ describe('Accounts (integration)', () => {
     });
   });
 
-  // -----------------------------------------------------------------------
-  // Cross-module: operaciones bloqueadas en cuenta archivada
-  // -----------------------------------------------------------------------
-  describe('Cross-module: operaciones bloqueadas en cuenta archivada', () => {
-    it('rechaza rename en cuenta archivada con 409', async () => {
-      await request(app.getHttpServer())
-        .patch(`/accounts/${accountId}/archive`)
-        .set('Authorization', `Bearer ${accessToken}`)
-        .expect(200);
+  // =======================================================================
+  // Barrera de propiedad (1 smoke de la cadena real; no se repite por verbo).
+  // =======================================================================
+  describe('barrera de propiedad', () => {
+    it('GET /accounts/:id de otro usuario responde 403 (cadena real)', async () => {
+      const other = await request(app.getHttpServer())
+        .post('/auth/register')
+        .send({ name: 'Other User', email: 'other@example.com', password: 'Password1!' });
 
       await request(app.getHttpServer())
-        .patch(`/accounts/${accountId}/name`)
-        .set('Authorization', `Bearer ${accessToken}`)
-        .send({ name: 'Nuevo nombre' })
-        .expect(409);
-    });
-
-    it('rechaza archivar cuenta ya archivada con 409', async () => {
-      await request(app.getHttpServer())
-        .patch(`/accounts/${accountId}/archive`)
-        .set('Authorization', `Bearer ${accessToken}`)
-        .expect(200);
-
-      await request(app.getHttpServer())
-        .patch(`/accounts/${accountId}/archive`)
-        .set('Authorization', `Bearer ${accessToken}`)
-        .expect(409);
-    });
-
-    it('rechaza desarchivar cuenta que no está archivada con 409', async () => {
-      // La cuenta en beforeEach no está archivada
-      await request(app.getHttpServer())
-        .patch(`/accounts/${accountId}/unarchive`)
-        .set('Authorization', `Bearer ${accessToken}`)
-        .expect(409);
+        .get(`/accounts/${accountId}`)
+        .set('Authorization', `Bearer ${other.body.accessToken}`)
+        .expect(403);
     });
   });
 });

@@ -3,12 +3,14 @@ import request from 'supertest';
 import { createTestApp } from '../../helpers/app-bootstrap';
 import { cleanDatabase } from '../../helpers/db-cleaner';
 
-describe('Categories (integration)', () => {
+describe('Categorías: unicidad y bloqueo por uso, contra la DB real', () => {
   let app: INestApplication;
   let accessToken: string;
   let categoryId: string;
 
-  const expenseCategoryPayload = { name: 'Alimentación', nature: 'expense' };
+  const now = new Date();
+  const month = now.getMonth() + 1;
+  const year = now.getFullYear();
 
   beforeAll(async () => {
     app = await createTestApp();
@@ -21,153 +23,78 @@ describe('Categories (integration)', () => {
   beforeEach(async () => {
     await cleanDatabase(app);
 
-    const res = await request(app.getHttpServer())
+    const auth = await request(app.getHttpServer())
       .post('/auth/register')
-      .send({ email: 'user@example.com', password: 'Password1!' });
+      .send({ name: 'Test User', email: 'user@example.com', password: 'Password1!' });
+    accessToken = auth.body.accessToken;
 
-    accessToken = res.body.accessToken;
-
-    const category = await request(app.getHttpServer())
+    // Categoría base: expense 'Alimentación'.
+    const cat = await request(app.getHttpServer())
       .post('/categories')
       .set('Authorization', `Bearer ${accessToken}`)
-      .send(expenseCategoryPayload);
-
-    categoryId = category.body.id;
+      .send({ name: 'Alimentación', nature: 'expense' });
+    categoryId = cat.body.id;
   });
 
-  // -----------------------------------------------------------------------
-  // POST /categories
-  // -----------------------------------------------------------------------
+  // =======================================================================
+  // Unicidad real (userId, name, nature): la constraint existe en el esquema
+  // migrado y dispara 409 (catch 23505). No hay pre-check en categorías.
+  // =======================================================================
   describe('POST /categories', () => {
-    it('crea una categoría y devuelve 201', async () => {
-      const res = await request(app.getHttpServer())
-        .post('/categories')
-        .set('Authorization', `Bearer ${accessToken}`)
-        .send({ name: 'Salario', nature: 'income' })
-        .expect(201);
-
-      expect(res.body).toHaveProperty('id');
-      expect(res.body).toHaveProperty('nature', 'income');
-    });
-
-    it('devuelve 401 sin token', async () => {
-      await request(app.getHttpServer())
-        .post('/categories')
-        .send(expenseCategoryPayload)
-        .expect(401);
-    });
-  });
-
-  // -----------------------------------------------------------------------
-  // GET /categories
-  // -----------------------------------------------------------------------
-  describe('GET /categories', () => {
-    it('devuelve las categorías del usuario autenticado', async () => {
-      const res = await request(app.getHttpServer())
-        .get('/categories')
-        .set('Authorization', `Bearer ${accessToken}`)
-        .expect(200);
-
-      expect(Array.isArray(res.body)).toBe(true);
-      expect(res.body.length).toBeGreaterThanOrEqual(1);
-    });
-  });
-
-  // -----------------------------------------------------------------------
-  // GET /categories/:id
-  // -----------------------------------------------------------------------
-  describe('GET /categories/:id', () => {
-    it('devuelve la categoría por id', async () => {
+    it('crea una categoría y el GET la devuelve (round-trip)', async () => {
       const res = await request(app.getHttpServer())
         .get(`/categories/${categoryId}`)
         .set('Authorization', `Bearer ${accessToken}`)
         .expect(200);
 
       expect(res.body).toHaveProperty('id', categoryId);
+      expect(res.body).toHaveProperty('name', 'Alimentación');
+      expect(res.body).toHaveProperty('nature', 'expense');
     });
 
-    it('devuelve 404 para id inexistente', async () => {
+    it('rechaza un duplicado (mismo name+nature) con 409 — constraint real', async () => {
       await request(app.getHttpServer())
-        .get('/categories/00000000-0000-0000-0000-000000000000')
+        .post('/categories')
         .set('Authorization', `Bearer ${accessToken}`)
-        .expect(404);
-    });
-
-    it('devuelve 403 al acceder a categoría ajena', async () => {
-      const other = await request(app.getHttpServer())
-        .post('/auth/register')
-        .send({ email: 'other@example.com', password: 'Password1!' });
-
-      await request(app.getHttpServer())
-        .get(`/categories/${categoryId}`)
-        .set('Authorization', `Bearer ${other.body.accessToken}`)
-        .expect(403);
+        .send({ name: 'Alimentación', nature: 'expense' })
+        .expect(409);
     });
   });
 
-  // -----------------------------------------------------------------------
-  // PATCH /categories/:id
-  // -----------------------------------------------------------------------
-  describe('PATCH /categories/:id', () => {
-    it('actualiza el nombre de la categoría', async () => {
-      const res = await request(app.getHttpServer())
-        .patch(`/categories/${categoryId}`)
-        .set('Authorization', `Bearer ${accessToken}`)
-        .send({ name: 'Comida' })
-        .expect(200);
-
-      expect(res.body).toHaveProperty('name', 'Comida');
-    });
-
-    it('no permite cambiar isBudgetable después de la creación', async () => {
+  // =======================================================================
+  // Cross-module: el FK real bloquea el borrado desde DOS agregados
+  // referenciantes (budgets y transactions). catch 23503 → CategoryInUseException.
+  // =======================================================================
+  describe('Cross-module: DELETE /categories/:id en uso', () => {
+    it('rechaza eliminar una categoría con un budget asociado (409)', async () => {
       await request(app.getHttpServer())
-        .patch(`/categories/${categoryId}`)
+        .post('/budgets')
         .set('Authorization', `Bearer ${accessToken}`)
-        .send({ isBudgetable: false })
-        .expect(409); // CategoryBudgetableImmutableException → ConflictException (409)
-    });
-  });
+        .send({ categoryId, limit: 500, month, year })
+        .expect(201);
 
-  // -----------------------------------------------------------------------
-  // DELETE /categories/:id
-  // -----------------------------------------------------------------------
-  describe('DELETE /categories/:id', () => {
-    it('elimina la categoría cuando no está en uso', async () => {
       await request(app.getHttpServer())
         .delete(`/categories/${categoryId}`)
         .set('Authorization', `Bearer ${accessToken}`)
-        .expect(204);
+        .expect(409);
     });
-  });
 
-  // -----------------------------------------------------------------------
-  // Cross-module: category deletion bloqueada por uso
-  // -----------------------------------------------------------------------
-  describe('Cross-module: category deletion bloqueada por uso', () => {
-    const now = new Date();
-    const month = now.getMonth() + 1;
-    const year = now.getFullYear();
-
-    it('rechaza eliminar categoría con transacciones asociadas con 409', async () => {
-      // Crear cuenta y budget necesarios para la transacción
-      const accountRes = await request(app.getHttpServer())
+    it('rechaza eliminar una categoría con una transacción asociada (409)', async () => {
+      const account = await request(app.getHttpServer())
         .post('/accounts')
         .set('Authorization', `Bearer ${accessToken}`)
-        .send({ name: 'Cuenta test', type: 'corriente', initialBalance: 5000 })
-        .expect(201);
-      const accountId = accountRes.body.id;
+        .send({ name: 'Cuenta', type: 'corriente', initialBalance: 5000 });
 
       await request(app.getHttpServer())
         .post('/budgets')
         .set('Authorization', `Bearer ${accessToken}`)
-        .send({ categoryId, limit: 1000, month, year })
-        .expect(201);
+        .send({ categoryId, limit: 1000, month, year });
 
       await request(app.getHttpServer())
         .post('/transactions')
         .set('Authorization', `Bearer ${accessToken}`)
         .send({
-          accountId,
+          accountId: account.body.id,
           categoryId,
           amount: 100,
           nature: 'expense',
@@ -176,64 +103,43 @@ describe('Categories (integration)', () => {
         })
         .expect(201);
 
-      // Intentar eliminar la categoría → falla por FK con transacciones
       await request(app.getHttpServer())
         .delete(`/categories/${categoryId}`)
         .set('Authorization', `Bearer ${accessToken}`)
         .expect(409);
     });
 
-    it('rechaza eliminar categoría con budget asociado con 409', async () => {
-      // Solo crear budget (sin transacción)
-      await request(app.getHttpServer())
-        .post('/budgets')
-        .set('Authorization', `Bearer ${accessToken}`)
-        .send({ categoryId, limit: 500, month, year })
-        .expect(201);
-
-      // Intentar eliminar la categoría → falla por FK con budget
-      await request(app.getHttpServer())
-        .delete(`/categories/${categoryId}`)
-        .set('Authorization', `Bearer ${accessToken}`)
-        .expect(409);
-    });
-
-    it('permite eliminar categoría después de remover transacciones y budget', async () => {
-      const accountRes = await request(app.getHttpServer())
+    it('permite eliminarla tras remover budget y transacción (204)', async () => {
+      const account = await request(app.getHttpServer())
         .post('/accounts')
         .set('Authorization', `Bearer ${accessToken}`)
-        .send({ name: 'Cuenta limpieza', type: 'corriente', initialBalance: 5000 })
-        .expect(201);
-      const accountId = accountRes.body.id;
+        .send({ name: 'Cuenta', type: 'corriente', initialBalance: 5000 });
 
-      const budgetRes = await request(app.getHttpServer())
+      const budget = await request(app.getHttpServer())
         .post('/budgets')
         .set('Authorization', `Bearer ${accessToken}`)
-        .send({ categoryId, limit: 1000, month, year })
-        .expect(201);
-      const budgetId = budgetRes.body.id;
+        .send({ categoryId, limit: 1000, month, year });
 
-      const txRes = await request(app.getHttpServer())
+      const tx = await request(app.getHttpServer())
         .post('/transactions')
         .set('Authorization', `Bearer ${accessToken}`)
         .send({
-          accountId,
+          accountId: account.body.id,
           categoryId,
           amount: 100,
           nature: 'expense',
           transactionDate: now.toISOString(),
-        })
-        .expect(201);
-      const transactionId = txRes.body.id;
+          description: 'Compra',
+        });
 
-      // Eliminar en orden: transacción → budget → categoría
+      // Remover en orden inverso a las dependencias: transacción → budget → categoría.
       await request(app.getHttpServer())
-        .delete(`/transactions/${transactionId}`)
+        .delete(`/transactions/${tx.body.id}`)
         .set('Authorization', `Bearer ${accessToken}`)
         .expect(204);
 
       await request(app.getHttpServer())
-        .delete(`/budgets/${budgetId}`)
+        .delete(`/budgets/${budget.body.id}`)
         .set('Authorization', `Bearer ${accessToken}`)
         .expect(204);
 

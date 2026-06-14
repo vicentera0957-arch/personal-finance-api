@@ -3,14 +3,15 @@ import request from 'supertest';
 import { createTestApp } from '../../helpers/app-bootstrap';
 import { cleanDatabase } from '../../helpers/db-cleaner';
 
-describe('Budgets (integration)', () => {
+describe('Presupuestos: invariante límite ≥ gastado y bloqueo por gastos, contra datos reales', () => {
   let app: INestApplication;
   let accessToken: string;
+  let accountId: string;
   let categoryId: string;
   let budgetId: string;
 
   const now = new Date();
-  const month = now.getMonth() + 1; // 1-indexed
+  const month = now.getMonth() + 1;
   const year = now.getFullYear();
 
   beforeAll(async () => {
@@ -24,138 +25,80 @@ describe('Budgets (integration)', () => {
   beforeEach(async () => {
     await cleanDatabase(app);
 
-    // Usuario base
-    const authRes = await request(app.getHttpServer())
+    const auth = await request(app.getHttpServer())
       .post('/auth/register')
-      .send({ email: 'user@example.com', password: 'Password1!' });
-    accessToken = authRes.body.accessToken;
+      .send({ name: 'Test User', email: 'user@example.com', password: 'Password1!' });
+    accessToken = auth.body.accessToken;
 
-    // Categoría budgetable de tipo expense (requisito de negocio)
-    const catRes = await request(app.getHttpServer())
+    const account = await request(app.getHttpServer())
+      .post('/accounts')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .send({ name: 'Cuenta', type: 'corriente', initialBalance: 5000 });
+    accountId = account.body.id;
+
+    const cat = await request(app.getHttpServer())
       .post('/categories')
       .set('Authorization', `Bearer ${accessToken}`)
       .send({ name: 'Alimentación', nature: 'expense' });
-    categoryId = catRes.body.id;
+    categoryId = cat.body.id;
 
-    // Budget base
-    const budgetRes = await request(app.getHttpServer())
+    const budget = await request(app.getHttpServer())
       .post('/budgets')
       .set('Authorization', `Bearer ${accessToken}`)
       .send({ categoryId, limit: 500, month, year });
-    budgetId = budgetRes.body.id;
+    budgetId = budget.body.id;
   });
 
-  // -----------------------------------------------------------------------
-  // POST /budgets
-  // -----------------------------------------------------------------------
+  // Registra un gasto real en la categoría/período del budget base.
+  const spend = async (amount: number): Promise<string> => {
+    const tx = await request(app.getHttpServer())
+      .post('/transactions')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .send({
+        accountId,
+        categoryId,
+        amount,
+        nature: 'expense',
+        transactionDate: now.toISOString(),
+        description: 'Gasto',
+      })
+      .expect(201);
+    return tx.body.id;
+  };
+
+  // =======================================================================
+  // Unicidad real de período (userId, categoryId, month, year): la constraint
+  // existe en el esquema migrado y dispara 409 (catch 23505).
+  // =======================================================================
   describe('POST /budgets', () => {
-    it('crea un budget y devuelve 201', async () => {
-      // Necesita otra categoría para no duplicar (mes/año/categoría únicos)
-      const catRes = await request(app.getHttpServer())
-        .post('/categories')
-        .set('Authorization', `Bearer ${accessToken}`)
-        .send({ name: 'Transporte', nature: 'expense' });
-
-      const res = await request(app.getHttpServer())
-        .post('/budgets')
-        .set('Authorization', `Bearer ${accessToken}`)
-        .send({ categoryId: catRes.body.id, limit: 200, month, year })
-        .expect(201);
-
-      expect(res.body).toHaveProperty('id');
-      expect(res.body).toHaveProperty('limit', 200);
-    });
-
-    it('rechaza presupuesto duplicado (mismo usuario/categoría/mes/año) con 409', async () => {
-      await request(app.getHttpServer())
-        .post('/budgets')
-        .set('Authorization', `Bearer ${accessToken}`)
-        .send({ categoryId, limit: 300, month, year })
-        .expect(409);
-    });
-
-    it('rechaza categoría de tipo income con 409', async () => {
-      const incomeCat = await request(app.getHttpServer())
-        .post('/categories')
-        .set('Authorization', `Bearer ${accessToken}`)
-        .send({ name: 'Salario', nature: 'income' });
-
-      await request(app.getHttpServer())
-        .post('/budgets')
-        .set('Authorization', `Bearer ${accessToken}`)
-        .send({ categoryId: incomeCat.body.id, limit: 100, month, year })
-        .expect(409); // BudgetCategoryMustBeExpenseException → ConflictException (409)
-    });
-
-    it('devuelve 401 sin token', async () => {
-      await request(app.getHttpServer())
-        .post('/budgets')
-        .send({ categoryId, limit: 100, month, year })
-        .expect(401);
-    });
-  });
-
-  // -----------------------------------------------------------------------
-  // GET /budgets
-  // -----------------------------------------------------------------------
-  describe('GET /budgets', () => {
-    it('devuelve los budgets del usuario autenticado', async () => {
-      const res = await request(app.getHttpServer())
-        .get('/budgets')
-        .set('Authorization', `Bearer ${accessToken}`)
-        .expect(200);
-
-      expect(Array.isArray(res.body)).toBe(true);
-      expect(res.body.length).toBeGreaterThanOrEqual(1);
-    });
-
-    it('filtra por mes y año', async () => {
-      const res = await request(app.getHttpServer())
-        .get(`/budgets?month=${month}&year=${year}`)
-        .set('Authorization', `Bearer ${accessToken}`)
-        .expect(200);
-
-      expect(Array.isArray(res.body)).toBe(true);
-    });
-  });
-
-  // -----------------------------------------------------------------------
-  // GET /budgets/:id
-  // -----------------------------------------------------------------------
-  describe('GET /budgets/:id', () => {
-    it('devuelve el budget por id', async () => {
+    it('crea un presupuesto y el GET lo devuelve (round-trip)', async () => {
       const res = await request(app.getHttpServer())
         .get(`/budgets/${budgetId}`)
         .set('Authorization', `Bearer ${accessToken}`)
         .expect(200);
 
       expect(res.body).toHaveProperty('id', budgetId);
+      expect(res.body).toHaveProperty('limit', 500);
+      expect(res.body).toHaveProperty('month', month);
+      expect(res.body).toHaveProperty('year', year);
     });
 
-    it('devuelve 404 para id inexistente', async () => {
+    it('rechaza un duplicado (user, category, month, year) con 409 — constraint real', async () => {
       await request(app.getHttpServer())
-        .get('/budgets/00000000-0000-0000-0000-000000000000')
+        .post('/budgets')
         .set('Authorization', `Bearer ${accessToken}`)
-        .expect(404);
-    });
-
-    it('devuelve 403 al acceder a budget ajeno', async () => {
-      const other = await request(app.getHttpServer())
-        .post('/auth/register')
-        .send({ email: 'other@example.com', password: 'Password1!' });
-
-      await request(app.getHttpServer())
-        .get(`/budgets/${budgetId}`)
-        .set('Authorization', `Bearer ${other.body.accessToken}`)
-        .expect(403);
+        .send({ categoryId, limit: 300, month, year })
+        .expect(409);
     });
   });
 
-  // -----------------------------------------------------------------------
-  // PATCH /budgets/:id/limit
-  // -----------------------------------------------------------------------
+  // =======================================================================
+  // Invariante B4: el límite no puede bajar por debajo del gasto real del período.
+  // El use-case spec mockea el ScopedExpenseChecker; aquí la suma se hace sobre
+  // transacciones reales vía el UoW real.
+  // =======================================================================
   describe('PATCH /budgets/:id/limit', () => {
-    it('actualiza el límite del budget', async () => {
+    it('sube el límite (200)', async () => {
       const res = await request(app.getHttpServer())
         .patch(`/budgets/${budgetId}/limit`)
         .set('Authorization', `Bearer ${accessToken}`)
@@ -164,84 +107,42 @@ describe('Budgets (integration)', () => {
 
       expect(res.body).toHaveProperty('limit', 800);
     });
-  });
 
-  // -----------------------------------------------------------------------
-  // DELETE /budgets/:id
-  // -----------------------------------------------------------------------
-  describe('DELETE /budgets/:id', () => {
-    it('elimina el budget cuando no tiene transacciones', async () => {
+    it('rechaza bajar el límite por debajo de lo ya gastado en el período (409)', async () => {
+      await spend(100); // gasto real de 100 en el período
+
+      // Bajar el límite a 50 < 100 gastado → BudgetLimitBelowSpentException (409).
       await request(app.getHttpServer())
-        .delete(`/budgets/${budgetId}`)
+        .patch(`/budgets/${budgetId}/limit`)
         .set('Authorization', `Bearer ${accessToken}`)
-        .expect(204);
+        .send({ limit: 50 })
+        .expect(409);
     });
   });
 
-  // -----------------------------------------------------------------------
-  // Cross-module: budget deletion bloqueado por transacciones
-  // -----------------------------------------------------------------------
-  describe('Cross-module: budget deletion bloqueado por transacciones', () => {
-    it('rechaza eliminar budget con transacciones en el período con 409', async () => {
-      // Crear cuenta para poder crear transacciones
-      const accountRes = await request(app.getHttpServer())
-        .post('/accounts')
-        .set('Authorization', `Bearer ${accessToken}`)
-        .send({ name: 'Cuenta test', type: 'corriente', initialBalance: 5000 })
-        .expect(201);
-      const accountId = accountRes.body.id;
+  // =======================================================================
+  // Cross-module: el budget con gastos en el período no se puede eliminar.
+  // BudgetHasTransactionsInPeriodException se decide sumando transacciones
+  // reales bajo el UoW; mockeado en unit.
+  // =======================================================================
+  describe('Cross-module: DELETE /budgets/:id con gastos', () => {
+    it('rechaza eliminar un budget con una transacción en el período (409)', async () => {
+      await spend(100);
 
-      // Crear transacción expense usando la categoría y budget del beforeEach
-      await request(app.getHttpServer())
-        .post('/transactions')
-        .set('Authorization', `Bearer ${accessToken}`)
-        .send({
-          accountId,
-          categoryId,
-          amount: 100,
-          nature: 'expense',
-          transactionDate: new Date().toISOString(),
-          description: 'Gasto de prueba',
-        })
-        .expect(201);
-
-      // Intentar eliminar el budget → debe fallar porque hay transacciones en el período
       await request(app.getHttpServer())
         .delete(`/budgets/${budgetId}`)
         .set('Authorization', `Bearer ${accessToken}`)
         .expect(409);
     });
 
-    it('permite eliminar budget después de remover todas las transacciones del período', async () => {
-      // Crear cuenta y transacción
-      const accountRes = await request(app.getHttpServer())
-        .post('/accounts')
-        .set('Authorization', `Bearer ${accessToken}`)
-        .send({ name: 'Cuenta test 2', type: 'corriente', initialBalance: 5000 })
-        .expect(201);
-      const accountId = accountRes.body.id;
+    it('permite eliminarlo tras borrar la transacción (204)', async () => {
+      const transactionId = await spend(100);
 
-      const txRes = await request(app.getHttpServer())
-        .post('/transactions')
-        .set('Authorization', `Bearer ${accessToken}`)
-        .send({
-          accountId,
-          categoryId,
-          amount: 100,
-          nature: 'expense',
-          transactionDate: new Date().toISOString(),
-          description: 'Gasto temporal',
-        })
-        .expect(201);
-      const transactionId = txRes.body.id;
-
-      // Eliminar la transacción primero
       await request(app.getHttpServer())
         .delete(`/transactions/${transactionId}`)
         .set('Authorization', `Bearer ${accessToken}`)
         .expect(204);
 
-      // Ahora sí se puede eliminar el budget
       await request(app.getHttpServer())
         .delete(`/budgets/${budgetId}`)
         .set('Authorization', `Bearer ${accessToken}`)
