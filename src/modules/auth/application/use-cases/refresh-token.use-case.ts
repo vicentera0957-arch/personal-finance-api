@@ -66,10 +66,13 @@ export class RefreshTokenUseCase {
         expiresAt: this.tokenProvider.getRefreshTokenExpiresAt(),
       });
 
-      stored.revoke(newJti); // marca el viejo como "reemplazado por newJti"
-
-      await repo.save(stored);
+      // Insertar primero el token nuevo: el viejo lo referencia vía
+      // replaced_by_id (FK auto-referencial), así que la fila destino debe
+      // existir antes de grabar el UPDATE del viejo (si no, viola la FK).
       await repo.save(newEntity);
+
+      stored.revoke(newJti); // marca el viejo como "reemplazado por newJti"
+      await repo.save(stored);
 
       const newAccessToken = await this.tokenProvider.generateAccessToken({
         sub: stored.userId,
