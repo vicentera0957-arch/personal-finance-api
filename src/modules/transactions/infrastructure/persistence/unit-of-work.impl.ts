@@ -231,7 +231,10 @@ class ScopedExpenseChecker extends IExpenseChecker {
       .andWhere('t.nature = :nature', { nature: 'expense' })
       .andWhere('t.transactionDate >= :periodStart', { periodStart })
       .andWhere('t.transactionDate < :periodEnd', { periodEnd })
-      .setLock('pessimistic_write')
+      // Sin FOR UPDATE: Postgres prohíbe el lock pesimista sobre agregados
+      // (getCount). La serialización contra CreateTransaction la garantiza el
+      // lock sobre la fila del budget que DeleteBudgetUseCase adquiere antes de
+      // invocar este checker. Lockear filas existentes no frena phantom inserts.
       .getCount();
     return count > 0;
   }
@@ -253,7 +256,10 @@ class ScopedExpenseChecker extends IExpenseChecker {
       .andWhere('t.nature = :nature', { nature: 'expense' })
       .andWhere('t.transactionDate >= :periodStart', { periodStart })
       .andWhere('t.transactionDate < :periodEnd', { periodEnd })
-      .setLock('pessimistic_write')
+      // Sin FOR UPDATE: Postgres prohíbe el lock pesimista sobre agregados (SUM).
+      // La serialización contra CreateTransaction la garantiza el lock sobre la
+      // fila del budget que UpdateBudgetLimitUseCase adquiere antes de invocar
+      // este checker.
       .getRawOne<{ total: string }>();
     return Number(raw?.total ?? 0);
   }
