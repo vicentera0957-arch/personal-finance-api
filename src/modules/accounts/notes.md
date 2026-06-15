@@ -79,10 +79,12 @@ Clase abstracta. Métodos: `findById`, `findByUserId`, `save`, `delete`.
 | `CreateAccountUseCase` | Crea VOs → crea entidad → persiste |
 | `GetAccountByIdUseCase` | Busca por id → valida ownership (`requestUserId`) → lanza `AccountNotFoundException` si no existe |
 | `GetAccountsByUserIdUseCase` | Retorna array (vacío es válido) |
-| `RenameAccountUseCase` | Delega a `GetAccountByIdUseCase` (hereda ownership) → `account.rename()` → persiste |
-| `ArchiveAccountUseCase` | Delega a `GetAccountByIdUseCase` → `account.archive()` → persiste |
-| `UnarchiveAccountUseCase` | Delega a `GetAccountByIdUseCase` → `account.unarchive()` → persiste |
-| `DeleteAccountUseCase` | Verifica existencia y ownership → `repo.delete()` |
+| `RenameAccountUseCase` | Abre `IAccountUnitOfWork` → `findById` (FOR UPDATE) → ownership inline → `account.rename()` → persiste |
+| `ArchiveAccountUseCase` | Abre `IAccountUnitOfWork` → `findById` (FOR UPDATE) → ownership inline → `account.archive()` → persiste |
+| `UnarchiveAccountUseCase` | Abre `IAccountUnitOfWork` → `findById` (FOR UPDATE) → ownership inline → `account.unarchive()` → persiste |
+| `DeleteAccountUseCase` | Delega a `GetAccountByIdUseCase` (existencia + ownership) → `repo.delete()` — sin UoW (no muta balance) |
+
+> **Por qué Rename/Archive/Unarchive usan UoW y Delete no:** los tres primeros compiten por el lock de la fila de la cuenta contra `CreateTransaction`/`DeleteTransaction` (ver Race 2). `Delete` no muta balance, así que no necesita serializarse con las mutaciones financieras.
 | `UpdateAccountBalanceUseCase` | `repo.findById()` → `account.inflow()` o `account.outflow()` → `repo.save()` |
 
 ### `UpdateAccountBalanceUseCase` — consumido por `transactions`
@@ -100,7 +102,7 @@ await updateBalance.execute(command.accountId, amount.getValue(), 'inflow' | 'ou
 
 Al usar el repositorio escopado, la actualización del balance corre dentro de la misma transacción de PostgreSQL que el `txRepo.save(transaction)`. Esto garantiza atomicidad: si el save de la transacción falla, el balance tampoco se actualiza.
 
-⚠️ **Bug B:** `ScopedAccountRepository.findById` (en `unit-of-work.impl.ts:119`) usa `manager.findOne` sin lock. Dos transacciones concurrentes sobre la misma cuenta leen el mismo balance y escriben valores absolutos — la segunda escritura sobreescribe la primera. Ver detalles en `transactions/notes.md`.
+✅ **Bug B (lost update de balance) — CERRADO.** `ScopedAccountRepository.findById` toma `FOR UPDATE`, así que dos transacciones concurrentes sobre la misma cuenta se serializan: la segunda espera el COMMIT de la primera y lee el balance vigente. Post-mortem completo en [transactions/notes-history.md](../../transactions/notes-history.md). La competencia entre mutaciones de cuenta y transacciones (Race 2) está en [docs/race-conditions-fix-2026-05.md](../../../docs/race-conditions-fix-2026-05.md).
 
 ---
 

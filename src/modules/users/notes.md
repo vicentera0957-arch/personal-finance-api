@@ -56,7 +56,7 @@ Clase abstracta. Métodos: `findById`, `findByEmail`, `save`, `delete`.
 | `UpdateUserProfileUseCase` | Valida self-access → `user.updateProfile(name)` → persiste |
 | `DeleteUserUseCase` | Valida self-access → `repo.delete()` |
 
-**Nota sobre `IPasswordHasher`:** `CreateUserUseCase` inyecta el port abstracto (no bcrypt directamente). La implementación concreta (`BcryptAdapter`) vive en `auth/infrastructure/`. El módulo `users` importa el adapter vía `AuthModule` exports. Esto permite cambiar el algoritmo de hashing sin tocar los use cases.
+**Nota sobre `IPasswordHasher`:** `CreateUserUseCase` inyecta el port abstracto (no bcrypt directamente). La implementación concreta (`BcryptPasswordHasher`) vive en `auth/infrastructure/adapters/`. El módulo `users` importa el adapter vía `AuthModule` exports. Esto permite cambiar el algoritmo de hashing sin tocar los use cases.
 
 ---
 
@@ -86,7 +86,7 @@ El índice único en `email` existe a nivel DB y es la última línea de defensa
 
 **Archivo:** `infrastructure/persistence/user.repo.implement.ts`
 
-`save()` actual **no** tiene `catch 23505` (ver Bug E abajo). El índice único en `email` existe pero el error de Postgres se propaga como 500 en lugar de 409.
+`save()` atrapa `QueryFailedError` con `code === '23505'` → lanza `UserAlreadyExistsException` (409). El índice único en `email` es la garantía a nivel DB; el catch evita que el error de Postgres se propague como 500. (Cierra el antiguo Bug E — post-mortem en [notes-history.md](./notes-history.md).)
 
 ### Rutas
 
@@ -106,30 +106,9 @@ Exports: `GetUserByEmailUseCase` — consumido por `AuthModule` en el flujo de l
 
 ---
 
-## Bug E — Concurrent register → 500
+## Bug E — Concurrent register → 500 (RESUELTO)
 
-**Archivo:** `infrastructure/persistence/user.repo.implement.ts:42`
-
-`CreateUserUseCase` hace un `GetUserByEmailUseCase` antes de insertar (check-then-insert). En condiciones normales detecta el duplicado y lanza `UserAlreadyExistsException` → 409. Pero si dos requests llegan simultáneamente, ambas pasan el check y la segunda falla con `23505` en el `ormRepository.save()`.
-
-`UserRepositoryImpl.save()` no tiene `try/catch`, por lo que el `QueryFailedError` sube sin mapear → NestJS devuelve 500.
-
-**Fix (~15 minutos):**
-
-```typescript
-async save(user: User): Promise<User> {
-  const orm = this.mapper.toOrm(user);
-  try {
-    const saved = await this.ormRepository.save(orm);
-    return this.mapper.toDomain(saved);
-  } catch (err) {
-    if (err instanceof QueryFailedError && (err as any).driverError?.code === '23505') {
-      throw new UserAlreadyExistsException(user.getEmail().getValue());
-    }
-    throw err;
-  }
-}
-```
+Cerrado: `UserRepositoryImpl.save()` ahora atrapa `QueryFailedError` con `code === '23505'` → `UserAlreadyExistsException` (409). El post-mortem completo (escenario + fix) está en [notes-history.md](./notes-history.md).
 
 ---
 

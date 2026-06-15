@@ -15,15 +15,21 @@ export class DeleteBudgetUseCase {
   ) {}
 
   async execute(id: string, requestUserId: string): Promise<void> {
+    // Open the transaction: grabs a dedicated connection (QueryRunner) for this request.
     await this.uow.begin();
     try {
       const budgetRepo = this.uow.getBudgetRepository();
 
+      // LOCK (FOR UPDATE): budget row. The lock lives inside the scoped repo's findById().
+      // It is the serialization gate for the period invariant: holding it blocks concurrent
+      // expense creates until this deletion commits (closes Race 1).
       const budget = await budgetRepo.findById(id);
       if (!budget) throw new BudgetNotFoundException(id);
       if (budget.userId !== requestUserId)
         throw new ResourceOwnershipException(id);
 
+      // NO LOCK: aggregate read (Postgres forbids FOR UPDATE on COUNT). Consistent only
+      // because the budget row above is locked, which serializes concurrent expense creates.
       const hasExpenses = await this.uow
         .getScopedExpenseChecker()
         .hasExpensesInPeriod(

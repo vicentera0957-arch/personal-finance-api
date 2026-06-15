@@ -23,16 +23,22 @@ export class UpdateBudgetLimitUseCase {
   ) {}
 
   async execute(command: UpdateBudgetLimitCommand): Promise<Budget> {
+    // Open the transaction: grabs a dedicated connection (QueryRunner) for this request.
     await this.uow.begin();
     try {
       const budgetRepo = this.uow.getBudgetRepository();
 
+      // LOCK (FOR UPDATE): budget row. The lock lives inside the scoped repo's findById().
+      // It is the serialization gate for the period invariant: holding it blocks concurrent
+      // expense creates until this limit change commits (closes the B4 write-skew).
       const budget = await budgetRepo.findById(command.id);
       if (!budget) throw new BudgetNotFoundException(command.id);
       if (budget.userId !== command.requestUserId)
         throw new ResourceOwnershipException(command.id);
 
       const limit = AmountLimit.create(command.limit);
+      // NO LOCK: aggregate read (Postgres forbids FOR UPDATE on SUM). Consistent only
+      // because the budget row above is locked, which serializes concurrent expense creates.
       const spentInPeriod = await this.uow
         .getScopedExpenseChecker()
         .sumExpenseAmountInPeriod(

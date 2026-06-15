@@ -31,7 +31,9 @@ export class RefreshTokenUseCase {
     try {
       const repo = this.uow.getRefreshTokenRepository();
 
-      // FOR UPDATE — serializa dos /refresh simultáneos con el mismo token (dos pestañas).
+      // LOCK (FOR UPDATE): refresh-token row. The lock lives inside the scoped repo's
+      // findByTokenHashWithLock(). Serializes two concurrent /refresh calls on the same
+      // token (e.g. two tabs); replay detection depends on this serialization.
       const stored = await repo.findByTokenHashWithLock(tokenHash);
 
       if (!stored) throw new InvalidRefreshTokenException();

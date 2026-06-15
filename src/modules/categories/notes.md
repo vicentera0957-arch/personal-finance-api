@@ -18,9 +18,9 @@ Por qué un VO y no un string: la regla R7 ("categoría de gasto solo clasifica 
 
 Constructor privado. Dos factory methods (`create`, `reconstitute`).
 
-Propiedades: `id`, `userId`, `name`, `nature` (`CategoryNature`), `isBudgetable`, `color?`, `icon?`, `createdAt`, `updatedAt`.
+Propiedades: `id`, `userId`, `name`, `nature` (`CategoryNature`), `color?`, `icon?`, `createdAt`, `updatedAt`.
 
-Métodos: `rename(name)`, `changeColor(color)`, `changeIcon(icon)`, `setBudgetable(value)`.
+Métodos: `rename(name)`, `changeColor(color)`, `changeIcon(icon)`. **No existe `setBudgetable`** — la budgetabilidad se deriva de `nature === 'expense'`, no de un flag.
 
 **No existe `changeNature()`** — la naturaleza es inmutable después de la creación. Cambiarla rompería la invariante R7 para todas las transacciones existentes de esa categoría.
 
@@ -31,7 +31,10 @@ Métodos: `rename(name)`, `changeColor(color)`, `changeIcon(icon)`, `setBudgetab
 | `CategoryNotFoundException` | 404 |
 | `DuplicateCategoryException` | 409 |
 | `CategoryInUseException` | 409 |
-| `CategoryBudgetableImmutableException` | 422 |
+| `InvalidCategoryNameException` | 400 |
+| `InvalidCategoryColorException` | 400 |
+| `InvalidCategoryIconException` | 400 |
+| `InvalidCategoryNatureException` | 400 |
 
 ### Puerto `ICategoryRepository`
 
@@ -53,9 +56,9 @@ No tiene método `findByUserIdAndNameAndNature` — la validación de duplicados
 
 **Sobre `CreateCategoryUseCase`:** no hace un `findByUserId...` previo para detectar duplicados. El check es 100% a nivel DB — `CategoryRepositoryImpl.save()` atrapa `QueryFailedError` con `code === '23505'` y lanza `DuplicateCategoryException`. Esto cierra la race condition de "check-then-insert" sin necesidad de un query previo.
 
-**Sobre `UpdateCategoryUseCase`:** un solo use case para todos los campos editables (`name`, `color`, `icon`, `isBudgetable`). Todos opcionales. Sin efectos secundarios complejos — solo "editar metadatos". A diferencia de `accounts`, no hay separación en use cases granulares porque no hay operaciones con consecuencias de estado (como archivar).
+**Sobre `UpdateCategoryUseCase`:** un solo use case para todos los campos editables (`name`, `color`, `icon`). Todos opcionales. Sin efectos secundarios complejos — solo "editar metadatos". A diferencia de `accounts`, no hay separación en use cases granulares porque no hay operaciones con consecuencias de estado (como archivar).
 
-**Sobre `isBudgetable`:** puede ser cambiado por `UpdateCategoryUseCase`, pero hay una restricción: si la categoría ya tiene transacciones o budgets asociados, cambiar `isBudgetable` puede invalidarlos. La entidad lanza `CategoryBudgetableImmutableException` en ese caso (verificar regla exacta en la entidad si necesitás el detalle).
+> **`isBudgetable` fue eliminado.** La budgetabilidad de una categoría se deriva de `nature === 'expense'` — no hay flag de dominio ni columna en la DB, y no existe `CategoryBudgetableImmutableException`. Reintroducir el flag está prohibido (ver anti-patrones en CLAUDE.md): creaba dos fuentes de verdad que derivaban.
 
 ---
 
@@ -71,7 +74,6 @@ No tiene método `findByUserIdAndNameAndNature` — la validación de duplicados
 | `userId` | `varchar` | Referencia lógica |
 | `name` | `varchar` | Máximo 80 caracteres |
 | `nature` | `varchar` | `income` o `expense` |
-| `isBudgetable` | `boolean` | Default `true` |
 | `color` | `varchar` | Nullable |
 | `icon` | `varchar` | Nullable |
 | `createdAt` | `timestamp` | `@Column` simple |

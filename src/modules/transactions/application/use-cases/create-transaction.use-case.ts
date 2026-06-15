@@ -85,8 +85,10 @@ export class CreateTransactionUseCase {
       transactionDate: command.transactionDate,
     });
 
+    // Open the transaction: grabs a dedicated connection (QueryRunner) for this request.
     await this.uow.begin();
     try {
+      // Scoped repos share the same QueryRunner → same transaction and connection.
       const txRepo = this.uow.getTransactionRepository();
       const acctRepo = this.uow.getAccountRepository();
       const updateBalance = new UpdateAccountBalanceUseCase(acctRepo);
@@ -96,10 +98,11 @@ export class CreateTransactionUseCase {
         const month = command.transactionDate.getMonth() + 1;
         const year = command.transactionDate.getFullYear();
 
-        // El budget row es el gate de serialización del invariante de período.
-        // Debe lockearse ANTES del SUM: un FOR UPDATE sobre un rango de
-        // transactions no previene phantoms (inserts concurrentes en el rango),
-        // así que la sumatoria solo es consistente si se lee bajo el lock del budget.
+        // LOCK (FOR UPDATE): budget row. The lock lives inside the scoped repo's
+        // findByUserIdAndCategoryIdAndPeriod(), not here. It is the serialization gate
+        // for the period invariant and MUST be taken before the SUM below: FOR UPDATE
+        // over a transaction range can't block phantom inserts, so the sum is only
+        // consistent while this budget row stays locked.
         const budget = await budgetRepo.findByUserIdAndCategoryIdAndPeriod(
           command.userId,
           command.categoryId,
@@ -115,6 +118,8 @@ export class CreateTransactionUseCase {
           );
         }
 
+        // NO LOCK: aggregate read (Postgres forbids FOR UPDATE on SUM). Consistent only
+        // because the budget row above is locked, which serializes concurrent expense creates.
         const spentInPeriod =
           await txRepo.sumExpenseAmountByUserCategoryAndPeriod(
             command.userId,
@@ -137,6 +142,8 @@ export class CreateTransactionUseCase {
         }
       }
 
+      // LOCK (FOR UPDATE): account row. The lock is taken inside UpdateAccountBalanceUseCase
+      // via the scoped acctRepo.findById() — serializes balance mutations on this account.
       await updateBalance.execute(
         command.accountId,
         amount.getValue(),

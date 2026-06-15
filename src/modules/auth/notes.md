@@ -18,8 +18,8 @@ Tipo: `AuthenticatedUser = { userId: string, email: string }`. Inyecta el usuari
 
 | Port | Implementación | Ubicación |
 |------|---------------|-----------|
-| `IPasswordHasher` | `BcryptAdapter` | `infrastructure/adapters/bcrypt.adapter.ts` |
-| `ITokenProvider` | `JwtTokenProvider` | `infrastructure/adapters/jwt-token.provider.ts` |
+| `IPasswordHasher` | `BcryptPasswordHasher` | `infrastructure/adapters/bcrypt-password-hasher.ts` |
+| `ITokenProvider` | `JwtTokenProvider` | `infrastructure/adapters/jwt-token-provider.ts` |
 
 Los use cases de auth inyectan los ports abstractos — no bcrypt ni JWT directamente. Esto permite testear sin el costo computacional de bcrypt.
 
@@ -52,11 +52,24 @@ JWT_REFRESH_EXPIRES_IN  # e.g. "7d"
 
 **Por qué timing-safe:** sin el hash dummy, la latencia de ~5ms (user no existe) vs ~100ms (hash compare) permite enumerar emails válidos con suficientes requests.
 
+### Refresh tokens — modelo
+
+Persistidos en `refresh_tokens`. **Nunca se guarda el token en claro** — solo `sha256(token)`. Cada fila: `id` (= el claim `jti`), `familyId` (mismo UUID para toda la cadena de rotación), `tokenHash` (único), `expiresAt`, `revokedAt`, `replacedById`. Un `@Cron('0 3 * * *')` (scheduler) borra los expirados a diario.
+
 ### `RefreshTokenUseCase`
 
-Valida el refresh token con `ITokenProvider.verifyRefresh` → genera nuevo access token.
+Rotación con detección de replay, todo dentro de `IAuthUnitOfWork` (una transacción de PG):
 
-⚠️ **Gap:** no hay rotación ni revocación de refresh tokens. Retorna un nuevo access token sin invalidar el refresh token anterior ni tocar la DB. Un refresh token robado es válido durante todo su TTL (default `7d`).
+1. Verifica la firma (`ITokenProvider.verifyRefreshToken`) — fail-fast sin tocar DB si el token está corrupto.
+2. Abre el UoW y lee la fila por `sha256(token)` con `FOR UPDATE` (`findByTokenHashWithLock`) — serializa dos `/refresh` simultáneos con el mismo token.
+3. No existe → `InvalidRefreshTokenException` (401).
+4. **Revocada → replay detectado:** revoca toda la familia (`revokeFamily`), **commitea** la revocación (a propósito) y lanza `RefreshTokenReplayDetectedException` (401).
+5. Expirada → `RefreshTokenExpiredException` (401).
+6. Válida → inserta el token nuevo (misma `familyId`), revoca el viejo (`replacedById = nuevo jti`), retorna el par nuevo. Inserta el nuevo **antes** de revocar el viejo, por la FK auto-referencial `replacedById`.
+
+### `LogoutUseCase`
+
+`POST /auth/logout` es `@Public()` → revoca el refresh token enviado. Público a propósito: un access token expirado no debe impedir cerrar sesión.
 
 ---
 
@@ -116,10 +129,9 @@ Previene fuerza bruta de login, spam de registros y abuso de refresh.
 
 | Prioridad | Gap |
 |-----------|-----|
-| Alta | **Refresh token rotation + revocación** — requiere tabla `refresh_tokens`, nuevo port, reuse-detection. Sin esto, un refresh robado es válido 7 días. |
-| Media | **Logout endpoint** — hoy no existe. Un usuario no puede invalidar sus tokens activos. |
 | Baja | **OAuth Google/GitHub** — `passport-google-oauth20` / `passport-github2`. Plug-in sobre la arquitectura existente sin tocar dominio. |
-| Baja | **JWT `jti`** — claim de ID único por token. Necesario para revocación individual. |
+
+> **Refresh token rotation + revocación de familia, logout y `jti` ya están implementados** (hardening 2026). Ver el modelo de refresh tokens arriba y el histórico de gaps cerrados en [notes-history.md](./notes-history.md).
 
 ---
 

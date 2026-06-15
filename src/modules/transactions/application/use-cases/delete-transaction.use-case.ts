@@ -16,20 +16,26 @@ export class DeleteTransactionUseCase {
   ) {}
 
   async execute(id: string, requestUserId: string): Promise<void> {
-    await this.getTransactionByIdUseCase.execute(id, requestUserId); // Fail-fast: 404/403 sin abrir conexión al pool
+    // Fail-fast outside the tx: cheap 404/403 without grabbing a pool connection.
+    await this.getTransactionByIdUseCase.execute(id, requestUserId);
 
-    await this.uow.begin(); // empieza tx
+    // Open the transaction: grabs a dedicated connection (QueryRunner) for this request.
+    await this.uow.begin();
     try {
+      // Scoped repos share the same QueryRunner → same transaction and connection.
       const txRepo = this.uow.getTransactionRepository();
       const acctRepo = this.uow.getAccountRepository();
 
-      // Re-fetch con FOR UPDATE — serializa DELETEs concurrentes sobre la misma fila;
-      // si otra request ya borró T y commiteó, findById retorna null aquí.
+      // LOCK (FOR UPDATE): transaction row. The lock lives inside the scoped repo's
+      // findById(). Serializes concurrent DELETEs on the same row: if another request
+      // already deleted and committed, findById returns null here (→ 404, no double reverse).
       const transaction = await txRepo.findById(id);
       if (!transaction) throw new TransactionNotFoundException(id);
 
       const updateBalance = new UpdateAccountBalanceUseCase(acctRepo);
       const reverseType = transaction.nature.isIncome() ? 'outflow' : 'inflow';
+      // LOCK (FOR UPDATE): account row. The lock is taken inside UpdateAccountBalanceUseCase
+      // via the scoped acctRepo.findById() — serializes balance mutations on this account.
       await updateBalance.execute(
         transaction.accountId,
         transaction.amount.getValue(),

@@ -30,7 +30,7 @@ Método de negocio: `updateLimit(newLimit: AmountLimit)` — reemplaza el límit
 ### Invariantes
 
 - **R3** — un budget es único por `(userId, categoryId, month, year)`. Enforced con `@Unique` en `BudgetOrmEntity` + migración `1745366400000-AddBudgetUniqueConstraint.ts`.
-- **R4** — la categoría del budget debe tener `nature === 'expense'` AND `isBudgetable === true`. Validado en `CreateBudgetUseCase`.
+- **R4** — la categoría del budget debe tener `nature === 'expense'`. La budgetabilidad se **deriva de `nature`** (no existe flag `isBudgetable`). Validado en `CreateBudgetUseCase` → `BudgetCategoryMustBeExpenseException`.
 - **R8** (cruzada con transactions) — una transaction de expense requiere un budget para el período y no puede exceder su `limit`. Validado en `CreateTransactionUseCase`.
 - Un budget no puede eliminarse si existen transactions de gasto en su período. Enforced vía `IExpenseChecker` port.
 
@@ -43,8 +43,8 @@ Método de negocio: `updateLimit(newLimit: AmountLimit)` — reemplaza el límit
 | `BudgetAlreadyExistsException`                 | 409  |
 | `BudgetLimitExceededException`                 | 422  |
 | `BudgetLimitBelowSpentException`               | 409  |
-| `BudgetRequiredForExpenseTransactionException` | 422  |
-| `CategoryNotBudgetableForBudgetException`      | 422  |
+| `BudgetRequiredForExpenseTransactionException` | 409  |
+| `BudgetCategoryMustBeExpenseException`         | 409  |
 | `BudgetHasTransactionsInPeriodException`       | 409  |
 
 ### Puerto `IExpenseChecker`
@@ -53,7 +53,7 @@ Método de negocio: `updateLimit(newLimit: AmountLimit)` — reemplaza el límit
 
 Definido aquí (consumer owns the port). Implementado en `transactions/infrastructure/persistence/expense-checker.implement.ts`. Exportado por `TransactionsModule`.
 
-Método: `hasExpenseTransactionsInPeriod(userId, categoryId, month, year): Promise<boolean>`
+Métodos: `hasExpensesInPeriod(userId, categoryId, month, year): Promise<boolean>` y `sumExpenseAmountInPeriod(...): Promise<number>`. **Ninguno toma `FOR UPDATE`** (Postgres prohíbe lock pesimista sobre agregados `COUNT`/`SUM`); la serialización la da el lock sobre la fila del budget que el consumidor (`DeleteBudget` / `UpdateBudgetLimit`) adquiere antes.
 
 ---
 
@@ -61,12 +61,12 @@ Método: `hasExpenseTransactionsInPeriod(userId, categoryId, month, year): Promi
 
 | Use case                               | Flujo                                                                                               |
 | -------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `CreateBudgetUseCase`                  | Valida categoría (expense + budgetable) → persiste → `catch 23505` → `BudgetAlreadyExistsException` |
+| `CreateBudgetUseCase`                  | Valida categoría (`nature === 'expense'`) → persiste → `catch 23505` → `BudgetAlreadyExistsException` |
 | `GetBudgetByIdUseCase`                 | Busca → valida ownership → lanza `BudgetNotFoundException`                                          |
 | `GetBudgetsByUserIdUseCase`            | Filtra por userId (y opcionalmente month/year)                                                      |
 | `GetBudgetByUserCategoryPeriodUseCase` | Búsqueda interna para `CreateTransactionUseCase`                                                    |
-| `UpdateBudgetLimitUseCase`             | Abre UoW → `findById` budget (FOR UPDATE) → valida ownership → suma expenses del periodo (FOR UPDATE) → si `nuevo limit < spent` lanza `BudgetLimitBelowSpentException` (409) → commit |
-| `DeleteBudgetUseCase`                  | Abre UoW → `findById` budget (FOR UPDATE) → valida ownership → `hasExpensesInPeriod` (FOR UPDATE) → elimina si no hay expenses                                       |
+| `UpdateBudgetLimitUseCase`             | Abre UoW → `findById` budget (FOR UPDATE) → valida ownership → suma expenses del periodo (sin lock propio; serializa el lock del budget) → si `nuevo limit < spent` lanza `BudgetLimitBelowSpentException` (409) → commit |
+| `DeleteBudgetUseCase`                  | Abre UoW → `findById` budget (FOR UPDATE) → valida ownership → `hasExpensesInPeriod` (sin lock propio; serializa el lock del budget) → elimina si no hay expenses |
 
 ---
 
@@ -126,31 +126,9 @@ El `forwardRef()` es un artefacto del DI graph de NestJS. La dirección de depen
 
 ---
 
-## Estado de los races
+## Estado de los races (histórico)
 
-### ✅ Race de "check-then-insert" en CreateBudget — CERRADA
-
-Estado previo: `CreateBudgetUseCase` hacía check + insert sin garantía de atomicidad.  
-Estado actual: `@Unique` en ORM + migración `1745366400000` + `catch 23505` en `BudgetRepositoryImpl.save()` → retorna 409 en vez de 500.
-
-### ⚠️ Bug A — Write skew en UpdateBudgetLimit vs CreateTransaction — RESUELTO
-
-**Escenario:**
-
-1. User tiene budget limit=$100, ha gastado $80.
-2. `PATCH /budgets/X/limit` → abre UoW, lee budget con `ScopedBudgetRepository.findById` (**sin lock**), baja el límite a $60, commit.
-3. Simultáneamente: `POST /transactions` expense $20 → lee el budget fuera del UoW (usa `getBudgetByUserCategoryPeriodUseCase` global, línea 111 de `create-transaction.use-case.ts`) → ve limit=$100 → $80+$20=100 ≤ 100 → inserta.
-4. Resultado: gastó $100 con limit=$60. R8 violada.
-
-**Dos problemas independientes que se combinan:**
-
-- `ScopedBudgetRepository.findById` (`unit-of-work.impl.ts:148`) no toma `FOR UPDATE`
-- La segunda lectura del budget en `create-transaction.use-case.ts:111` usa el use case global (no el repo escopado) → sale de la transacción PG
-
-**Fix completo:**
-
-1. Mover la segunda lectura del budget en `CreateTransactionUseCase` a `uow.getBudgetRepository().findByUserIdAndCategoryIdAndPeriod(...)`.
-2. Agregar `setLock('pessimistic_write')` en `ScopedBudgetRepository.findById`.
+Movido a [notes-history.md](./notes-history.md): la race de "check-then-insert" en `CreateBudget` (cerrada con `@Unique` + `catch 23505`) y el write-skew **Bug A**. Los races que cruzan módulos (Race 1: `DELETE /budgets/:id` vs `POST /transactions`) están en [docs/race-conditions-fix-2026-05.md](../../../docs/race-conditions-fix-2026-05.md).
 
 ---
 
