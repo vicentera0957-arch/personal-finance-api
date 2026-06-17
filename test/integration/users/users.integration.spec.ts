@@ -4,7 +4,7 @@ import { createTestApp } from '../../helpers/app-bootstrap';
 import { cleanDatabase } from '../../helpers/db-cleaner';
 import { decodeJwtSub } from '../../helpers/jwt';
 
-describe('Usuarios: round-trip de perfil y ownership con el guard real', () => {
+describe('Users: profile round-trip and ownership with the real guard', () => {
   let app: INestApplication;
   let accessToken: string;
   let userId: string;
@@ -25,20 +25,21 @@ describe('Usuarios: round-trip de perfil y ownership con el guard real', () => {
       .send({ name: 'Test User', email: 'user@example.com', password: 'Password1!' });
 
     accessToken = res.body.accessToken;
-    // register/login no devuelven el id en el body: lo leemos del claim `sub`.
+    // register/login don't return the id in the body: we read it from the `sub` claim.
     userId = decodeJwtSub(accessToken);
   });
 
   // =======================================================================
-  // Round-trip de perfil: el update realmente persiste (mapper + UPDATE real).
-  // El mapper.spec prueba el mapper aislado; sólo aquí se prueba el viaje a Postgres.
+  // Profile round-trip: the update really persists (mapper + real UPDATE).
+  // The mapper.spec tests the mapper in isolation; only here we test the trip
+  // to Postgres.
   // =======================================================================
-  describe('PATCH /users/:id/profile → GET /users/:id', () => {
-    it('actualiza el nombre y el GET posterior lo refleja (persistido)', async () => {
+  describe('PATCH /users/:id/profile -> GET /users/:id', () => {
+    it('updates the name and the later GET reflects it (persisted)', async () => {
       await request(app.getHttpServer())
         .patch(`/users/${userId}/profile`)
         .set('Authorization', `Bearer ${accessToken}`)
-        .send({ name: 'Nombre Actualizado' })
+        .send({ name: 'Updated Name' })
         .expect(200);
 
       const res = await request(app.getHttpServer())
@@ -47,26 +48,26 @@ describe('Usuarios: round-trip de perfil y ownership con el guard real', () => {
         .expect(200);
 
       expect(res.body).toHaveProperty('id', userId);
-      expect(res.body).toHaveProperty('name', 'Nombre Actualizado');
+      expect(res.body).toHaveProperty('name', 'Updated Name');
     });
   });
 
   // =======================================================================
-  // Barrera de propiedad: cadena real token → @CurrentUser → use case → fila ajena.
-  // Los controller specs mockean el use case y fabrican currentUser; esto prueba
-  // el cableado real del guard global.
+  // Ownership barrier: real chain token -> @CurrentUser -> use case -> other's row.
+  // The controller specs mock the use case and fabricate currentUser; this tests
+  // the real wiring of the global guard.
   // =======================================================================
-  describe('barrera de propiedad', () => {
-    it('responde 401 sin token (guard global real)', async () => {
+  describe('ownership barrier', () => {
+    it('responds 401 without a token (real global guard)', async () => {
       await request(app.getHttpServer()).get(`/users/${userId}`).expect(401);
     });
 
-    it('el token del usuario B sobre el id del usuario A responde 403', async () => {
+    it("user B's token on user A's id responds 403", async () => {
       const other = await request(app.getHttpServer())
         .post('/auth/register')
         .send({ name: 'Other User', email: 'other@example.com', password: 'Password1!' });
 
-      // B usa su token contra el id de A → 403.
+      // B uses its token against A's id -> 403.
       await request(app.getHttpServer())
         .get(`/users/${userId}`)
         .set('Authorization', `Bearer ${other.body.accessToken}`)

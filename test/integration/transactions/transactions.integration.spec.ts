@@ -3,7 +3,7 @@ import request from 'supertest';
 import { createTestApp } from '../../helpers/app-bootstrap';
 import { cleanDatabase } from '../../helpers/db-cleaner';
 
-describe('Transacciones: movimientos y sus invariantes de saldo y presupuesto', () => {
+describe('Transactions: balance and budget invariants against the real DB', () => {
   let app: INestApplication;
   let accessToken: string;
   let accountId: string;
@@ -26,40 +26,34 @@ describe('Transacciones: movimientos y sus invariantes de saldo y presupuesto', 
   beforeEach(async () => {
     await cleanDatabase(app);
 
-    // Usuario base
     const authRes = await request(app.getHttpServer())
       .post('/auth/register')
       .send({ name: 'Test User', email: 'user@example.com', password: 'Password1!' });
     accessToken = authRes.body.accessToken;
 
-    // Cuenta con saldo suficiente
     const accountRes = await request(app.getHttpServer())
       .post('/accounts')
       .set('Authorization', `Bearer ${accessToken}`)
-      .send({ name: 'Cuenta Corriente', type: 'corriente', initialBalance: 5000 });
+      .send({ name: 'Checking Account', type: 'corriente', initialBalance: 5000 });
     accountId = accountRes.body.id;
 
-    // Categoría expense + budgetable
     const expCatRes = await request(app.getHttpServer())
       .post('/categories')
       .set('Authorization', `Bearer ${accessToken}`)
-      .send({ name: 'Alimentación', nature: 'expense' });
+      .send({ name: 'Food', nature: 'expense' });
     expenseCategoryId = expCatRes.body.id;
 
-    // Categoría income
     const incCatRes = await request(app.getHttpServer())
       .post('/categories')
       .set('Authorization', `Bearer ${accessToken}`)
-      .send({ name: 'Salario', nature: 'income' });
+      .send({ name: 'Salary', nature: 'income' });
     incomeCategoryId = incCatRes.body.id;
 
-    // Budget para la categoría expense del mes actual
     await request(app.getHttpServer())
       .post('/budgets')
       .set('Authorization', `Bearer ${accessToken}`)
       .send({ categoryId: expenseCategoryId, limit: 1000, month, year });
 
-    // Transacción base (expense)
     const txRes = await request(app.getHttpServer())
       .post('/transactions')
       .set('Authorization', `Bearer ${accessToken}`)
@@ -69,81 +63,72 @@ describe('Transacciones: movimientos y sus invariantes de saldo y presupuesto', 
         amount: 100,
         nature: 'expense',
         transactionDate: now.toISOString(),
-        description: 'Supermercado',
+        description: 'Groceries',
       });
     transactionId = txRes.body.id;
   });
 
   // =======================================================================
-  // POST /transactions
+  // POST /transactions  (HTTP contract: 201 + body, 400)
+  // DTO validation and exception mapping are covered by the unit tests; here
+  // we verify the route wires correctly into the real stack.
   // =======================================================================
   describe('POST /transactions', () => {
-    describe('cuando el movimiento es válido', () => {
-      it('crea un expense y descuenta el saldo', async () => {
-        const res = await request(app.getHttpServer())
-          .post('/transactions')
-          .set('Authorization', `Bearer ${accessToken}`)
-          .send({
-            accountId,
-            categoryId: expenseCategoryId,
-            amount: 50,
-            nature: 'expense',
-            transactionDate: now.toISOString(),
-            description: 'Café',
-          })
-          .expect(201);
+    it('returns 201 with the correct body when creating an expense', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/transactions')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({
+          accountId,
+          categoryId: expenseCategoryId,
+          amount: 50,
+          nature: 'expense',
+          transactionDate: now.toISOString(),
+          description: 'Coffee',
+        })
+        .expect(201);
 
-        expect(res.body).toHaveProperty('id');
-        expect(res.body).toHaveProperty('amount', 50);
-      });
-
-      it('crea un income y aumenta el saldo', async () => {
-        const res = await request(app.getHttpServer())
-          .post('/transactions')
-          .set('Authorization', `Bearer ${accessToken}`)
-          .send({
-            accountId,
-            categoryId: incomeCategoryId,
-            amount: 2000,
-            nature: 'income',
-            transactionDate: now.toISOString(),
-            description: 'Sueldo',
-          })
-          .expect(201);
-
-        expect(res.body).toHaveProperty('nature', 'income');
-      });
+      expect(res.body).toHaveProperty('id');
+      expect(res.body).toHaveProperty('amount', 50);
     });
 
-    describe('cuando viola una regla de negocio', () => {
-      it('rechaza nature y categoría incompatibles (400)', async () => {
-        // expense con categoría income
-        await request(app.getHttpServer())
-          .post('/transactions')
-          .set('Authorization', `Bearer ${accessToken}`)
-          .send({
-            accountId,
-            categoryId: incomeCategoryId,
-            amount: 50,
-            nature: 'expense',
-            transactionDate: now.toISOString(),
-          })
-          .expect(400);
-      });
+    it('returns 201 with the correct body when creating an income', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/transactions')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({
+          accountId,
+          categoryId: incomeCategoryId,
+          amount: 2000,
+          nature: 'income',
+          transactionDate: now.toISOString(),
+          description: 'Paycheck',
+        })
+        .expect(201);
+
+      expect(res.body).toHaveProperty('nature', 'income');
     });
 
-    describe('cuando la petición no está autenticada', () => {
-      it('responde 401 sin token', async () => {
-        await request(app.getHttpServer()).post('/transactions').send({}).expect(401);
-      });
+    it('rejects incompatible nature and category (400)', async () => {
+      await request(app.getHttpServer())
+        .post('/transactions')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({
+          accountId,
+          categoryId: incomeCategoryId,
+          amount: 50,
+          nature: 'expense',
+          transactionDate: now.toISOString(),
+        })
+        .expect(400);
     });
   });
 
   // =======================================================================
-  // GET /transactions
+  // GET /transactions  (real pagination against Postgres)
   // =======================================================================
   describe('GET /transactions', () => {
-    it('devuelve las transacciones del usuario con paginación', async () => {
+    it('returns the user transactions with pagination', async () => {
       const res = await request(app.getHttpServer())
         .get('/transactions?page=1&limit=10')
         .set('Authorization', `Bearer ${accessToken}`)
@@ -154,10 +139,10 @@ describe('Transacciones: movimientos y sus invariantes de saldo y presupuesto', 
   });
 
   // =======================================================================
-  // GET /transactions/account/:accountId
+  // GET /transactions/account/:accountId  (real filtering by account + ownership)
   // =======================================================================
   describe('GET /transactions/account/:accountId', () => {
-    it('devuelve las transacciones de la cuenta indicada', async () => {
+    it('returns the transactions for the given account', async () => {
       const res = await request(app.getHttpServer())
         .get(`/transactions/account/${accountId}`)
         .set('Authorization', `Bearer ${accessToken}`)
@@ -166,7 +151,7 @@ describe('Transacciones: movimientos y sus invariantes de saldo y presupuesto', 
       expect(Array.isArray(res.body.data ?? res.body)).toBe(true);
     });
 
-    it('rechaza el acceso a una cuenta ajena (403)', async () => {
+    it('rejects access to another user account (403)', async () => {
       const other = await request(app.getHttpServer())
         .post('/auth/register')
         .send({ name: 'Other User', email: 'other@example.com', password: 'Password1!' });
@@ -177,7 +162,7 @@ describe('Transacciones: movimientos y sus invariantes de saldo y presupuesto', 
         .expect(403);
     });
 
-    it('responde 404 para una cuenta inexistente', async () => {
+    it('responds 404 for a non-existent account', async () => {
       await request(app.getHttpServer())
         .get('/transactions/account/00000000-0000-0000-0000-000000000000')
         .set('Authorization', `Bearer ${accessToken}`)
@@ -186,10 +171,10 @@ describe('Transacciones: movimientos y sus invariantes de saldo y presupuesto', 
   });
 
   // =======================================================================
-  // GET /transactions/:id
+  // GET /transactions/:id  (persistence round-trip)
   // =======================================================================
   describe('GET /transactions/:id', () => {
-    it('devuelve la transacción solicitada', async () => {
+    it('returns the requested transaction', async () => {
       const res = await request(app.getHttpServer())
         .get(`/transactions/${transactionId}`)
         .set('Authorization', `Bearer ${accessToken}`)
@@ -198,7 +183,7 @@ describe('Transacciones: movimientos y sus invariantes de saldo y presupuesto', 
       expect(res.body).toHaveProperty('id', transactionId);
     });
 
-    it('responde 404 para un id inexistente', async () => {
+    it('responds 404 for a non-existent id', async () => {
       await request(app.getHttpServer())
         .get('/transactions/00000000-0000-0000-0000-000000000000')
         .set('Authorization', `Bearer ${accessToken}`)
@@ -207,11 +192,11 @@ describe('Transacciones: movimientos y sus invariantes de saldo y presupuesto', 
   });
 
   // =======================================================================
-  // DELETE /transactions/:id  (contrato HTTP — la reversión de saldo vive en
-  // el bloque de invariante de saldo)
+  // DELETE /transactions/:id  (HTTP contract — balance reversal lives in the
+  // balance-invariant block below)
   // =======================================================================
   describe('DELETE /transactions/:id', () => {
-    it('elimina la transacción y la deja inaccesible (204 → 404)', async () => {
+    it('deletes the transaction and makes it inaccessible (204 -> 404)', async () => {
       await request(app.getHttpServer())
         .delete(`/transactions/${transactionId}`)
         .set('Authorization', `Bearer ${accessToken}`)
@@ -223,7 +208,7 @@ describe('Transacciones: movimientos y sus invariantes de saldo y presupuesto', 
         .expect(404);
     });
 
-    it('rechaza eliminar una transacción ajena (403)', async () => {
+    it('rejects deleting another user transaction (403)', async () => {
       const other = await request(app.getHttpServer())
         .post('/auth/register')
         .send({ name: 'Other User', email: 'other@example.com', password: 'Password1!' });
@@ -236,10 +221,12 @@ describe('Transacciones: movimientos y sus invariantes de saldo y presupuesto', 
   });
 
   // =======================================================================
-  // Invariante: el saldo de la cuenta refleja los movimientos
+  // Invariant: the account balance reflects the movements
+  // Unit tests verify the balance with in-memory fakes; here we check that the
+  // real UoW commits the mutation and the GET returns it updated.
   // =======================================================================
-  describe('Invariante: el saldo de la cuenta refleja los movimientos', () => {
-    it('un expense reduce el currentBalance', async () => {
+  describe('Invariant: the account balance reflects the movements', () => {
+    it('an expense reduces the currentBalance', async () => {
       await request(app.getHttpServer())
         .post('/transactions')
         .set('Authorization', `Bearer ${accessToken}`)
@@ -249,7 +236,7 @@ describe('Transacciones: movimientos y sus invariantes de saldo y presupuesto', 
           amount: 200,
           nature: 'expense',
           transactionDate: now.toISOString(),
-          description: 'Expense extra',
+          description: 'Extra expense',
         })
         .expect(201);
 
@@ -258,11 +245,11 @@ describe('Transacciones: movimientos y sus invariantes de saldo y presupuesto', 
         .set('Authorization', `Bearer ${accessToken}`)
         .expect(200);
 
-      // balance inicial 5000, base expense 100, nuevo expense 200 → 4700
+      // initial balance 5000, base expense 100, new expense 200 -> 4700
       expect(accountRes.body.currentBalance).toBe(4700);
     });
 
-    it('un income aumenta el currentBalance', async () => {
+    it('an income increases the currentBalance', async () => {
       await request(app.getHttpServer())
         .post('/transactions')
         .set('Authorization', `Bearer ${accessToken}`)
@@ -272,7 +259,7 @@ describe('Transacciones: movimientos y sus invariantes de saldo y presupuesto', 
           amount: 3000,
           nature: 'income',
           transactionDate: now.toISOString(),
-          description: 'Sueldo extra',
+          description: 'Extra paycheck',
         })
         .expect(201);
 
@@ -281,11 +268,11 @@ describe('Transacciones: movimientos y sus invariantes de saldo y presupuesto', 
         .set('Authorization', `Bearer ${accessToken}`)
         .expect(200);
 
-      // balance inicial 5000, base expense 100, income 3000 → 7900
+      // initial balance 5000, base expense 100, income 3000 -> 7900
       expect(accountRes.body.currentBalance).toBe(7900);
     });
 
-    it('el saldo es correcto tras múltiples movimientos', async () => {
+    it('the balance is correct after multiple movements', async () => {
       await request(app.getHttpServer())
         .post('/transactions')
         .set('Authorization', `Bearer ${accessToken}`)
@@ -331,11 +318,11 @@ describe('Transacciones: movimientos y sus invariantes de saldo y presupuesto', 
       expect(accountRes.body.currentBalance).toBe(5400);
     });
 
-    it('al eliminar un expense se restaura el saldo previo', async () => {
-      // Verificar balance actual (5000 - 100 base = 4900)
+    it('deleting an expense restores the previous balance', async () => {
       const before = await request(app.getHttpServer())
         .get(`/accounts/${accountId}`)
         .set('Authorization', `Bearer ${accessToken}`);
+      // 5000 - 100(base) = 4900
       expect(before.body.currentBalance).toBe(4900);
 
       await request(app.getHttpServer())
@@ -349,7 +336,7 @@ describe('Transacciones: movimientos y sus invariantes de saldo y presupuesto', 
       expect(after.body.currentBalance).toBe(5000);
     });
 
-    it('al eliminar un income se revierte el crédito', async () => {
+    it('deleting an income reverts the credit', async () => {
       const incomeRes = await request(app.getHttpServer())
         .post('/transactions')
         .set('Authorization', `Bearer ${accessToken}`)
@@ -359,16 +346,16 @@ describe('Transacciones: movimientos y sus invariantes de saldo y presupuesto', 
           amount: 2000,
           nature: 'income',
           transactionDate: now.toISOString(),
-          description: 'Bono',
+          description: 'Bonus',
         })
         .expect(201);
 
       const incomeTransactionId = incomeRes.body.id;
 
-      // balance: 5000 - 100(base) + 2000 = 6900
       const before = await request(app.getHttpServer())
         .get(`/accounts/${accountId}`)
         .set('Authorization', `Bearer ${accessToken}`);
+      // 5000 - 100(base) + 2000 = 6900
       expect(before.body.currentBalance).toBe(6900);
 
       await request(app.getHttpServer())
@@ -376,21 +363,23 @@ describe('Transacciones: movimientos y sus invariantes de saldo y presupuesto', 
         .set('Authorization', `Bearer ${accessToken}`)
         .expect(204);
 
-      // balance: 6900 - 2000 = 4900
       const after = await request(app.getHttpServer())
         .get(`/accounts/${accountId}`)
         .set('Authorization', `Bearer ${accessToken}`);
+      // 6900 - 2000 = 4900
       expect(after.body.currentBalance).toBe(4900);
     });
   });
 
   // =======================================================================
-  // Invariante: el límite del presupuesto se respeta
-  // beforeEach crea budget limit=1000 y una transacción base de 100 → gastado=100
+  // Invariant: the budget limit is respected
+  // beforeEach creates budget limit=1000 and a base tx of 100 -> spent=100.
+  // Unit tests cover BudgetLimitExceededException with fakes; here the expense
+  // sum is real (ScopedExpenseChecker against Postgres).
   // =======================================================================
-  describe('Invariante: el límite del presupuesto se respeta', () => {
-    it('permite un expense que alcanza exactamente el límite', async () => {
-      // 100 (base) + 900 = 1000 = limit exacto → debe pasar
+  describe('Invariant: the budget limit is respected', () => {
+    it('allows an expense that reaches exactly the limit', async () => {
+      // 100 (base) + 900 = 1000 = exact limit -> must pass
       await request(app.getHttpServer())
         .post('/transactions')
         .set('Authorization', `Bearer ${accessToken}`)
@@ -400,13 +389,13 @@ describe('Transacciones: movimientos y sus invariantes de saldo y presupuesto', 
           amount: 900,
           nature: 'expense',
           transactionDate: now.toISOString(),
-          description: 'Hasta el límite',
+          description: 'Up to the limit',
         })
         .expect(201);
     });
 
-    it('rechaza el expense que supera el límite acumulado (422)', async () => {
-      // Primera: 100(base) + 400 = 500 → ok
+    it('rejects the expense that exceeds the accumulated limit (422)', async () => {
+      // 100(base) + 400 = 500 -> ok
       await request(app.getHttpServer())
         .post('/transactions')
         .set('Authorization', `Bearer ${accessToken}`)
@@ -416,11 +405,11 @@ describe('Transacciones: movimientos y sus invariantes de saldo y presupuesto', 
           amount: 400,
           nature: 'expense',
           transactionDate: now.toISOString(),
-          description: 'Primera compra',
+          description: 'First purchase',
         })
         .expect(201);
 
-      // Segunda: 500 + 600 = 1100 > 1000 → debe fallar
+      // 500 + 600 = 1100 > 1000 -> must fail
       await request(app.getHttpServer())
         .post('/transactions')
         .set('Authorization', `Bearer ${accessToken}`)
@@ -430,25 +419,25 @@ describe('Transacciones: movimientos y sus invariantes de saldo y presupuesto', 
           amount: 600,
           nature: 'expense',
           transactionDate: now.toISOString(),
-          description: 'Segunda compra que excede',
+          description: 'Second purchase that exceeds',
         })
         .expect(422);
     });
   });
 
   // =======================================================================
-  // Regla: las categorías de gasto requieren un budget en el período
+  // Rule: expense categories require a budget in the period (409)
+  // BudgetRequiredForExpenseTransactionException — the missing budgets row is
+  // checked against the real DB, not a fake.
   // =======================================================================
-  describe('Regla: las categorías de gasto requieren un budget en el período', () => {
-    it('rechaza un expense sin budget en el período (409)', async () => {
-      // Nueva categoría expense sin budget creado
+  describe('Rule: expense categories require a budget in the period', () => {
+    it('rejects an expense without a budget in the period (409)', async () => {
       const catRes = await request(app.getHttpServer())
         .post('/categories')
         .set('Authorization', `Bearer ${accessToken}`)
-        .send({ name: 'Transporte', nature: 'expense' })
+        .send({ name: 'Transport', nature: 'expense' })
         .expect(201);
 
-      // NO crear budget → debe fallar con 409
       await request(app.getHttpServer())
         .post('/transactions')
         .set('Authorization', `Bearer ${accessToken}`)
@@ -464,38 +453,35 @@ describe('Transacciones: movimientos y sus invariantes de saldo y presupuesto', 
   });
 
   // =======================================================================
-  // Regla: la cuenta debe tener fondos suficientes
+  // Rule: the account must have sufficient funds (422)
+  // InsufficientFundsException — current balance < expense amount.
   // =======================================================================
-  describe('Regla: la cuenta debe tener fondos suficientes', () => {
-    it('rechaza un expense que excede el balance (422)', async () => {
-      // Crear cuenta propia con balance pequeño
+  describe('Rule: the account must have sufficient funds', () => {
+    it('rejects an expense that exceeds the balance (422)', async () => {
       const smallAccountRes = await request(app.getHttpServer())
         .post('/accounts')
         .set('Authorization', `Bearer ${accessToken}`)
-        .send({ name: 'Cuenta pequeña', type: 'corriente', initialBalance: 100 })
+        .send({ name: 'Small account', type: 'corriente', initialBalance: 100 })
         .expect(201);
-      const smallAccountId = smallAccountRes.body.id;
 
-      // Crear categoría y budget propios para no interferir con el beforeEach
       const catRes = await request(app.getHttpServer())
         .post('/categories')
         .set('Authorization', `Bearer ${accessToken}`)
-        .send({ name: 'Gastos pequeños', nature: 'expense' })
+        .send({ name: 'Small expenses', nature: 'expense' })
         .expect(201);
-      const smallCatId = catRes.body.id;
 
       await request(app.getHttpServer())
         .post('/budgets')
         .set('Authorization', `Bearer ${accessToken}`)
-        .send({ categoryId: smallCatId, limit: 9999, month, year })
+        .send({ categoryId: catRes.body.id, limit: 9999, month, year })
         .expect(201);
 
       await request(app.getHttpServer())
         .post('/transactions')
         .set('Authorization', `Bearer ${accessToken}`)
         .send({
-          accountId: smallAccountId,
-          categoryId: smallCatId,
+          accountId: smallAccountRes.body.id,
+          categoryId: catRes.body.id,
           amount: 200,
           nature: 'expense',
           transactionDate: now.toISOString(),
@@ -503,33 +489,31 @@ describe('Transacciones: movimientos y sus invariantes de saldo y presupuesto', 
         .expect(422);
     });
 
-    it('rechaza un expense en una cuenta con balance cero (422)', async () => {
+    it('rejects an expense on a zero-balance account (422)', async () => {
       const zeroAccountRes = await request(app.getHttpServer())
         .post('/accounts')
         .set('Authorization', `Bearer ${accessToken}`)
-        .send({ name: 'Cuenta vacía', type: 'corriente', initialBalance: 0 })
+        .send({ name: 'Empty account', type: 'corriente', initialBalance: 0 })
         .expect(201);
-      const zeroAccountId = zeroAccountRes.body.id;
 
       const catRes = await request(app.getHttpServer())
         .post('/categories')
         .set('Authorization', `Bearer ${accessToken}`)
-        .send({ name: 'Gastos cero', nature: 'expense' })
+        .send({ name: 'Zero expenses', nature: 'expense' })
         .expect(201);
-      const zeroCatId = catRes.body.id;
 
       await request(app.getHttpServer())
         .post('/budgets')
         .set('Authorization', `Bearer ${accessToken}`)
-        .send({ categoryId: zeroCatId, limit: 9999, month, year })
+        .send({ categoryId: catRes.body.id, limit: 9999, month, year })
         .expect(201);
 
       await request(app.getHttpServer())
         .post('/transactions')
         .set('Authorization', `Bearer ${accessToken}`)
         .send({
-          accountId: zeroAccountId,
-          categoryId: zeroCatId,
+          accountId: zeroAccountRes.body.id,
+          categoryId: catRes.body.id,
           amount: 1,
           nature: 'expense',
           transactionDate: now.toISOString(),
@@ -539,10 +523,12 @@ describe('Transacciones: movimientos y sus invariantes de saldo y presupuesto', 
   });
 
   // =======================================================================
-  // Regla: las cuentas archivadas no aceptan movimientos
+  // Rule: archived accounts reject movements (409)
+  // CannotOperateOnArchivedAccountException — checked against the persisted
+  // isArchived flag in Postgres, not an in-memory mock.
   // =======================================================================
-  describe('Regla: las cuentas archivadas no aceptan movimientos', () => {
-    it('rechaza una transacción en una cuenta archivada (409)', async () => {
+  describe('Rule: archived accounts reject movements', () => {
+    it('rejects a transaction on an archived account (409)', async () => {
       await request(app.getHttpServer())
         .patch(`/accounts/${accountId}/archive`)
         .set('Authorization', `Bearer ${accessToken}`)
@@ -561,7 +547,7 @@ describe('Transacciones: movimientos y sus invariantes de saldo y presupuesto', 
         .expect(409);
     });
 
-    it('permite la transacción tras desarchivar la cuenta', async () => {
+    it('allows the transaction after unarchiving the account', async () => {
       await request(app.getHttpServer())
         .patch(`/accounts/${accountId}/archive`)
         .set('Authorization', `Bearer ${accessToken}`)
@@ -581,9 +567,18 @@ describe('Transacciones: movimientos y sus invariantes de saldo y presupuesto', 
           amount: 50,
           nature: 'expense',
           transactionDate: now.toISOString(),
-          description: 'Tras unarchive',
+          description: 'After unarchive',
         })
         .expect(201);
+    });
+  });
+
+  // =======================================================================
+  // Ownership barrier (smoke of the real global guard — not repeated per verb)
+  // =======================================================================
+  describe('ownership barrier', () => {
+    it('responds 401 without a token (global guard active)', async () => {
+      await request(app.getHttpServer()).post('/transactions').send({}).expect(401);
     });
   });
 });

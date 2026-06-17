@@ -3,10 +3,10 @@ import request from 'supertest';
 import { createTestApp } from '../../helpers/app-bootstrap';
 import { cleanDatabase } from '../../helpers/db-cleaner';
 
-describe('Autenticación: registro, rotación de refresh y revocación de familia', () => {
+describe('Auth: registration, refresh rotation and family revocation', () => {
   let app: INestApplication;
 
-  // Alta de un usuario; devuelve el par de tokens emitido.
+  // Registers a user; returns the issued token pair.
   const register = (email = 'user@example.com') =>
     request(app.getHttpServer())
       .post('/auth/register')
@@ -25,39 +25,39 @@ describe('Autenticación: registro, rotación de refresh y revocación de famili
   });
 
   // =======================================================================
-  // POST /auth/register  (round-trip real + unicidad de email impuesta por la DB)
-  // El mapeo de errores y la validación de DTO ya están en los unit tests;
-  // aquí sólo probamos lo que necesita Postgres real.
+  // POST /auth/register  (real round-trip + email uniqueness enforced by the DB)
+  // Error mapping and DTO validation are covered by the unit tests; here we only
+  // test what needs a real Postgres.
   // =======================================================================
   describe('POST /auth/register', () => {
-    it('registra y el accessToken devuelto funciona en una ruta protegida', async () => {
+    it('registers and the returned accessToken works on a protected route', async () => {
       const res = await register().expect(201);
 
       expect(res.body).toHaveProperty('accessToken');
       expect(res.body).toHaveProperty('refreshToken');
 
-      // El token sirve de verdad: el guard JWT real lo acepta en una ruta protegida.
+      // The token really works: the real JWT guard accepts it on a protected route.
       await request(app.getHttpServer())
         .get('/accounts')
         .set('Authorization', `Bearer ${res.body.accessToken}`)
         .expect(200);
     });
 
-    it('rechaza un email duplicado (409) — constraint real, no pre-check', async () => {
+    it('rejects a duplicate email (409) — real constraint, not a pre-check', async () => {
       await register('dup@example.com').expect(201);
 
-      // El 409 nace del UNIQUE de la DB → catch 23505 → UserAlreadyExistsException.
+      // The 409 comes from the DB UNIQUE -> catch 23505 -> UserAlreadyExistsException.
       await register('dup@example.com').expect(409);
     });
   });
 
   // =======================================================================
-  // POST /auth/refresh  (LA JOYA: rotación + replay + revocación de familia)
-  // El unit test usa un UoW mockeado; aquí se ejecuta el SQL real de revocación
-  // y la persistencia de la cadena de tokens.
+  // POST /auth/refresh  (THE JEWEL: rotation + replay + family revocation)
+  // The unit test uses a mocked UoW; here the real revocation SQL runs and the
+  // token chain is actually persisted.
   // =======================================================================
   describe('POST /auth/refresh', () => {
-    it('entrega un par nuevo y el refreshToken rota (cambia)', async () => {
+    it('issues a new pair and the refreshToken rotates (changes)', async () => {
       const { refreshToken: r1 } = (await register()).body;
 
       const res = await request(app.getHttpServer())
@@ -67,26 +67,26 @@ describe('Autenticación: registro, rotación de refresh y revocación de famili
 
       expect(res.body).toHaveProperty('accessToken');
       expect(res.body.refreshToken).toBeDefined();
-      expect(res.body.refreshToken).not.toBe(r1); // rotación real
+      expect(res.body.refreshToken).not.toBe(r1); // real rotation
     });
 
-    it('reusar el token anterior tras rotar responde 401 (replay)', async () => {
+    it('reusing the previous token after rotating responds 401 (replay)', async () => {
       const { refreshToken: r1 } = (await register()).body;
 
-      // Rota R1 → R2; R1 queda revocado.
+      // Rotate R1 -> R2; R1 becomes revoked.
       await request(app.getHttpServer())
         .post('/auth/refresh')
         .send({ refreshToken: r1 })
         .expect(200);
 
-      // Reusar R1 (ya rotado) es un replay → 401.
+      // Reusing R1 (already rotated) is a replay -> 401.
       await request(app.getHttpServer())
         .post('/auth/refresh')
         .send({ refreshToken: r1 })
         .expect(401);
     });
 
-    it('el replay revoca toda la familia: el token nuevo también queda inválido (401)', async () => {
+    it('replay revokes the whole family: the new token also becomes invalid (401)', async () => {
       const { refreshToken: r1 } = (await register()).body;
 
       const r2 = (
@@ -96,20 +96,20 @@ describe('Autenticación: registro, rotación de refresh y revocación de famili
           .expect(200)
       ).body.refreshToken;
 
-      // Replay de R1 → revoca la familia entera (UPDATE ... WHERE family_id).
+      // Replay of R1 -> revokes the entire family (UPDATE ... WHERE family_id).
       await request(app.getHttpServer())
         .post('/auth/refresh')
         .send({ refreshToken: r1 })
         .expect(401);
 
-      // R2 pertenecía a la misma familia → también queda inválido.
+      // R2 belonged to the same family -> also invalid now.
       await request(app.getHttpServer())
         .post('/auth/refresh')
         .send({ refreshToken: r2 })
         .expect(401);
     });
 
-    it('rechaza un refreshToken corrupto (401)', async () => {
+    it('rejects a corrupt refreshToken (401)', async () => {
       await request(app.getHttpServer())
         .post('/auth/refresh')
         .send({ refreshToken: 'not.a.valid.token' })
@@ -118,10 +118,10 @@ describe('Autenticación: registro, rotación de refresh y revocación de famili
   });
 
   // =======================================================================
-  // POST /auth/logout  (revocación real en servidor; endpoint público)
+  // POST /auth/logout  (real server-side revocation; public endpoint)
   // =======================================================================
   describe('POST /auth/logout', () => {
-    it('revoca el refresh: un refresh posterior con ese token responde 401', async () => {
+    it('revokes the refresh: a later refresh with that token responds 401', async () => {
       const { refreshToken } = (await register()).body;
 
       await request(app.getHttpServer())
@@ -129,17 +129,17 @@ describe('Autenticación: registro, rotación de refresh y revocación de famili
         .send({ refreshToken })
         .expect(204);
 
-      // Tras el logout, ese refresh ya no sirve.
+      // After logout, that refresh no longer works.
       await request(app.getHttpServer())
         .post('/auth/refresh')
         .send({ refreshToken })
         .expect(401);
     });
 
-    it('funciona sin access token (204) — endpoint público', async () => {
+    it('works without an access token (204) — public endpoint', async () => {
       const { refreshToken } = (await register()).body;
 
-      // No se envía Authorization: el logout debe ser alcanzable igual.
+      // No Authorization sent: logout must still be reachable.
       await request(app.getHttpServer())
         .post('/auth/logout')
         .send({ refreshToken })

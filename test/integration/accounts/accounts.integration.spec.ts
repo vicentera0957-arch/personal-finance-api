@@ -3,7 +3,7 @@ import request from 'supertest';
 import { createTestApp } from '../../helpers/app-bootstrap';
 import { cleanDatabase } from '../../helpers/db-cleaner';
 
-describe('Cuentas: persistencia del ciclo de vida y bloqueo por referencias reales', () => {
+describe('Accounts: lifecycle persistence and FK-reference blocking against the real DB', () => {
   let app: INestApplication;
   let accessToken: string;
   let accountId: string;
@@ -31,16 +31,16 @@ describe('Cuentas: persistencia del ciclo de vida y bloqueo por referencias real
     const account = await request(app.getHttpServer())
       .post('/accounts')
       .set('Authorization', `Bearer ${accessToken}`)
-      .send({ name: 'Cuenta Corriente', type: 'corriente', initialBalance: 5000 });
+      .send({ name: 'Checking Account', type: 'corriente', initialBalance: 5000 });
     accountId = account.body.id;
   });
 
-  // Crea una transacción expense en la cuenta (requiere categoría expense + budget).
+  // Creates an expense transaction on the account (needs an expense category + budget).
   const createExpenseTransaction = async (): Promise<string> => {
     const cat = await request(app.getHttpServer())
       .post('/categories')
       .set('Authorization', `Bearer ${accessToken}`)
-      .send({ name: 'Alimentación', nature: 'expense' });
+      .send({ name: 'Food', nature: 'expense' });
 
     await request(app.getHttpServer())
       .post('/budgets')
@@ -56,35 +56,35 @@ describe('Cuentas: persistencia del ciclo de vida y bloqueo por referencias real
         amount: 100,
         nature: 'expense',
         transactionDate: now.toISOString(),
-        description: 'Compra',
+        description: 'Purchase',
       });
     return tx.body.id;
   };
 
   // =======================================================================
-  // Round-trip de creación: el POST persiste y el GET lo devuelve con el saldo
-  // inicial sembrado. Prueba que mapper + esquema migrado + ORM concuerdan.
+  // Creation round-trip: POST persists and GET returns it with the seeded
+  // initial balance. Proves mapper + migrated schema + ORM agree.
   // =======================================================================
-  describe('POST /accounts → GET /accounts/:id', () => {
-    it('crea y recupera la cuenta con el saldo inicial sembrado', async () => {
+  describe('POST /accounts -> GET /accounts/:id', () => {
+    it('creates and retrieves the account with the seeded initial balance', async () => {
       const res = await request(app.getHttpServer())
         .get(`/accounts/${accountId}`)
         .set('Authorization', `Bearer ${accessToken}`)
         .expect(200);
 
       expect(res.body).toHaveProperty('id', accountId);
-      expect(res.body).toHaveProperty('name', 'Cuenta Corriente');
+      expect(res.body).toHaveProperty('name', 'Checking Account');
       expect(res.body).toHaveProperty('currentBalance', 5000);
       expect(res.body).toHaveProperty('isArchived', false);
     });
   });
 
   // =======================================================================
-  // El ciclo de vida PERSISTE: la regla (no archivar dos veces, etc.) ya está
-  // en el dominio/use case; aquí probamos que el UoW real commitea el flag a Postgres.
+  // The lifecycle PERSISTS: the rule (no double-archive, etc.) is already in
+  // the domain/use case; here we check the real UoW commits the flag to Postgres.
   // =======================================================================
   describe('PATCH /accounts/:id/archive · /unarchive', () => {
-    it('archiva y el GET posterior muestra isArchived=true; desarchiva y vuelve a false', async () => {
+    it('archives (GET shows isArchived=true) and unarchives (back to false)', async () => {
       await request(app.getHttpServer())
         .patch(`/accounts/${accountId}/archive`)
         .set('Authorization', `Bearer ${accessToken}`)
@@ -110,12 +110,12 @@ describe('Cuentas: persistencia del ciclo de vida y bloqueo por referencias real
   });
 
   // =======================================================================
-  // Cross-module: el FK real (transactions → accounts) bloquea el borrado.
-  // El unit del controller mockea AccountInUseException; sólo la DB real prueba
-  // que el FK existe y dispara (catch 23503).
+  // Cross-module: the real FK (transactions -> accounts) blocks deletion.
+  // The controller unit test mocks AccountInUseException; only the real DB
+  // proves the FK exists and fires (catch 23503).
   // =======================================================================
-  describe('Cross-module: DELETE /accounts/:id con movimientos', () => {
-    it('rechaza eliminar una cuenta con una transacción asociada (409)', async () => {
+  describe('Cross-module: DELETE /accounts/:id with movements', () => {
+    it('rejects deleting an account with an associated transaction (409)', async () => {
       await createExpenseTransaction();
 
       await request(app.getHttpServer())
@@ -124,7 +124,7 @@ describe('Cuentas: persistencia del ciclo de vida y bloqueo por referencias real
         .expect(409);
     });
 
-    it('permite eliminar la cuenta tras borrar la transacción (204)', async () => {
+    it('allows deleting the account after deleting the transaction (204)', async () => {
       const transactionId = await createExpenseTransaction();
 
       await request(app.getHttpServer())
@@ -140,10 +140,10 @@ describe('Cuentas: persistencia del ciclo de vida y bloqueo por referencias real
   });
 
   // =======================================================================
-  // Barrera de propiedad (1 smoke de la cadena real; no se repite por verbo).
+  // Ownership barrier (one smoke of the real chain; not repeated per verb).
   // =======================================================================
-  describe('barrera de propiedad', () => {
-    it('GET /accounts/:id de otro usuario responde 403 (cadena real)', async () => {
+  describe('ownership barrier', () => {
+    it('GET /accounts/:id of another user responds 403 (real chain)', async () => {
       const other = await request(app.getHttpServer())
         .post('/auth/register')
         .send({ name: 'Other User', email: 'other@example.com', password: 'Password1!' });

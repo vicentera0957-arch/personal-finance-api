@@ -3,7 +3,7 @@ import request from 'supertest';
 import { createTestApp } from '../../helpers/app-bootstrap';
 import { cleanDatabase } from '../../helpers/db-cleaner';
 
-describe('Categorías: unicidad y bloqueo por uso, contra la DB real', () => {
+describe('Categories: uniqueness and in-use blocking, against the real DB', () => {
   let app: INestApplication;
   let accessToken: string;
   let categoryId: string;
@@ -28,45 +28,45 @@ describe('Categorías: unicidad y bloqueo por uso, contra la DB real', () => {
       .send({ name: 'Test User', email: 'user@example.com', password: 'Password1!' });
     accessToken = auth.body.accessToken;
 
-    // Categoría base: expense 'Alimentación'.
+    // Base category: expense 'Food'.
     const cat = await request(app.getHttpServer())
       .post('/categories')
       .set('Authorization', `Bearer ${accessToken}`)
-      .send({ name: 'Alimentación', nature: 'expense' });
+      .send({ name: 'Food', nature: 'expense' });
     categoryId = cat.body.id;
   });
 
   // =======================================================================
-  // Unicidad real (userId, name, nature): la constraint existe en el esquema
-  // migrado y dispara 409 (catch 23505). No hay pre-check en categorías.
+  // Real uniqueness (userId, name, nature): the constraint exists in the
+  // migrated schema and fires 409 (catch 23505). There is no pre-check on categories.
   // =======================================================================
   describe('POST /categories', () => {
-    it('crea una categoría y el GET la devuelve (round-trip)', async () => {
+    it('creates a category and GET returns it (round-trip)', async () => {
       const res = await request(app.getHttpServer())
         .get(`/categories/${categoryId}`)
         .set('Authorization', `Bearer ${accessToken}`)
         .expect(200);
 
       expect(res.body).toHaveProperty('id', categoryId);
-      expect(res.body).toHaveProperty('name', 'Alimentación');
+      expect(res.body).toHaveProperty('name', 'Food');
       expect(res.body).toHaveProperty('nature', 'expense');
     });
 
-    it('rechaza un duplicado (mismo name+nature) con 409 — constraint real', async () => {
+    it('rejects a duplicate (same name+nature) with 409 — real constraint', async () => {
       await request(app.getHttpServer())
         .post('/categories')
         .set('Authorization', `Bearer ${accessToken}`)
-        .send({ name: 'Alimentación', nature: 'expense' })
+        .send({ name: 'Food', nature: 'expense' })
         .expect(409);
     });
   });
 
   // =======================================================================
-  // Cross-module: el FK real bloquea el borrado desde DOS agregados
-  // referenciantes (budgets y transactions). catch 23503 → CategoryInUseException.
+  // Cross-module: the real FK blocks deletion from TWO referencing aggregates
+  // (budgets and transactions). catch 23503 -> CategoryInUseException.
   // =======================================================================
-  describe('Cross-module: DELETE /categories/:id en uso', () => {
-    it('rechaza eliminar una categoría con un budget asociado (409)', async () => {
+  describe('Cross-module: DELETE /categories/:id in use', () => {
+    it('rejects deleting a category with an associated budget (409)', async () => {
       await request(app.getHttpServer())
         .post('/budgets')
         .set('Authorization', `Bearer ${accessToken}`)
@@ -79,11 +79,11 @@ describe('Categorías: unicidad y bloqueo por uso, contra la DB real', () => {
         .expect(409);
     });
 
-    it('rechaza eliminar una categoría con una transacción asociada (409)', async () => {
+    it('rejects deleting a category with an associated transaction (409)', async () => {
       const account = await request(app.getHttpServer())
         .post('/accounts')
         .set('Authorization', `Bearer ${accessToken}`)
-        .send({ name: 'Cuenta', type: 'corriente', initialBalance: 5000 });
+        .send({ name: 'Account', type: 'corriente', initialBalance: 5000 });
 
       await request(app.getHttpServer())
         .post('/budgets')
@@ -99,7 +99,7 @@ describe('Categorías: unicidad y bloqueo por uso, contra la DB real', () => {
           amount: 100,
           nature: 'expense',
           transactionDate: now.toISOString(),
-          description: 'Compra',
+          description: 'Purchase',
         })
         .expect(201);
 
@@ -109,11 +109,11 @@ describe('Categorías: unicidad y bloqueo por uso, contra la DB real', () => {
         .expect(409);
     });
 
-    it('permite eliminarla tras remover budget y transacción (204)', async () => {
+    it('allows deleting it after removing budget and transaction (204)', async () => {
       const account = await request(app.getHttpServer())
         .post('/accounts')
         .set('Authorization', `Bearer ${accessToken}`)
-        .send({ name: 'Cuenta', type: 'corriente', initialBalance: 5000 });
+        .send({ name: 'Account', type: 'corriente', initialBalance: 5000 });
 
       const budget = await request(app.getHttpServer())
         .post('/budgets')
@@ -129,10 +129,10 @@ describe('Categorías: unicidad y bloqueo por uso, contra la DB real', () => {
           amount: 100,
           nature: 'expense',
           transactionDate: now.toISOString(),
-          description: 'Compra',
+          description: 'Purchase',
         });
 
-      // Remover en orden inverso a las dependencias: transacción → budget → categoría.
+      // Remove in reverse dependency order: transaction -> budget -> category.
       await request(app.getHttpServer())
         .delete(`/transactions/${tx.body.id}`)
         .set('Authorization', `Bearer ${accessToken}`)
