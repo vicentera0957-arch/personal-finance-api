@@ -1,0 +1,24 @@
+# Normalización de fin de línea.
+#
+# Problema que resuelve: sin esto, el fin de línea de cada archivo depende del
+# `core.autocrlf` de cada desarrollador. En Windows, git checkoutea CRLF y
+# prettier (endOfLine) escupe miles de errores `␍`. En Linux/CI es LF y pasa.
+# Resultado: lint roto local + diffs contaminados por cambios de fin de línea.
+#
+# `* text=auto eol=lf` → git guarda SIEMPRE LF en el repo (autodetecta binarios).
+# Esta es la garantía fuerte; prettier (endOfLine: "auto") queda como capa
+# tolerante para el working tree local.
+* text=auto eol=lf
+
+# Shell scripts SIEMPRE LF: el docker-entrypoint.sh corre en Alpine. Un CRLF en
+# el shebang (`#!/bin/sh\r`) rompe el arranque del contenedor con "not found".
+*.sh text eol=lf
+
+# Binarios explícitos — nunca normalizar (evita corrupción).
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.woff  binary
+*.woff2 binary
