@@ -94,7 +94,7 @@ describe('CreateTransactionUseCase', () => {
     }
   };
 
-  it('should create an expense transaction and update account balance', async () => {
+  it('should create an expense transaction and reduce account balance', async () => {
     seedValidExpenseContext({ budgetLimit: 500 });
 
     const result = await useCase.execute({

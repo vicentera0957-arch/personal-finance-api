@@ -15,7 +15,7 @@ describe('Transaction Entity', () => {
   };
 
   describe('create()', () => {
-    it('debe crear una transacción con todos los campos asignados correctamente', () => {
+    it('creates a transaction with all fields assigned correctly', () => {
       const tx = Transaction.create(mockProps);
 
       expect(tx.id).toBe(mockProps.id);
@@ -28,7 +28,7 @@ describe('Transaction Entity', () => {
       expect(tx.transactionDate).toEqual(mockProps.transactionDate);
     });
 
-    it('debe generar createdAt automáticamente cercano a Date.now()', () => {
+    it('generates createdAt automatically close to Date.now()', () => {
       const beforeCreate = Date.now();
       const tx = Transaction.create(mockProps);
       const afterCreate = Date.now();
@@ -37,7 +37,7 @@ describe('Transaction Entity', () => {
       expect(tx.createdAt.getTime()).toBeLessThanOrEqual(afterCreate);
     });
 
-    it('debe asignar null a description cuando no se provee', () => {
+    it('assigns null to description when not provided', () => {
       const { description: _description, ...propsWithoutDescription } =
         mockProps;
 
@@ -46,7 +46,7 @@ describe('Transaction Entity', () => {
       expect(tx.description).toBeNull();
     });
 
-    it('debe asignar la description cuando se provee', () => {
+    it('assigns the description when provided', () => {
       const tx = Transaction.create(mockProps);
 
       expect(tx.description).toBe('Groceries');
@@ -61,7 +61,7 @@ describe('Transaction Entity', () => {
       createdAt: originalCreatedAt,
     };
 
-    it('debe reconstruir una transacción con todos los campos asignados correctamente', () => {
+    it('reconstitutes a transaction with all fields assigned correctly', () => {
       const tx = Transaction.reconstitute(reconstructProps);
 
       expect(tx.id).toBe(reconstructProps.id);
@@ -74,13 +74,13 @@ describe('Transaction Entity', () => {
       expect(tx.transactionDate).toEqual(reconstructProps.transactionDate);
     });
 
-    it('debe preservar el createdAt original (no generar uno nuevo)', () => {
+    it('preserves the original createdAt (does not generate a new one)', () => {
       const tx = Transaction.reconstitute(reconstructProps);
 
       expect(tx.createdAt).toEqual(originalCreatedAt);
     });
 
-    it('debe asignar null a description cuando no se provee', () => {
+    it('assigns null to description when not provided', () => {
       const { description: _description, ...propsWithoutDescription } =
         reconstructProps;
 
@@ -89,7 +89,7 @@ describe('Transaction Entity', () => {
       expect(tx.description).toBeNull();
     });
 
-    it('debe asignar la description cuando se provee', () => {
+    it('assigns the description when provided', () => {
       const tx = Transaction.reconstitute(reconstructProps);
 
       expect(tx.description).toBe('Groceries');

@@ -91,14 +91,11 @@ describe('UserRepositoryImpl', () => {
       expect(saved.email.getValue()).toBe('a@b.cl');
     });
 
-    // Bug E — dos concurrent POST /auth/register con el mismo email:
-    // ambas pasan el pre-check de CreateUserUseCase, la segunda falla
-    // en el INSERT con constraint violation (23505). El repo debe
-    // mapear QueryFailedError → UserAlreadyExistsException → 409.
+    // concurrent POST /auth/register, should be mapped to a domain exception (23502)
     it('should throw UserAlreadyExistsException on unique email violation (23505)', async () => {
       const user = makeUser({ id: 'user-1', email: 'a@b.cl' });
 
-      // Simula que Postgres rechaza el INSERT por constraint de unicidad
+      // Mocking error code 23505 (unique violation) from the database driver
       const dbError = Object.assign(
         new QueryFailedError('INSERT', [], new Error()),
         {
