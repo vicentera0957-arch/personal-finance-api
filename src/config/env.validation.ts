@@ -21,14 +21,45 @@ export const envValidationSchema = Joi.object({
     .default('info'),
 
   // Database
-  DB_HOST: Joi.string().default('localhost'),
+  // En producción, host/user/password/name son REQUIRED — sin default.
+  // Por qué: un default de dev (ej. 'finance_password') haría que un deploy
+  // con la var olvidada arrancara silenciosamente con credenciales de juguete
+  // en vez de fallar al arrancar. Fail-fast > fallback silencioso para secretos.
+  // En dev/test conservan el default cómodo.
+  DB_HOST: Joi.string().when('NODE_ENV', {
+    is: 'production',
+    then: Joi.required(),
+    otherwise: Joi.string().default('localhost'),
+  }),
   DB_PORT: Joi.number().default(5432),
-  DB_USER: Joi.string().default('finance_user'),
-  DB_PASSWORD: Joi.string().default('finance_password'),
-  DB_NAME: Joi.string().default('personal_finance_db'),
+  DB_USER: Joi.string().when('NODE_ENV', {
+    is: 'production',
+    then: Joi.required(),
+    otherwise: Joi.string().default('finance_user'),
+  }),
+  DB_PASSWORD: Joi.string().when('NODE_ENV', {
+    is: 'production',
+    then: Joi.required().messages({
+      'any.required':
+        'DB_PASSWORD es required en producción — no se permite el default de dev.',
+    }),
+    otherwise: Joi.string().default('finance_password'),
+  }),
+  DB_NAME: Joi.string().when('NODE_ENV', {
+    is: 'production',
+    then: Joi.required(),
+    otherwise: Joi.string().default('personal_finance_db'),
+  }),
   // synchronize debe estar SIEMPRE en false en production. En dev es true.
   DB_SYNCHRONIZE: Joi.boolean().default(false),
   DB_LOGGING: Joi.boolean().default(false),
+  // TLS hacia la DB — los Postgres gestionados (Neon/Supabase/RDS) lo exigen.
+  DB_SSL: Joi.boolean().default(false),
+  // rejectUnauthorized=false solo si la DB usa certificado self-signed.
+  DB_SSL_REJECT_UNAUTHORIZED: Joi.boolean().default(true),
+  // Tamaño del pool de conexiones por instancia — evita agotar las conexiones del server.
+  DB_POOL_MAX: Joi.number().default(10),
+  DB_CONNECTION_TIMEOUT_MS: Joi.number().default(10_000),
 
   // JWT — required, no defaults: el app debe fallar al arrancar si faltan
   JWT_SECRET: Joi.string().min(32).required().messages({
@@ -47,7 +78,22 @@ export const envValidationSchema = Joi.object({
   JWT_REFRESH_EXPIRES_IN: Joi.string().default('7d'),
 
   // CORS — lista separada por comas. '*' en dev, dominios explícitos en prod.
-  CORS_ORIGIN: Joi.string().default('*'),
+  // En production se PROHÍBE '*': combinado con credentials:true es un riesgo
+  // (refleja cualquier origen y permite credenciales cross-site).
+  CORS_ORIGIN: Joi.string()
+    .default('*')
+    .when('NODE_ENV', {
+      is: 'production',
+      then: Joi.string().invalid('*').required().messages({
+        'any.invalid':
+          'CORS_ORIGIN no puede ser "*" en producción. Definí dominios explícitos separados por coma (ej: https://app.midominio.com).',
+      }),
+    }),
+
+  // Nº de proxies de confianza delante de la app (LB / reverse proxy).
+  // >0 hace que Express lea la IP real del cliente desde X-Forwarded-For,
+  // crítico para que el rate-limit por IP del throttler funcione en prod.
+  TRUST_PROXY: Joi.number().default(0),
 
   // Rate limiting (Throttler)
   // TTL en ms. LIMIT = max requests por IP durante ese TTL.
@@ -57,8 +103,13 @@ export const envValidationSchema = Joi.object({
   THROTTLE_AUTH_TTL: Joi.number().default(60_000),
   THROTTLE_AUTH_LIMIT: Joi.number().default(5),
 
-  // Redis — cache y throttler storage
-  REDIS_HOST: Joi.string().default('localhost'),
+  // Redis — cache y throttler storage. Host required en prod (mismo motivo
+  // que la DB: evita que un deploy mal configurado apunte a localhost).
+  REDIS_HOST: Joi.string().when('NODE_ENV', {
+    is: 'production',
+    then: Joi.required(),
+    otherwise: Joi.string().default('localhost'),
+  }),
   REDIS_PORT: Joi.number().default(6379),
   REDIS_PASSWORD: Joi.string().optional().allow(''),
   REDIS_KEY_PREFIX: Joi.string().default('pf:'),
