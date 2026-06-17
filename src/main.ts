@@ -6,6 +6,8 @@ import { Logger } from 'nestjs-pino';
 import helmet from 'helmet';
 
 import { AppModule } from './app.module';
+import { MetricsService } from './shared/infrastructure/metrics/metrics.service';
+import { httpMetricsMiddleware } from './shared/infrastructure/metrics/http-metrics.middleware';
 
 /**
  * Bootstrap de la app — hardening de producción.
@@ -27,6 +29,14 @@ async function bootstrap() {
   // Pino como logger global
   app.useLogger(app.get(Logger));
 
+  // Trust proxy: detrás de un LB/reverse proxy, Express debe leer la IP real
+  // del cliente desde X-Forwarded-For. Sin esto el rate-limit por IP del
+  // throttler vería la IP del balanceador (un único cubo global para todos).
+  const trustProxy = config.get<number>('TRUST_PROXY', 0);
+  if (trustProxy > 0) {
+    app.getHttpAdapter().getInstance().set('trust proxy', trustProxy);
+  }
+
   // Helmet: cabeceras HTTP de seguridad (X-Frame-Options, CSP, HSTS, etc)
   app.use(helmet());
 
@@ -39,7 +49,11 @@ async function bootstrap() {
   });
 
   // Prefix para versionado implícito; el frontend sabe que todo va a /api/v1
-  app.setGlobalPrefix('api/v1', { exclude: ['health'] });
+  app.setGlobalPrefix('api/v1', { exclude: ['health', 'ready', 'metrics'] });
+
+  // Métricas Prometheus: middleware global que cronometra cada request y la
+  // registra en res 'finish' (status code final, post exception-filter).
+  app.use(httpMetricsMiddleware(app.get(MetricsService)));
 
   // Validación global — whitelist strip props extra, forbidNonWhitelisted rechaza
   app.useGlobalPipes(

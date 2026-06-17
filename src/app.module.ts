@@ -20,6 +20,8 @@ import { AuthModule } from './modules/auth/auth.module';
 import { JwtAuthGuard } from './modules/auth/infrastructure/guards/jwt-auth.guard';
 import { envValidationSchema } from './config/env.validation';
 import { CacheModule } from './shared/infrastructure/cache/cache.module';
+import { HealthModule } from './shared/infrastructure/health/health.module';
+import { MetricsModule } from './shared/infrastructure/metrics/metrics.module';
 
 /**
  * Módulo raíz — cablea:
@@ -111,10 +113,29 @@ import { CacheModule } from './shared/infrastructure/cache/cache.module';
           config.get<string>('NODE_ENV') !== 'production' &&
           config.get<boolean>('DB_SYNCHRONIZE', false),
         logging: config.get<boolean>('DB_LOGGING', false),
+        // TLS hacia la DB — requerido por la mayoría de Postgres gestionados.
+        ssl: config.get<boolean>('DB_SSL', false)
+          ? {
+              rejectUnauthorized: config.get<boolean>(
+                'DB_SSL_REJECT_UNAUTHORIZED',
+                true,
+              ),
+            }
+          : false,
+        // Límites del pool — evita agotar las conexiones del servidor de DB.
+        extra: {
+          max: config.get<number>('DB_POOL_MAX', 10),
+          connectionTimeoutMillis: config.get<number>(
+            'DB_CONNECTION_TIMEOUT_MS',
+            10_000,
+          ),
+        },
       }),
     }),
 
     CacheModule,
+    HealthModule,
+    MetricsModule,
     AuthModule,
     UsersModule,
     AccountsModule,
