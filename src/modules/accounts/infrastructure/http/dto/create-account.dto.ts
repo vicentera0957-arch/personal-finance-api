@@ -10,14 +10,21 @@ import {
 import { ApiProperty } from '@nestjs/swagger';
 
 export class CreateAccountDto {
-  @ApiProperty({ example: 'Cuenta Corriente Banco', minLength: 2, maxLength: 100 })
+  @ApiProperty({
+    example: 'Cuenta Corriente Banco',
+    minLength: 2,
+    maxLength: 100,
+  })
   @IsString()
   @IsNotEmpty()
   @MinLength(2)
   @MaxLength(100)
   name: string;
 
-  @ApiProperty({ example: 'corriente', enum: ['ahorro', 'corriente', 'vista', 'ruta', 'otros'] })
+  @ApiProperty({
+    example: 'corriente',
+    enum: ['ahorro', 'corriente', 'vista', 'ruta', 'otros'],
+  })
   @IsString()
   @IsIn(['ahorro', 'corriente', 'vista', 'ruta', 'otros'])
   type: string;

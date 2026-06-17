@@ -59,9 +59,16 @@ export class UsersController {
   @Get(':id')
   @ApiOperation({ summary: 'Obtener usuario por ID' })
   @ApiParam({ name: 'id', description: 'UUID del usuario' })
-  @ApiResponse({ status: 200, description: 'Usuario encontrado', type: UserResponseDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Usuario encontrado',
+    type: UserResponseDto,
+  })
   @ApiResponse({ status: 404, description: 'Usuario no encontrado' })
-  @ApiResponse({ status: 403, description: 'No autorizado para ver este usuario' })
+  @ApiResponse({
+    status: 403,
+    description: 'No autorizado para ver este usuario',
+  })
   async findById(
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() user: AuthenticatedUser,
@@ -87,10 +94,17 @@ export class UsersController {
   @ApiOperation({ summary: 'Actualizar perfil del usuario' })
   @ApiParam({ name: 'id', description: 'UUID del usuario' })
   @ApiBody({ type: UpdateUserProfileDto })
-  @ApiResponse({ status: 200, description: 'Perfil actualizado', type: UserResponseDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Perfil actualizado',
+    type: UserResponseDto,
+  })
   @ApiResponse({ status: 400, description: 'Nombre inválido' })
   @ApiResponse({ status: 404, description: 'Usuario no encontrado' })
-  @ApiResponse({ status: 403, description: 'No autorizado para modificar este usuario' })
+  @ApiResponse({
+    status: 403,
+    description: 'No autorizado para modificar este usuario',
+  })
   async updateProfile(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateUserProfileDto,
@@ -123,7 +137,10 @@ export class UsersController {
   @ApiParam({ name: 'id', description: 'UUID del usuario' })
   @ApiResponse({ status: 204, description: 'Usuario eliminado' })
   @ApiResponse({ status: 404, description: 'Usuario no encontrado' })
-  @ApiResponse({ status: 403, description: 'No autorizado para eliminar este usuario' })
+  @ApiResponse({
+    status: 403,
+    description: 'No autorizado para eliminar este usuario',
+  })
   async delete(
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() user: AuthenticatedUser,

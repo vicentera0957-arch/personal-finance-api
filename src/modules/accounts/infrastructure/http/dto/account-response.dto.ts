@@ -10,7 +10,10 @@ export class AccountResponseDto {
   @ApiProperty({ example: 'Cuenta Corriente Banco' })
   name: string;
 
-  @ApiProperty({ example: 'corriente', enum: ['ahorro', 'corriente', 'vista', 'ruta', 'otros'] })
+  @ApiProperty({
+    example: 'corriente',
+    enum: ['ahorro', 'corriente', 'vista', 'ruta', 'otros'],
+  })
   type: string;
 
   @ApiProperty({ example: 100000 })

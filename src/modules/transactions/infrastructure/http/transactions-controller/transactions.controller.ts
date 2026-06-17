@@ -90,12 +90,25 @@ export class TransactionsController {
   @Post()
   @ApiOperation({ summary: 'Registrar nueva transacción (income o expense)' })
   @ApiBody({ type: CreateTransactionDto })
-  @ApiResponse({ status: 201, description: 'Transacción creada', type: TransactionResponseDto })
-  @ApiResponse({ status: 400, description: 'Naturaleza, monto o categoría inválidos' })
+  @ApiResponse({
+    status: 201,
+    description: 'Transacción creada',
+    type: TransactionResponseDto,
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Naturaleza, monto o categoría inválidos',
+  })
   @ApiResponse({ status: 404, description: 'Cuenta o categoría no encontrada' })
   @ApiResponse({ status: 403, description: 'No autorizado' })
-  @ApiResponse({ status: 409, description: 'Cuenta archivada o presupuesto requerido no existe' })
-  @ApiResponse({ status: 422, description: 'Límite de presupuesto excedido o fondos insuficientes' })
+  @ApiResponse({
+    status: 409,
+    description: 'Cuenta archivada o presupuesto requerido no existe',
+  })
+  @ApiResponse({
+    status: 422,
+    description: 'Límite de presupuesto excedido o fondos insuficientes',
+  })
   async create(
     @Body() dto: CreateTransactionDto,
     @CurrentUser() user: AuthenticatedUser,
@@ -146,12 +159,28 @@ export class TransactionsController {
   }
 
   @Get()
-  @ApiOperation({ summary: 'Listar transacciones del usuario (paginación y filtro por fecha)' })
+  @ApiOperation({
+    summary: 'Listar transacciones del usuario (paginación y filtro por fecha)',
+  })
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
-  @ApiQuery({ name: 'from', required: false, type: String, example: '2026-01-01' })
-  @ApiQuery({ name: 'to', required: false, type: String, example: '2026-12-31' })
-  @ApiResponse({ status: 200, description: 'Lista de transacciones', type: [TransactionResponseDto] })
+  @ApiQuery({
+    name: 'from',
+    required: false,
+    type: String,
+    example: '2026-01-01',
+  })
+  @ApiQuery({
+    name: 'to',
+    required: false,
+    type: String,
+    example: '2026-12-31',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Lista de transacciones',
+    type: [TransactionResponseDto],
+  })
   async findByUserId(
     @CurrentUser() user: AuthenticatedUser,
     @Query() query: GetTransactionsQueryDto,
@@ -175,11 +204,28 @@ export class TransactionsController {
   @ApiParam({ name: 'accountId', description: 'UUID de la cuenta' })
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
-  @ApiQuery({ name: 'from', required: false, type: String, example: '2026-01-01' })
-  @ApiQuery({ name: 'to', required: false, type: String, example: '2026-12-31' })
-  @ApiResponse({ status: 200, description: 'Lista de transacciones de la cuenta', type: [TransactionResponseDto] })
+  @ApiQuery({
+    name: 'from',
+    required: false,
+    type: String,
+    example: '2026-01-01',
+  })
+  @ApiQuery({
+    name: 'to',
+    required: false,
+    type: String,
+    example: '2026-12-31',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Lista de transacciones de la cuenta',
+    type: [TransactionResponseDto],
+  })
   @ApiResponse({ status: 404, description: 'Cuenta no encontrada' })
-  @ApiResponse({ status: 403, description: 'No autorizado para ver esta cuenta' })
+  @ApiResponse({
+    status: 403,
+    description: 'No autorizado para ver esta cuenta',
+  })
   async findByAccountId(
     @Param('accountId', ParseUUIDPipe) accountId: string,
     @CurrentUser() user: AuthenticatedUser,
@@ -213,9 +259,16 @@ export class TransactionsController {
   @Get(':id')
   @ApiOperation({ summary: 'Obtener transacción por ID' })
   @ApiParam({ name: 'id', description: 'UUID de la transacción' })
-  @ApiResponse({ status: 200, description: 'Transacción encontrada', type: TransactionResponseDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Transacción encontrada',
+    type: TransactionResponseDto,
+  })
   @ApiResponse({ status: 404, description: 'Transacción no encontrada' })
-  @ApiResponse({ status: 403, description: 'No autorizado para ver esta transacción' })
+  @ApiResponse({
+    status: 403,
+    description: 'No autorizado para ver esta transacción',
+  })
   async findById(
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() user: AuthenticatedUser,
@@ -239,12 +292,20 @@ export class TransactionsController {
 
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiOperation({ summary: 'Eliminar transacción (revierte balance y gasto en presupuesto)' })
+  @ApiOperation({
+    summary: 'Eliminar transacción (revierte balance y gasto en presupuesto)',
+  })
   @ApiParam({ name: 'id', description: 'UUID de la transacción' })
   @ApiResponse({ status: 204, description: 'Transacción eliminada' })
-  @ApiResponse({ status: 404, description: 'Transacción o cuenta no encontrada' })
+  @ApiResponse({
+    status: 404,
+    description: 'Transacción o cuenta no encontrada',
+  })
   @ApiResponse({ status: 403, description: 'No autorizado' })
-  @ApiResponse({ status: 409, description: 'Transacción no se puede eliminar (cuenta archivada)' })
+  @ApiResponse({
+    status: 409,
+    description: 'Transacción no se puede eliminar (cuenta archivada)',
+  })
   async delete(
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() user: AuthenticatedUser,
