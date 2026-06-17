@@ -27,6 +27,11 @@ export class RedisCacheStore
     await this.client.ping();
   }
 
+  /** Health check — resuelve si Redis responde PONG, rechaza si no. */
+  async ping(): Promise<void> {
+    await this.client.ping();
+  }
+
   onModuleDestroy(): void {
     this.client.disconnect();
   }
