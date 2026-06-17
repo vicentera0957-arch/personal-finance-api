@@ -32,6 +32,20 @@ describe('UpdateCategoryUseCase', () => {
     expect(result.getName()).toBe('New');
   });
 
+  it('should update color and icon when provided', async () => {
+    repo.seed([makeCategory({ id: 'c1', userId: 'user-1' })]);
+
+    const result = await useCase.execute({
+      id: 'c1',
+      requestUserId: 'user-1',
+      color: '#00FF00',
+      icon: '🍎',
+    });
+
+    expect(result.getColor()).toBe('#00FF00');
+    expect(result.getIcon()).toBe('🍎');
+  });
+
   it('should throw ResourceOwnershipException when updating another user category', async () => {
     repo.seed([makeCategory({ id: 'c1', userId: 'user-1' })]);
 
