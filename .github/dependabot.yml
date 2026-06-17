@@ -1,0 +1,31 @@
+# Dependabot — abre PRs automáticos para actualizar dependencias.
+# Complementa al job `security-audit` del CI: el audit DETECTA, Dependabot
+# PROPONE el fix (PR con el bump + changelog), y el CI lo valida antes de mergear.
+# Docs: https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+version: 2
+updates:
+  # Dependencias npm del proyecto.
+  - package-ecosystem: 'npm'
+    directory: '/'
+    schedule:
+      interval: 'weekly'
+    open-pull-requests-limit: 10
+    # Agrupa los updates menores/patch en un solo PR para no inundar de ruido;
+    # los majors (potencialmente breaking) vienen en PRs separados para revisar.
+    groups:
+      minor-and-patch:
+        update-types:
+          - 'minor'
+          - 'patch'
+    labels:
+      - 'dependencies'
+
+  # Las propias versiones de las GitHub Actions usadas en los workflows
+  # (actions/checkout, setup-node, docker/*). Sin esto quedan pinneadas y se
+  # vuelven obsoletas/inseguras con el tiempo.
+  - package-ecosystem: 'github-actions'
+    directory: '/'
+    schedule:
+      interval: 'weekly'
+    labels:
+      - 'ci'

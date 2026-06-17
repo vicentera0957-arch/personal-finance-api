@@ -6,50 +6,157 @@ on:
   pull_request:
     branches: [main]
 
+# ─────────────────────────────────────────────────────────────
+# Concurrency: si empujás 3 commits seguidos a un PR, sólo el
+# último importa. Cancela los runs viejos en vuelo → no quemás
+# minutos verificando código que ya quedó obsoleto.
+# El group se agrupa por ref (rama/PR); cada rama corre aislada.
+# ─────────────────────────────────────────────────────────────
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# ─────────────────────────────────────────────────────────────
+# Permisos mínimos. Por defecto el GITHUB_TOKEN puede escribir
+# en el repo; acá no necesitamos más que leer el código.
+# Principio de menor privilegio: si una action es comprometida,
+# no puede pushear ni abrir releases con nuestro token.
+# ─────────────────────────────────────────────────────────────
+permissions:
+  contents: read
+
+# Valores compartidos. DRY: una sola fuente para la versión de Node
+# y para los secretos DUMMY de test (no son sensibles — son de juguete,
+# nunca tocan producción; por eso pueden vivir en texto plano).
+env:
+  NODE_VERSION: '20'
+  JWT_SECRET: ci-test-jwt-secret-at-least-32-characters-long
+  JWT_REFRESH_SECRET: ci-test-refresh-secret-at-least-32-characters
+
 jobs:
   # ─────────────────────────────────────────────────────────────
-  # Job 1: tests unitarios (sin DB — solo domain + use cases)
+  # Job 0a: lint — gate de estilo/calidad. Barato y rápido.
+  # ─────────────────────────────────────────────────────────────
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - run: npm ci
+      - run: npm run lint
+
+  # ─────────────────────────────────────────────────────────────
+  # Job 0b: build — falla ante errores de tipos/compilación.
+  # Sin esto, un error de TS recién explota al construir la imagen
+  # de deploy (tarde y caro). Acá explota en segundos.
+  # ─────────────────────────────────────────────────────────────
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - run: npm ci
+      - run: npm run build
+
+  # ─────────────────────────────────────────────────────────────
+  # Job 1: tests unitarios (sin DB — domain + use cases con mocks).
+  # Corre CON cobertura: el package.json define coverageThreshold,
+  # pero `npm test` a secas NO los aplica (no pasa --coverage).
+  # Es decir: los umbrales existían pero NO gateaban nada. Ahora sí.
   # ─────────────────────────────────────────────────────────────
   unit-tests:
     name: Unit tests
     runs-on: ubuntu-latest
-
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
 
-      - name: Install dependencies
-        run: npm ci
+      - run: npm ci
 
-      - name: Run unit tests
-        run: npm test -- --forceExit
+      # --ci: Jest no escribe snapshots nuevos, sólo verifica los existentes.
+      # Sin --forceExit: si hay un handle abierto, queremos que falle/cuelgue
+      # y se note, no esconderlo. Los unit tests no abren recursos externos.
+      - name: Run unit tests with coverage
+        run: npm run test:cov -- --ci
 
   # ─────────────────────────────────────────────────────────────
-  # Job 2: integration tests con DB real + migraciones
+  # Job 2: integration tests con Postgres + Redis reales + migraciones.
+  #
+  # `needs: build` → no levantamos contenedores de DB/Redis si el código
+  # ni siquiera compila. Gate barato antes del gate caro. El happy path
+  # paga ~30s extra de espera; el unhappy path ahorra todo el setup de DB.
   # ─────────────────────────────────────────────────────────────
   integration-tests:
     name: Integration tests
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: build
 
     services:
       postgres:
         image: postgres:15-alpine
         env:
-          POSTGRES_DB: personal_finance_db
+          POSTGRES_DB: personal_finance_db_test
           POSTGRES_USER: finance_user
           POSTGRES_PASSWORD: finance_password
         ports:
           - 5432:5432
+        # health-cmd: el job no arranca los steps hasta que pg_isready
+        # responda. Sin esto habría una race: el test conecta antes de
+        # que Postgres termine de bootear → "connection refused" flaky.
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    # Env a nivel de job → se aplica a TODOS los steps de abajo.
+    # Evita repetir el bloque de credenciales en cada step.
+    env:
+      DB_HOST: localhost
+      DB_PORT: 5432
+      DB_USER: finance_user
+      DB_PASSWORD: finance_password
+      DB_NAME: personal_finance_db_test
+      DB_SYNCHRONIZE: 'false'
+      REDIS_HOST: localhost
+      REDIS_PORT: 6379
+      JWT_ACCESS_EXPIRES_IN: 15m
+      JWT_REFRESH_EXPIRES_IN: 7d
+      NODE_ENV: test
+      PORT: 3001
 
     steps:
       - uses: actions/checkout@v4
@@ -57,55 +164,30 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
 
-      - name: Install dependencies
-        run: npm ci
+      - run: npm ci
 
-      - name: Create test database
-        run: |
-          PGPASSWORD=finance_password psql \
-            -h localhost -U finance_user -d personal_finance_db \
-            -c "CREATE DATABASE personal_finance_db_test;"
-          PGPASSWORD=finance_password psql \
-            -h localhost -U finance_user -d personal_finance_db \
-            -c "GRANT ALL PRIVILEGES ON DATABASE personal_finance_db_test TO finance_user;"
-
-      - name: Run migrations on test database
+      # Migramos ANTES de testear: DB_SYNCHRONIZE=false, así que el esquema
+      # tiene que venir 100% de las migraciones. Esto valida de paso que la
+      # ruta de producción (migrations, no synchronize) funciona.
+      - name: Run migrations
         run: npm run migration:run
-        env:
-          DB_HOST: localhost
-          DB_PORT: 5432
-          DB_USER: finance_user
-          DB_PASSWORD: finance_password
-          DB_NAME: personal_finance_db_test
-          JWT_SECRET: ci-test-jwt-secret-at-least-32-characters-long
-          JWT_REFRESH_SECRET: ci-test-refresh-secret-at-least-32-characters
 
       - name: Run integration tests
         run: npm run test:integration
-        env:
-          DB_HOST: localhost
-          DB_PORT: 5432
-          DB_USER: finance_user
-          DB_PASSWORD: finance_password
-          DB_NAME: personal_finance_db_test
-          DB_SYNCHRONIZE: 'false'
-          JWT_SECRET: ci-test-jwt-secret-at-least-32-characters-long
-          JWT_REFRESH_SECRET: ci-test-refresh-secret-at-least-32-characters
-          JWT_ACCESS_EXPIRES_IN: 15m
-          JWT_REFRESH_EXPIRES_IN: 7d
-          NODE_ENV: test
-          PORT: 3001
 
   # ─────────────────────────────────────────────────────────────
-  # Job 3: verificar que migration:run parte de cero (DB vacía)
-  # Esto detecta si la migración inicial está incompleta.
+  # Job 3: smoke de migraciones desde CERO sobre una DB virgen.
+  # Detecta migración inicial incompleta o que dependa de estado previo.
+  # Separado de integration a propósito: distinto fallo, distinta señal.
   # ─────────────────────────────────────────────────────────────
   migration-smoke:
     name: Migration smoke test
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: build
 
     services:
       postgres:
@@ -122,36 +204,88 @@ jobs:
           --health-timeout 5s
           --health-retries 5
 
+    env:
+      DB_HOST: localhost
+      DB_PORT: 5432
+      DB_USER: finance_user
+      DB_PASSWORD: finance_password
+      DB_NAME: personal_finance_db
+
     steps:
       - uses: actions/checkout@v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
 
-      - name: Install dependencies
-        run: npm ci
+      - run: npm ci
 
       - name: Run migrations from scratch
         run: npm run migration:run
-        env:
-          DB_HOST: localhost
-          DB_PORT: 5432
-          DB_USER: finance_user
-          DB_PASSWORD: finance_password
-          DB_NAME: personal_finance_db
-          JWT_SECRET: ci-test-jwt-secret-at-least-32-characters-long
-          JWT_REFRESH_SECRET: ci-test-refresh-secret-at-least-32-characters
 
-      - name: Verify all migrations applied
+      # Idempotencia: correr de nuevo NO debe aplicar nada. Si esta segunda
+      # corrida vuelve a migrar, hay una migración no determinista.
+      - name: Re-run must be a no-op (idempotency)
+        run: npm run migration:run
+
+      - name: Show migration state
         run: npm run migration:show
-        env:
-          DB_HOST: localhost
-          DB_PORT: 5432
-          DB_USER: finance_user
-          DB_PASSWORD: finance_password
-          DB_NAME: personal_finance_db
-          JWT_SECRET: ci-test-jwt-secret-at-least-32-characters-long
-          JWT_REFRESH_SECRET: ci-test-refresh-secret-at-least-32-characters
+
+  # ─────────────────────────────────────────────────────────────
+  # Job 4: build de la imagen Docker (sin push).
+  # Hoy el Dockerfile sólo se prueba al deployar. Construirlo en cada PR
+  # atrapa errores del Dockerfile/entrypoint temprano, no en producción.
+  # `needs: build` → si el TS no compila, no tiene sentido buildear la imagen.
+  # ─────────────────────────────────────────────────────────────
+  docker-build:
+    name: Docker build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: build
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Buildx habilita el cache de capas vía GitHub Actions (type=gha):
+      # las capas que no cambian se reusan entre runs → builds mucho más rápidos.
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: false
+          tags: personal-finance-api:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ─────────────────────────────────────────────────────────────
+  # Job 5: auditoría de dependencias — GATE REAL (bloqueante).
+  # Manejás auth + datos financieros: una CVE en una dep transitiva ES tu
+  # modelo de amenaza. No necesita `npm ci`: npm audit usa package-lock.json.
+  #
+  # Gatea en high/critical (no en moderate). Tras el `npm audit fix` de
+  # 2026-06-16 el proyecto tiene 0 high / 0 critical, así que este gate pasa.
+  # Las moderates restantes son dev-tooling (jest/babel) cuyo "fix" sería un
+  # downgrade destructivo (jest 30→25) — NO correr `npm audit fix --force`;
+  # se resuelven vía PRs de Dependabot cuando haya upstream sano.
+  # ─────────────────────────────────────────────────────────────
+  security-audit:
+    name: Security audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: npm audit (falla en high/critical)
+        run: npm audit --audit-level=high
