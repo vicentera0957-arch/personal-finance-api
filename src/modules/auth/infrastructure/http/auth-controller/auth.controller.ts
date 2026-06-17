@@ -6,12 +6,7 @@ import {
   Post,
   UnauthorizedException,
 } from '@nestjs/common';
-import {
-  ApiBody,
-  ApiOperation,
-  ApiResponse,
-  ApiTags,
-} from '@nestjs/swagger';
+import { ApiBody, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { LoginUseCase } from '../../../application/use-cases/login.use-case';
 import { RegisterUseCase } from '../../../application/use-cases/register.use-case';
@@ -35,8 +30,15 @@ import {
 
 // Throttler 'auth' — override global: sólo N requests por IP en la ventana.
 // Impide fuerza bruta contra login, spam de registros y abuso de refresh.
+// Límite/ttl configurables por env (THROTTLE_AUTH_LIMIT / THROTTLE_AUTH_TTL);
+// fallback a 5/60s. Antes estaba hardcodeado, lo que dejaba la env var muerta.
 @ApiTags('auth')
-@Throttle({ auth: { limit: 5, ttl: 60_000 } })
+@Throttle({
+  auth: {
+    limit: Number(process.env.THROTTLE_AUTH_LIMIT ?? 5),
+    ttl: Number(process.env.THROTTLE_AUTH_TTL ?? 60_000),
+  },
+})
 @Controller('auth')
 export class AuthController {
   constructor(
