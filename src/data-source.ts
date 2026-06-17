@@ -27,6 +27,22 @@ import * as dotenv from 'dotenv';
  */
 dotenv.config();
 
+/**
+ * Globs y extensión dependen de si este archivo corre COMPILADO o vía ts-node:
+ *   - dev / CLI ts-node  → `__filename` es `data-source.ts`  → busca `src/**.ts`
+ *   - imagen de prod     → `__filename` es `data-source.js`  → busca `dist/**.js`
+ *
+ * Sin esto, en una imagen que solo trae `dist/` los globs `src/**.ts` no matchean
+ * nada y `migration:run` reportaría "0 migrations" → la DB quedaría sin schema.
+ */
+const isCompiled = __filename.endsWith('.js');
+const baseDir = isCompiled ? 'dist' : 'src';
+const ext = isCompiled ? 'js' : 'ts';
+
+// SSL para Postgres gestionado (Neon/Supabase/RDS). El CLI de migraciones también
+// lo necesita, no solo el runtime de la app.
+const sslEnabled = process.env.DB_SSL === 'true';
+
 export const AppDataSource = new DataSource({
   type: 'postgres',
   host: process.env.DB_HOST ?? 'localhost',
@@ -34,10 +50,13 @@ export const AppDataSource = new DataSource({
   username: process.env.DB_USER ?? 'finance_user',
   password: process.env.DB_PASSWORD ?? 'finance_password',
   database: process.env.DB_NAME ?? 'personal_finance_db',
-  // Carga todas las *.orm.entity.ts bajo src/ — sin listar manualmente.
-  entities: ['src/**/*.orm.entity.ts'],
-  migrations: ['src/database/migrations/*.ts'],
+  // Carga todas las *.orm.entity.{ts,js} sin listar manualmente.
+  entities: [`${baseDir}/**/*.orm.entity.${ext}`],
+  migrations: [`${baseDir}/database/migrations/*.${ext}`],
   // La CLI NUNCA debe hacer synchronize (destruye datos). Siempre migrations.
   synchronize: false,
   logging: process.env.DB_LOGGING === 'true',
+  ssl: sslEnabled
+    ? { rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED !== 'false' }
+    : false,
 });

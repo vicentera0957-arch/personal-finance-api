@@ -1,0 +1,27 @@
+# No hornear estos en la imagen (tamaño, secretos, ruido).
+node_modules
+dist
+coverage
+.git
+.github
+.vscode
+.idea
+
+# Secretos: NUNCA dentro de la imagen — se inyectan por env de la plataforma.
+.env
+.env.*
+!.env.example
+
+# Tests y docs no son necesarios en runtime.
+test
+**/*.spec.ts
+docs
+*.md
+!README.md
+
+# Artefactos varios
+npm-debug.log*
+.DS_Store
+Dockerfile
+.dockerignore
+docker-compose.yml
