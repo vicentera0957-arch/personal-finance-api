@@ -32,7 +32,7 @@ describe('JwtTokenProvider', () => {
   });
 
   describe('generateAccessToken', () => {
-    it('firma con access secret y expiración correcta', async () => {
+    it('signs with the access secret and correct expiry', async () => {
       jwtService.signAsync.mockResolvedValue('access-token');
 
       const result = await provider.generateAccessToken({
@@ -49,7 +49,7 @@ describe('JwtTokenProvider', () => {
   });
 
   describe('generateRefreshToken', () => {
-    it('firma con refresh secret e incluye jti en el payload', async () => {
+    it('signs with the refresh secret and includes jti in the payload', async () => {
       jwtService.signAsync.mockResolvedValue('refresh-token');
 
       const result = await provider.generateRefreshToken({
@@ -67,7 +67,7 @@ describe('JwtTokenProvider', () => {
   });
 
   describe('getRefreshTokenExpiresAt', () => {
-    it('devuelve una fecha ~7 días en el futuro', () => {
+    it('returns a date ~7 days in the future', () => {
       const before = Date.now();
       const result = provider.getRefreshTokenExpiresAt();
       const after = Date.now();
@@ -105,7 +105,7 @@ describe('JwtTokenProvider', () => {
   });
 
   describe('verifyRefreshToken', () => {
-    it('devuelve payload con jti cuando el token es válido', async () => {
+    it('returns the payload with jti when the token is valid', async () => {
       jwtService.verifyAsync.mockResolvedValue({
         sub: 'user-1',
         email: 'a@b.cl',

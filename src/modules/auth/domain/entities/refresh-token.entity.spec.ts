@@ -9,7 +9,7 @@ function pastDate(ms = 60_000): Date {
 
 describe('RefreshToken entity', () => {
   describe('create()', () => {
-    it('inicializa revokedAt en null y replacedById en null', () => {
+    it('initializes revokedAt and replacedById to null', () => {
       const token = RefreshToken.create({
         id: 'jti-1',
         userId: 'user-1',
@@ -25,7 +25,7 @@ describe('RefreshToken entity', () => {
   });
 
   describe('reconstitute()', () => {
-    it('preserva todos los campos tal cual vienen de DB', () => {
+    it('preserves all fields exactly as they come from the DB', () => {
       const now = new Date();
       const token = RefreshToken.reconstitute({
         id: 'jti-1',
@@ -44,7 +44,7 @@ describe('RefreshToken entity', () => {
   });
 
   describe('isRevoked()', () => {
-    it('devuelve false para un token nuevo', () => {
+    it('returns false for a new token', () => {
       const token = RefreshToken.create({
         id: 'j',
         userId: 'u',
@@ -55,7 +55,7 @@ describe('RefreshToken entity', () => {
       expect(token.isRevoked()).toBe(false);
     });
 
-    it('devuelve true después de revoke()', () => {
+    it('returns true after revoke()', () => {
       const token = RefreshToken.create({
         id: 'j',
         userId: 'u',
@@ -70,7 +70,7 @@ describe('RefreshToken entity', () => {
   });
 
   describe('isExpired()', () => {
-    it('devuelve false si expiresAt es en el futuro', () => {
+    it('returns false if expiresAt is in the future', () => {
       const token = RefreshToken.create({
         id: 'j',
         userId: 'u',
@@ -81,7 +81,7 @@ describe('RefreshToken entity', () => {
       expect(token.isExpired()).toBe(false);
     });
 
-    it('devuelve true si expiresAt es en el pasado', () => {
+    it('returns true if expiresAt is in the past', () => {
       const token = RefreshToken.create({
         id: 'j',
         userId: 'u',
@@ -94,7 +94,7 @@ describe('RefreshToken entity', () => {
   });
 
   describe('isUsable()', () => {
-    it('devuelve true para un token válido y no expirado', () => {
+    it('returns true for a valid, non-expired token', () => {
       const token = RefreshToken.create({
         id: 'j',
         userId: 'u',
@@ -105,7 +105,7 @@ describe('RefreshToken entity', () => {
       expect(token.isUsable()).toBe(true);
     });
 
-    it('devuelve false si está revocado', () => {
+    it('returns false if revoked', () => {
       const token = RefreshToken.create({
         id: 'j',
         userId: 'u',
@@ -117,7 +117,7 @@ describe('RefreshToken entity', () => {
       expect(token.isUsable()).toBe(false);
     });
 
-    it('devuelve false si está expirado', () => {
+    it('returns false if expired', () => {
       const token = RefreshToken.create({
         id: 'j',
         userId: 'u',
@@ -130,7 +130,7 @@ describe('RefreshToken entity', () => {
   });
 
   describe('revoke()', () => {
-    it('guarda replacedById cuando se pasa en rotación', () => {
+    it('stores replacedById when passed during rotation', () => {
       const token = RefreshToken.create({
         id: 'j',
         userId: 'u',
@@ -142,7 +142,7 @@ describe('RefreshToken entity', () => {
       expect(token.replacedById).toBe('new-jti');
     });
 
-    it('deja replacedById en null en logout (sin argumento)', () => {
+    it('leaves replacedById null on logout (no argument)', () => {
       const token = RefreshToken.create({
         id: 'j',
         userId: 'u',

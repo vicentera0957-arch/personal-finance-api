@@ -1,26 +1,33 @@
 import { UnauthorizedException } from '@nestjs/common';
 import { LogoutUseCase } from './logout.use-case';
 import { ITokenProvider } from '../../domain/ports/token-provider.port';
-import { IRefreshTokenRepository } from '../../domain/repository/refresh-token.repository';
 import { RefreshToken } from '../../domain/entities/refresh-token.entity';
 import { InvalidRefreshTokenException } from '../../domain/exceptions/auth.exceptions';
+import { InMemoryRefreshTokenRepository } from '../../infrastructure/persistence/__fakes__/in-memory-refresh-token.repository';
+import { sha256 } from '../utils/token-hash.util';
 
-function makeToken(expiresAt?: Date): RefreshToken {
-  return RefreshToken.create({
+// The use case looks the token up by sha256(rawToken), so the seed's tokenHash
+// must be the hash of the raw token the test passes — this exercises the real
+// hashing path instead of bypassing it.
+function makeToken(
+  rawToken: string,
+  opts: { revoked?: boolean } = {},
+): RefreshToken {
+  const token = RefreshToken.create({
     id: 'jti-1',
     userId: 'user-1',
     familyId: 'family-1',
-    tokenHash: 'hash-abc',
-    expiresAt: expiresAt ?? new Date(Date.now() + 86_400_000),
+    tokenHash: sha256(rawToken),
+    expiresAt: new Date(Date.now() + 86_400_000),
   });
+  if (opts.revoked) token.revoke();
+  return token;
 }
 
 describe('LogoutUseCase', () => {
   let useCase: LogoutUseCase;
   let tokenProvider: jest.Mocked<Pick<ITokenProvider, 'verifyRefreshToken'>>;
-  let repo: jest.Mocked<
-    Pick<IRefreshTokenRepository, 'findByTokenHash' | 'save'>
-  >;
+  let repo: InMemoryRefreshTokenRepository;
 
   beforeEach(() => {
     tokenProvider = {
@@ -30,55 +37,51 @@ describe('LogoutUseCase', () => {
         jti: 'jti-1',
       }),
     };
-
-    repo = {
-      findByTokenHash: jest.fn(),
-      save: jest.fn().mockResolvedValue(undefined),
-    };
+    repo = new InMemoryRefreshTokenRepository();
 
     useCase = new LogoutUseCase(
       tokenProvider as unknown as ITokenProvider,
-      repo as unknown as IRefreshTokenRepository,
+      repo,
     );
   });
 
-  it('revoca el token y lo guarda', async () => {
-    const stored = makeToken();
-    repo.findByTokenHash.mockResolvedValue(stored);
+  it('revokes the token and saves it', async () => {
+    repo.seed([makeToken('valid-refresh-token')]);
 
     await useCase.execute('valid-refresh-token');
 
-    expect(stored.isRevoked()).toBe(true);
-    expect(repo.save).toHaveBeenCalledWith(stored);
+    const after = await repo.findByTokenHash(sha256('valid-refresh-token'));
+    expect(after?.isRevoked()).toBe(true);
   });
 
-  it('es idempotente: si ya está revocado no llama a save', async () => {
-    const stored = makeToken();
-    stored.revoke();
-    repo.findByTokenHash.mockResolvedValue(stored);
+  it('is idempotent: does not call save if already revoked', async () => {
+    repo.seed([makeToken('already-revoked-token', { revoked: true })]);
+    // Idempotency is an interaction property (does it short-circuit the write?),
+    // so we spy on the fake's save for this one assertion.
+    const saveSpy = jest.spyOn(repo, 'save');
 
     await useCase.execute('already-revoked-token');
 
-    expect(repo.save).not.toHaveBeenCalled();
+    expect(saveSpy).not.toHaveBeenCalled();
   });
 
-  it('lanza InvalidRefreshTokenException si el token no está en DB', async () => {
-    repo.findByTokenHash.mockResolvedValue(null);
-
+  it('throws InvalidRefreshTokenException if the token is not in the DB', async () => {
+    // repo is empty
     await expect(useCase.execute('unknown-token')).rejects.toThrow(
       InvalidRefreshTokenException,
     );
-    expect(repo.save).not.toHaveBeenCalled();
   });
 
-  it('lanza InvalidRefreshTokenException si la firma JWT es inválida', async () => {
+  it('throws InvalidRefreshTokenException if the JWT signature is invalid', async () => {
     tokenProvider.verifyRefreshToken.mockRejectedValue(
       new UnauthorizedException('bad sig'),
     );
+    const findSpy = jest.spyOn(repo, 'findByTokenHash');
 
     await expect(useCase.execute('bad-token')).rejects.toThrow(
       InvalidRefreshTokenException,
     );
-    expect(repo.findByTokenHash).not.toHaveBeenCalled();
+    // Fail-fast: the signature is rejected before any DB lookup.
+    expect(findSpy).not.toHaveBeenCalled();
   });
 });

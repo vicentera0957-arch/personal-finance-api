@@ -1,18 +1,19 @@
 import { RegisterUseCase } from './register.use-case';
 import { CreateUserUseCase } from '../../../users/application/use-cases/create-user.use-case';
 import { InMemoryUserRepository } from '../../../users/infrastructure/persistence/__fakes__/in-memory-user.repository';
+import { InMemoryRefreshTokenRepository } from '../../infrastructure/persistence/__fakes__/in-memory-refresh-token.repository';
 import { IPasswordHasher } from '../../domain/ports/password-hasher.port';
 import { ITokenProvider } from '../../domain/ports/token-provider.port';
-import { IRefreshTokenRepository } from '../../domain/repository/refresh-token.repository';
 import { UserAlreadyExistsException } from '../../../users/domain/exceptions/user.exceptions';
 import { makeUser } from '../../../../test-support/factories';
+import { sha256 } from '../utils/token-hash.util';
 
 describe('RegisterUseCase', () => {
   let registerUseCase: RegisterUseCase;
   let userRepo: InMemoryUserRepository;
   let passwordHasher: jest.Mocked<IPasswordHasher>;
   let tokenProvider: jest.Mocked<ITokenProvider>;
-  let refreshTokenRepo: jest.Mocked<IRefreshTokenRepository>;
+  let refreshTokenRepo: InMemoryRefreshTokenRepository;
 
   const mockTokenPair = {
     accessToken: 'access-token',
@@ -22,11 +23,11 @@ describe('RegisterUseCase', () => {
   beforeEach(() => {
     userRepo = new InMemoryUserRepository();
 
+    // Thin adapters -> jest.fn (single-call collaborators, no state).
     passwordHasher = {
       hash: jest.fn().mockResolvedValue('hashed-password'),
       compare: jest.fn(),
     };
-
     tokenProvider = {
       generateAccessToken: jest
         .fn()
@@ -41,13 +42,8 @@ describe('RegisterUseCase', () => {
         .mockReturnValue(new Date(Date.now() + 86_400_000)),
     };
 
-    refreshTokenRepo = {
-      findByTokenHash: jest.fn(),
-      findByTokenHashWithLock: jest.fn(),
-      save: jest.fn().mockResolvedValue(undefined),
-      revokeFamily: jest.fn(),
-      deleteExpired: jest.fn(),
-    };
+    // Stateful ports -> InMemory fakes.
+    refreshTokenRepo = new InMemoryRefreshTokenRepository();
 
     registerUseCase = new RegisterUseCase(
       new CreateUserUseCase(userRepo),
@@ -77,16 +73,19 @@ describe('RegisterUseCase', () => {
       });
     });
 
-    it('persiste el refresh token en DB tras el registro', async () => {
+    it('persists the refresh token after registration', async () => {
       await registerUseCase.execute({
         name: 'New User',
         email: 'new@example.com',
         password: 'secure-password',
       });
 
-      expect(refreshTokenRepo.save).toHaveBeenCalledTimes(1);
-      const savedToken = (refreshTokenRepo.save as jest.Mock).mock.calls[0][0];
-      expect(savedToken.isRevoked()).toBe(false);
+      // State-based: the token landed in the store, active.
+      expect(refreshTokenRepo.size()).toBe(1);
+      const saved = await refreshTokenRepo.findByTokenHash(
+        sha256(mockTokenPair.refreshToken),
+      );
+      expect(saved?.isRevoked()).toBe(false);
     });
 
     it('should propagate UserAlreadyExistsException when email is taken', async () => {
@@ -101,7 +100,7 @@ describe('RegisterUseCase', () => {
       ).rejects.toThrow(UserAlreadyExistsException);
 
       expect(tokenProvider.generateAccessToken).not.toHaveBeenCalled();
-      expect(refreshTokenRepo.save).not.toHaveBeenCalled();
+      expect(refreshTokenRepo.size()).toBe(0);
       expect(userRepo.size()).toBe(1);
     });
   });
