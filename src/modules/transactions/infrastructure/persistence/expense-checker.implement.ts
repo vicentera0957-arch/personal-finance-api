@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { IExpenseChecker } from '../../../budgets/domain/repository/expense-checker.port';
 import { ITransactionRepository } from '../../domain/repository/transaction.repository';
 
+//Adapter that implements the ExpenseChecker Port in the Budget module.
 @Injectable()
 export class ExpenseCheckerImpl extends IExpenseChecker {
   constructor(private readonly transactionRepository: ITransactionRepository) {

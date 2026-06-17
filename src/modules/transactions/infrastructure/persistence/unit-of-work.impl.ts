@@ -28,7 +28,15 @@ import { BudgetMapper } from '../../../budgets/infrastructure/persistence/budget
 import { Budget } from '../../../budgets/domain/budget.entity';
 import { FindOptionsWhere } from 'typeorm';
 
-// ── Repos escopados — privados a este archivo, solo el UoW los construye ─────
+// ── Scoped repositories — private to this file; only the UoW constructs them ──
+//
+// Each runs on the EntityManager of the ACTIVE QueryRunner, so every read/write
+// happens inside the transaction the UoW opened. Key fact about the FOR UPDATE
+// locks below: a pessimistic row lock is held until the TRANSACTION commits or
+// rolls back — NOT until the findOne call returns. The method returns the row,
+// but the lock stays for the whole begin()→commit() window, covering the later
+// write. (If these ran on the global DataSource in autocommit, the lock would be
+// released right after the SELECT and would be useless — hence scoped repos only.)
 
 class ScopedTransactionRepository extends ITransactionRepository {
   constructor(
@@ -38,6 +46,10 @@ class ScopedTransactionRepository extends ITransactionRepository {
     super();
   }
 
+  // LOCK (FOR UPDATE): transaction row, held until commit. Serializes two
+  // concurrent DELETE /transactions/:id on the same row — the second arrival
+  // blocks here, then sees null after the first commits and throws
+  // TransactionNotFound, preventing a double-reverse of the balance (Race 3).
   async findById(id: string): Promise<Transaction | null> {
     const orm = await this.manager.findOne(TransactionOrmEntity, {
       where: { id },
@@ -91,12 +103,15 @@ class ScopedTransactionRepository extends ITransactionRepository {
     const periodStart = new Date(year, month - 1, 1);
     const periodEnd = new Date(year, month, 1);
 
-    // Sin FOR UPDATE: la serialización la garantiza el lock pesimista sobre
-    // la fila del budget en findByUserIdAndCategoryIdAndPeriod, que el
-    // CreateTransactionUseCase adquiere antes de invocar esta sumatoria.
-    // Un FOR UPDATE aquí no agregaría correctitud (los phantoms inserts en el
-    // rango no se bloquean por lockear filas existentes) y sí introduciría
-    // contención con lecturas concurrentes ajenas a la escritura.
+    // NO LOCK: aggregate read. Serialization is guaranteed by the pessimistic
+    // lock on the budget row taken in findByUserIdAndCategoryIdAndPeriod, which
+    // CreateTransactionUseCase acquires BEFORE calling this sum.
+    // No one can commit a new expense for THIS budget/period while we hold its row
+    // lock, so this aggregate stays consistent through commit — no lock needed here.
+
+    //A FOR UPDATE
+    // here would add no correctness (locking existing rows can't block phantom
+    // inserts into the range) and would only contend with unrelated reads.
     const raw = await this.manager
       .getRepository(TransactionOrmEntity)
       .createQueryBuilder('transaction')
@@ -137,6 +152,9 @@ class ScopedAccountRepository extends IAccountRepository {
     super();
   }
 
+  // LOCK (FOR UPDATE): account row, held until commit. Serializes every balance
+  // mutation on this account — CreateTransaction, DeleteTransaction, and the
+  // Archive/Unarchive/Rename use cases all compete for this same row (Race 2).
   async findById(id: string): Promise<Account | null> {
     const orm = await this.manager.findOne(AccountOrmEntity, {
       where: { id },
@@ -171,6 +189,9 @@ class ScopedBudgetRepository extends IBudgetRepository {
     super();
   }
 
+  // LOCK (FOR UPDATE): budget row, held until commit. The "logical mutex" for the
+  // period invariant (Σ expenses ≤ limit). Used by UpdateBudgetLimit / DeleteBudget
+  // when the budget id is known; serializes them against concurrent expense creates.
   async findById(id: string): Promise<Budget | null> {
     const orm = await this.manager.findOne(BudgetOrmEntity, {
       where: { id },
@@ -186,6 +207,10 @@ class ScopedBudgetRepository extends IBudgetRepository {
     return orms.map((orm) => this.mapper.toDomain(orm));
   }
 
+  // LOCK (FOR UPDATE): budget row, held until commit. Same logical mutex as
+  // findById, but reached by the natural tuple (user, category, month, year)
+  // instead of the PK. This is the gate CreateTransaction takes first, before
+  // summing period expenses — so both paths converge on the same locked row.
   async findByUserIdAndCategoryIdAndPeriod(
     userId: string,
     categoryId: string,
@@ -231,10 +256,10 @@ class ScopedExpenseChecker extends IExpenseChecker {
       .andWhere('t.nature = :nature', { nature: 'expense' })
       .andWhere('t.transactionDate >= :periodStart', { periodStart })
       .andWhere('t.transactionDate < :periodEnd', { periodEnd })
-      // Sin FOR UPDATE: Postgres prohíbe el lock pesimista sobre agregados
-      // (getCount). La serialización contra CreateTransaction la garantiza el
-      // lock sobre la fila del budget que DeleteBudgetUseCase adquiere antes de
-      // invocar este checker. Lockear filas existentes no frena phantom inserts.
+      // NO LOCK: Postgres forbids pessimistic locks on aggregates (getCount).
+      // Serialization against CreateTransaction is guaranteed by the budget-row
+      // lock that DeleteBudgetUseCase takes BEFORE calling this checker. Locking
+      // existing rows wouldn't stop phantom inserts anyway.
       .getCount();
     return count > 0;
   }
@@ -256,10 +281,9 @@ class ScopedExpenseChecker extends IExpenseChecker {
       .andWhere('t.nature = :nature', { nature: 'expense' })
       .andWhere('t.transactionDate >= :periodStart', { periodStart })
       .andWhere('t.transactionDate < :periodEnd', { periodEnd })
-      // Sin FOR UPDATE: Postgres prohíbe el lock pesimista sobre agregados (SUM).
-      // La serialización contra CreateTransaction la garantiza el lock sobre la
-      // fila del budget que UpdateBudgetLimitUseCase adquiere antes de invocar
-      // este checker.
+      // NO LOCK: Postgres forbids pessimistic locks on aggregates (SUM).
+      // Serialization against CreateTransaction is guaranteed by the budget-row
+      // lock that UpdateBudgetLimitUseCase takes BEFORE calling this checker.
       .getRawOne<{ total: string }>();
     return Number(raw?.total ?? 0);
   }
@@ -289,8 +313,9 @@ export class TypeOrmUnitOfWorkImpl
   ) {
     super();
   }
-
+  // uow methods — begin, commit, rollback, release, isActive
   async begin(): Promise<void> {
+    //reserves a connection
     this.queryRunner = this.dataSource.createQueryRunner();
     await this.queryRunner.connect();
     await this.queryRunner.startTransaction();
@@ -312,7 +337,7 @@ export class TypeOrmUnitOfWorkImpl
   isActive(): boolean {
     return this.queryRunner !== null;
   }
-
+  // repository getters — return SCOPED repositories that share the same Conection/Transaction via the QueryRunner.
   getTransactionRepository(): ITransactionRepository {
     return new ScopedTransactionRepository(
       this.queryRunner!.manager,

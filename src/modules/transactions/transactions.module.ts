@@ -60,10 +60,12 @@ import { BudgetsModule } from '../budgets/budgets.module';
     // to each module-specific port via `useExisting` so all consumers share
     // the SAME instance (and therefore the same QueryRunner) per request.
     {
-      provide: TypeOrmUnitOfWorkImpl,
-      useClass: TypeOrmUnitOfWorkImpl,
+      provide: TypeOrmUnitOfWorkImpl, //This token is never used directly — only the module-specific interfaces (ITransactionUnitOfWork, IAccountUnitOfWork, IBudgetUnitOfWork) are injected into the use cases.
+      useClass: TypeOrmUnitOfWorkImpl, //But we still need to provide the concrete class itself here so Nest can instantiate it and manage its lifecycle.
       scope: Scope.REQUEST,
     },
+    // This tokens are the ones
+    // actually injected into the use cases
     {
       provide: ITransactionUnitOfWork,
       useExisting: TypeOrmUnitOfWorkImpl,

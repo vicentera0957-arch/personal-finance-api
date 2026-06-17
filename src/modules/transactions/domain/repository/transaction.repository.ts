@@ -1,5 +1,6 @@
 import { Transaction } from '../entities/transaction.entity';
 
+//Pagination and filtering options for transaction queries.
 export interface TransactionQueryOptions {
   limit?: number;
   offset?: number;
