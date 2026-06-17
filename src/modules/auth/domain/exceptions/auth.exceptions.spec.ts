@@ -13,7 +13,10 @@ describe('Auth domain exceptions', () => {
     [InvalidRefreshTokenException, 'InvalidRefreshTokenException'],
     [RefreshTokenRevokedException, 'RefreshTokenRevokedException'],
     [RefreshTokenExpiredException, 'RefreshTokenExpiredException'],
-    [RefreshTokenReplayDetectedException, 'RefreshTokenReplayDetectedException'],
+    [
+      RefreshTokenReplayDetectedException,
+      'RefreshTokenReplayDetectedException',
+    ],
   ];
 
   it.each(cases)(
