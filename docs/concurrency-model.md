@@ -336,3 +336,60 @@ disparar N requests con `Promise.all` y afirmar sobre el **estado final**, no so
 - **Dos operaciones distintas:** `PATCH limit` vs `POST transaction` → exactamente una gana; ninguna 500.
 
 Un `500` bajo carga casi siempre = deadlock o constraint reventada → la serialización falló.
+
+Validado el 2026-06-15: quitando cada lock temporalmente, los tests **se ponen rojos** (account lock →
+lost update de balance; budget lock → límite excedido + período vacío; transaction lock → doble reversa
+en Race 3). Es decir, los tests **muerden** — no pasan por casualidad.
+
+---
+
+## 13. Fragilidad del diseño (deuda conocida — pendiente de abordar)
+
+El modelo es **correcto pero frágil-por-convención**: su corrección depende de disciplina humana, no de
+garantías que el compilador o los tests impongan. Tres grietas documentadas para abordarlas más adelante:
+
+### 13.1 Locks implícitos ("spooky action at a distance")
+
+El `FOR UPDATE` vive *dentro* del `findById` del scoped repo. Desde el call site (`budgetRepo.findById(id)`)
+no hay nada que indique que esa línea toma un lock exclusivo. Quien lea el use case no ve el lock — tiene
+que saberlo o abrir el impl.
+
+**Riesgo:** un contribuidor que agregue un nuevo flujo de escritura y lea con el repo **global** (en vez
+del scoped), o que escriba el balance/budget por un camino que no pase por `findById`, **reabre las races
+sin que nada lo detecte**. La regla "no leas dentro del UoW con el repo global" (CLAUDE.md) es la única
+barrera, y es prosa, no código.
+
+**Fix robusto (futuro):** exponer el lock en el nombre — `findByIdForUpdate()` en una interfaz escopada
+(`IScopedAccountRepository extends IAccountRepository`) devuelta por el UoW. El lock se vuelve visible en
+el call site y auto-documentado. Costo: una interfaz escopada por agregado.
+
+### 13.2 Orden de locks no enforced (riesgo de deadlock)
+
+Hoy no hay deadlock porque todos los flujos toman los locks en el mismo orden (**budget → account**, la
+cuenta siempre última — ver §8). Pero ese orden es una **convención en la cabeza** del que escribió los
+flujos; nada lo impone.
+
+**Riesgo:** un flujo futuro que tome `account → budget` introduce un ciclo AB-BA. Postgres lo detectaría
+(`deadlock_timeout` ~1s → aborta una tx con `40P01` → 500), pero recién en producción y bajo carga. El
+compilador no dice nada.
+
+**Fix robusto (futuro):** documentar el orden canónico como regla de revisión + idealmente un test de
+concurrencia que ejercite el par de flujos en orden inverso para detectar la regresión.
+
+### 13.3 El gate depende de que *todos* los escritores lo respeten
+
+El budget row serializa el SUM del período **solo porque todo escritor de gastos del período toma su
+`FOR UPDATE` primero** (§ "bastón de la palabra"). Es un acuerdo, no una imposición física: el lock del
+budget no cubre las filas de `transactions`.
+
+**Riesgo:** un flujo que inserte un gasto **sin** pasar por el lock del budget evade el gate y el
+invariante "Σ ≤ límite" se rompe silenciosamente.
+
+**Fix robusto (futuro):** canalizar toda creación de gasto por el mismo use case/UoW (hoy se cumple), y
+dejar un test que falle si aparece un segundo camino de inserción de gastos.
+
+### Por qué se deja para después
+
+Las tres son correctas **hoy** y el costo de blindarlas (interfaces escopadas, más tests, convenciones
+enforced) no se justifica a la escala actual de aprendizaje/portafolio. Se documentan aquí para que la
+decisión sea **consciente** y para que el próximo cambio que las toque sepa que está pisando hielo fino.
