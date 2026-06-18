@@ -89,12 +89,12 @@ export class CreateTransactionUseCase {
     await this.uow.begin();
     try {
       // Scoped repos share the same QueryRunner → same transaction and connection.
-      const txRepo = this.uow.getTransactionRepository();
-      const acctRepo = this.uow.getAccountRepository();
+      const txRepo = this.uow.getScopedTransactionRepository();
+      const acctRepo = this.uow.getScopedAccountRepository();
       const updateBalance = new UpdateAccountBalanceUseCase(acctRepo);
 
       if (nature.isExpense()) {
-        const budgetRepo = this.uow.getBudgetRepository();
+        const budgetRepo = this.uow.getScopedBudgetRepository();
         const month = command.transactionDate.getMonth() + 1;
         const year = command.transactionDate.getFullYear();
 

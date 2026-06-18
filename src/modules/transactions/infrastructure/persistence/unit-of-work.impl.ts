@@ -338,21 +338,21 @@ export class TypeOrmUnitOfWorkImpl
     return this.queryRunner !== null;
   }
   // repository getters — return SCOPED repositories that share the same Conection/Transaction via the QueryRunner.
-  getTransactionRepository(): ITransactionRepository {
+  getScopedTransactionRepository(): ITransactionRepository {
     return new ScopedTransactionRepository(
       this.queryRunner!.manager,
       this.transactionMapper,
     );
   }
 
-  getAccountRepository(): IAccountRepository {
+  getScopedAccountRepository(): IAccountRepository {
     return new ScopedAccountRepository(
       this.queryRunner!.manager,
       this.accountMapper,
     );
   }
 
-  getBudgetRepository(): IBudgetRepository {
+  getScopedBudgetRepository(): IBudgetRepository {
     return new ScopedBudgetRepository(
       this.queryRunner!.manager,
       this.budgetMapper,

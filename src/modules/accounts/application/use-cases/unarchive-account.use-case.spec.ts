@@ -14,7 +14,7 @@ const makeMockUow = (repo: InMemoryAccountRepository) => ({
   rollback: jest.fn().mockResolvedValue(undefined),
   release: jest.fn().mockResolvedValue(undefined),
   isActive: jest.fn().mockReturnValue(true),
-  getAccountRepository: jest.fn().mockReturnValue(repo),
+  getScopedAccountRepository: jest.fn().mockReturnValue(repo),
 });
 
 describe('UnarchiveAccountUseCase', () => {

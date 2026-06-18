@@ -17,7 +17,7 @@ export class UnarchiveAccountUseCase {
     // Open the transaction: grabs a dedicated connection (QueryRunner) for this request.
     await this.uow.begin();
     try {
-      const accountRepo = this.uow.getAccountRepository();
+      const accountRepo = this.uow.getScopedAccountRepository();
 
       // LOCK (FOR UPDATE): account row. The lock lives inside the scoped repo's findById().
       // Competes for the same row lock as CreateTransaction/DeleteTransaction (Race 2),

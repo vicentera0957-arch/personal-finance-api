@@ -23,8 +23,8 @@ export class DeleteTransactionUseCase {
     await this.uow.begin();
     try {
       // Scoped repos share the same QueryRunner → same transaction and connection.
-      const txRepo = this.uow.getTransactionRepository();
-      const acctRepo = this.uow.getAccountRepository();
+      const txRepo = this.uow.getScopedTransactionRepository();
+      const acctRepo = this.uow.getScopedAccountRepository();
 
       // LOCK (FOR UPDATE): transaction row. The lock lives inside the scoped repo's
       // findById(). Serializes concurrent DELETEs on the same row: if another request

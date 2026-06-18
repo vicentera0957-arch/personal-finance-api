@@ -31,7 +31,7 @@ const makeMockUow = (
   rollback: jest.fn().mockResolvedValue(undefined),
   release: jest.fn().mockResolvedValue(undefined),
   isActive: jest.fn().mockReturnValue(true),
-  getBudgetRepository: jest.fn().mockReturnValue(budgetRepo),
+  getScopedBudgetRepository: jest.fn().mockReturnValue(budgetRepo),
   getScopedExpenseChecker: jest
     .fn()
     .mockReturnValue(new FakeExpenseChecker(hasExpenses)),

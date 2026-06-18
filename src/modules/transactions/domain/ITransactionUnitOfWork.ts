@@ -16,7 +16,7 @@ import { IBudgetRepository } from '../../budgets/domain/repository/budgets.repos
  * the full sequence of reads + writes.
  */
 export abstract class ITransactionUnitOfWork extends IUnitOfWork {
-  abstract getTransactionRepository(): ITransactionRepository;
-  abstract getAccountRepository(): IAccountRepository;
-  abstract getBudgetRepository(): IBudgetRepository;
+  abstract getScopedTransactionRepository(): ITransactionRepository;
+  abstract getScopedAccountRepository(): IAccountRepository;
+  abstract getScopedBudgetRepository(): IBudgetRepository;
 }

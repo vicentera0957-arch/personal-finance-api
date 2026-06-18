@@ -18,7 +18,7 @@ export class DeleteBudgetUseCase {
     // Open the transaction: grabs a dedicated connection (QueryRunner) for this request.
     await this.uow.begin();
     try {
-      const budgetRepo = this.uow.getBudgetRepository();
+      const budgetRepo = this.uow.getScopedBudgetRepository();
 
       // LOCK (FOR UPDATE): budget row. The lock lives inside the scoped repo's findById().
       // It is the serialization gate for the period invariant: holding it blocks concurrent

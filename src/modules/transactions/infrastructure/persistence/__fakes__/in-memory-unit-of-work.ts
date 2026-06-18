@@ -42,15 +42,15 @@ export class InMemoryUnitOfWork
     return this.active;
   }
 
-  getTransactionRepository(): ITransactionRepository {
+  getScopedTransactionRepository(): ITransactionRepository {
     return this.txRepo;
   }
 
-  getAccountRepository(): IAccountRepository {
+  getScopedAccountRepository(): IAccountRepository {
     return this.acctRepo;
   }
 
-  getBudgetRepository(): IBudgetRepository {
+  getScopedBudgetRepository(): IBudgetRepository {
     if (!this.budgetRepo) {
       throw new Error('BudgetRepository not provided to InMemoryUnitOfWork');
     }
