@@ -144,30 +144,30 @@ async execute(dto) {
 
 | Archivo | Qué hace |
 |---------|----------|
-| [src/modules/accounts/domain/IAccountUnitOfWork.ts](../src/modules/accounts/domain/IAccountUnitOfWork.ts) | Puerto del UoW para el bounded context de cuentas. Extiende `IUnitOfWork` y agrega `getAccountRepository()`. Vive en `accounts/domain` siguiendo el patrón "port owned by consumer". |
+| [src/modules/accounts/domain/IAccountUnitOfWork.ts](../../src/modules/accounts/domain/IAccountUnitOfWork.ts) | Puerto del UoW para el bounded context de cuentas. Extiende `IUnitOfWork` y agrega `getAccountRepository()`. Vive en `accounts/domain` siguiendo el patrón "port owned by consumer". |
 
 ### Archivos modificados
 
 | Archivo | Cambio |
 |---------|--------|
-| [src/modules/budgets/domain/IBudgetUnitOfWork.ts](../src/modules/budgets/domain/IBudgetUnitOfWork.ts) | Agrega método abstracto `getScopedExpenseChecker(): IExpenseChecker`. |
-| [src/modules/transactions/infrastructure/persistence/unit-of-work.impl.ts](../src/modules/transactions/infrastructure/persistence/unit-of-work.impl.ts) | 1) Nueva clase privada `ScopedExpenseChecker` con `hasExpensesInPeriod` + `pessimistic_write`. 2) Implementa `IAccountUnitOfWork` (el método `getAccountRepository()` ya existía). 3) Implementa `getScopedExpenseChecker()`. |
-| [src/modules/transactions/transactions.module.ts](../src/modules/transactions/transactions.module.ts) | Agrega provider `{ provide: IAccountUnitOfWork, useExisting: TypeOrmUnitOfWorkImpl }`, exporta `IAccountUnitOfWork`, cambia `AccountsModule` por `forwardRef(() => AccountsModule)`. |
-| [src/modules/accounts/accounts.module.ts](../src/modules/accounts/accounts.module.ts) | Agrega `forwardRef(() => TransactionsModule)` en imports (para que NestJS resuelva `IAccountUnitOfWork` en los use cases). |
-| [src/modules/budgets/application/use-cases/delete-budget.use-case.ts](../src/modules/budgets/application/use-cases/delete-budget.use-case.ts) | Reescrito. Elimina `IBudgetRepository`, `GetBudgetByIdUseCase`, `IExpenseChecker` directo. Ahora solo inyecta `IBudgetUnitOfWork`. Toda la lógica dentro de `begin/try/catch(rollback)/finally(release)`. |
-| [src/modules/accounts/application/use-cases/archive-account.use-case.ts](../src/modules/accounts/application/use-cases/archive-account.use-case.ts) | Reescrito. Elimina `IAccountRepository` + `GetAccountByIdUseCase`. Inyecta `IAccountUnitOfWork`. Ownership check inline. |
-| [src/modules/accounts/application/use-cases/unarchive-account.use-case.ts](../src/modules/accounts/application/use-cases/unarchive-account.use-case.ts) | Mismo patrón que archive. |
-| [src/modules/accounts/application/use-cases/rename-account.use-case.ts](../src/modules/accounts/application/use-cases/rename-account.use-case.ts) | Mismo patrón que archive. |
+| [src/modules/budgets/domain/IBudgetUnitOfWork.ts](../../src/modules/budgets/domain/IBudgetUnitOfWork.ts) | Agrega método abstracto `getScopedExpenseChecker(): IExpenseChecker`. |
+| [src/modules/transactions/infrastructure/persistence/unit-of-work.impl.ts](../../src/modules/transactions/infrastructure/persistence/unit-of-work.impl.ts) | 1) Nueva clase privada `ScopedExpenseChecker` con `hasExpensesInPeriod` + `pessimistic_write`. 2) Implementa `IAccountUnitOfWork` (el método `getAccountRepository()` ya existía). 3) Implementa `getScopedExpenseChecker()`. |
+| [src/modules/transactions/transactions.module.ts](../../src/modules/transactions/transactions.module.ts) | Agrega provider `{ provide: IAccountUnitOfWork, useExisting: TypeOrmUnitOfWorkImpl }`, exporta `IAccountUnitOfWork`, cambia `AccountsModule` por `forwardRef(() => AccountsModule)`. |
+| [src/modules/accounts/accounts.module.ts](../../src/modules/accounts/accounts.module.ts) | Agrega `forwardRef(() => TransactionsModule)` en imports (para que NestJS resuelva `IAccountUnitOfWork` en los use cases). |
+| [src/modules/budgets/application/use-cases/delete-budget.use-case.ts](../../src/modules/budgets/application/use-cases/delete-budget.use-case.ts) | Reescrito. Elimina `IBudgetRepository`, `GetBudgetByIdUseCase`, `IExpenseChecker` directo. Ahora solo inyecta `IBudgetUnitOfWork`. Toda la lógica dentro de `begin/try/catch(rollback)/finally(release)`. |
+| [src/modules/accounts/application/use-cases/archive-account.use-case.ts](../../src/modules/accounts/application/use-cases/archive-account.use-case.ts) | Reescrito. Elimina `IAccountRepository` + `GetAccountByIdUseCase`. Inyecta `IAccountUnitOfWork`. Ownership check inline. |
+| [src/modules/accounts/application/use-cases/unarchive-account.use-case.ts](../../src/modules/accounts/application/use-cases/unarchive-account.use-case.ts) | Mismo patrón que archive. |
+| [src/modules/accounts/application/use-cases/rename-account.use-case.ts](../../src/modules/accounts/application/use-cases/rename-account.use-case.ts) | Mismo patrón que archive. |
 
 ### Tests actualizados
 
 | Archivo | Cambio |
 |---------|--------|
-| [src/modules/budgets/application/use-cases/delete-budget.use-case.spec.ts](../src/modules/budgets/application/use-cases/delete-budget.use-case.spec.ts) | Reescrito con `mockUow` que incluye `getScopedExpenseChecker`. 4 tests: delete exitoso, budget con gastos (409), no encontrado (404), acceso denegado (403). |
-| [src/modules/accounts/application/use-cases/archive-account.use-case.spec.ts](../src/modules/accounts/application/use-cases/archive-account.use-case.spec.ts) | Reescrito con `makeMockUow`. 4 tests: archive exitoso, ya archivado, no encontrado, ownership denegado. |
-| [src/modules/accounts/application/use-cases/unarchive-account.use-case.spec.ts](../src/modules/accounts/application/use-cases/unarchive-account.use-case.spec.ts) | Mismo patrón. |
-| [src/modules/accounts/application/use-cases/rename-account.use-case.spec.ts](../src/modules/accounts/application/use-cases/rename-account.use-case.spec.ts) | Mismo patrón. |
-| [src/modules/transactions/infrastructure/persistence/\__fakes\__/in-memory-unit-of-work.ts](../src/modules/transactions/infrastructure/persistence/__fakes__/in-memory-unit-of-work.ts) | Implementa `getScopedExpenseChecker()` requerido por el contrato actualizado de `IBudgetUnitOfWork`. Acepta `expenseChecker` opcional en constructor, lanza si no fue provisto. |
+| [src/modules/budgets/application/use-cases/delete-budget.use-case.spec.ts](../../src/modules/budgets/application/use-cases/delete-budget.use-case.spec.ts) | Reescrito con `mockUow` que incluye `getScopedExpenseChecker`. 4 tests: delete exitoso, budget con gastos (409), no encontrado (404), acceso denegado (403). |
+| [src/modules/accounts/application/use-cases/archive-account.use-case.spec.ts](../../src/modules/accounts/application/use-cases/archive-account.use-case.spec.ts) | Reescrito con `makeMockUow`. 4 tests: archive exitoso, ya archivado, no encontrado, ownership denegado. |
+| [src/modules/accounts/application/use-cases/unarchive-account.use-case.spec.ts](../../src/modules/accounts/application/use-cases/unarchive-account.use-case.spec.ts) | Mismo patrón. |
+| [src/modules/accounts/application/use-cases/rename-account.use-case.spec.ts](../../src/modules/accounts/application/use-cases/rename-account.use-case.spec.ts) | Mismo patrón. |
+| [src/modules/transactions/infrastructure/persistence/\__fakes\__/in-memory-unit-of-work.ts](../../src/modules/transactions/infrastructure/persistence/__fakes__/in-memory-unit-of-work.ts) | Implementa `getScopedExpenseChecker()` requerido por el contrato actualizado de `IBudgetUnitOfWork`. Acepta `expenseChecker` opcional en constructor, lanza si no fue provisto. |
 
 ---
 

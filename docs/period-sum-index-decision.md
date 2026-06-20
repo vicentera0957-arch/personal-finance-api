@@ -1,4 +1,4 @@
-# Decisión — índice para el query del SUM de período
+# Índice para el SUM de período
 
 > **Estado: PENDIENTE DE APROBACIÓN.** Recomendación con evidencia. No se aplicó ningún cambio de schema.
 

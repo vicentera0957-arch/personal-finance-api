@@ -1,4 +1,4 @@
-# Production readiness — cambios 2026-06-16
+# Production Readiness — 2026-06
 
 Registro de los cambios de esta sesión para acercar la API a "listo para producción":
 CI endurecido, fail-fast de secretos, Redis como dependencia dura en el readiness,

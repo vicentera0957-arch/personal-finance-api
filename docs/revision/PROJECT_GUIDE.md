@@ -1,5 +1,9 @@
 # Project Guide — Personal Finance API
 
+> **⚠️ Archivado / superseado.** Esta guía maestra legacy fue reemplazada por
+> [`architecture.md`](../architecture.md), el [índice de docs](../README.md) y los
+> [ADRs](../adr/). Se conserva como referencia; parte del contenido puede estar desactualizado.
+
 Documento maestro para **entender el proyecto en cada parte**. Es el punto de entrada:
 empezá acá y seguí los enlaces según lo que necesites. Pensado tanto para vos en 6 meses
 como para alguien que llega por primera vez (o un recruiter revisando el repo).
@@ -20,9 +24,9 @@ que mueven el balance de sus cuentas respetando los límites de presupuesto.
 - **Estado:** dominio y seguridad maduros; listo para un primer deploy (ver §7).
 
 Diagramas de referencia:
-- 🖼️ [Diagrama de capas](./architecture/layer_diagram.svg) · [Diagrama de módulos](./architecture/modules_diagram.svg)
-- [Modelo de datos (PDF)](./database/Finanzas%20V1.pdf)
-- [Reglas de negocio (PDF)](./domain/Reglas%20de%20negocio.docx.pdf)
+- 🖼️ Diagramas (Mermaid, actualizados) en [`architecture.md`](../architecture.md). Los SVG/PNG viejos están en esta misma carpeta (`revision/`).
+- [Modelo de datos (PDF)](../database/Finanzas%20V1.pdf)
+- [Reglas de negocio (PDF)](../domain/Reglas%20de%20negocio.docx.pdf)
 
 ---
 
@@ -30,15 +34,20 @@ Diagramas de referencia:
 
 | Necesitás… | Leé |
 |---|---|
-| Arrancar el proyecto en local | [`README.md`](../README.md) |
+| Arrancar el proyecto en local | [`README.md`](../../README.md) |
 | Entender la arquitectura completa (este doc) | **PROJECT_GUIDE.md** |
 | Referencia exhaustiva (patrones, tablas, anti-patrones) | `CLAUDE.md` *(gitignored, local)* |
 | Detalle vivo de un módulo | `src/modules/<m>/notes.md` |
-| Por qué el cache usa composición y no herencia | [`src/shared/domain/cache-decision.md`](../src/shared/domain/cache-decision.md) |
-| Por qué el UoW usa herencia de puertos | [`src/shared/domain/uow-decision.md`](../src/shared/domain/uow-decision.md) |
-| Cómo desplegar (build/release/run, env vars, health) | [`docs/DEPLOYMENT.md`](./DEPLOYMENT.md) |
-| Historial de endurecimiento (journal, abr-2026) | [`docs/HARDENING_AUDIT_2026-04.md`](./HARDENING_AUDIT_2026-04.md) |
-| Cómo se cerraron las race conditions (journal, may-2026) | [`docs/race-conditions-fix-2026-05.md`](./race-conditions-fix-2026-05.md) |
+| Por qué el cache usa composición y no herencia | [`src/shared/domain/cache-decision.md`](../../src/shared/domain/cache-decision.md) |
+| Por qué el UoW usa herencia de puertos | [`src/shared/domain/uow-decision.md`](../../src/shared/domain/uow-decision.md) |
+| Arquitectura + diagramas (Mermaid) | [`docs/architecture.md`](../architecture.md) |
+| Decisiones de diseño (ADRs) | [`docs/adr/`](../adr/) |
+| Testing (unit + integración, dobles) | [`docs/testing.md`](../testing.md) |
+| Observabilidad (logs, métricas, trazas) | [`docs/observability.md`](../observability.md) |
+| Cómo desplegar (build/release/run, env vars, health) | [`docs/deployment.md`](../deployment.md) |
+| Historial de endurecimiento (journal, abr-2026) | [`docs/history/hardening-audit-2026-04.md`](../history/hardening-audit-2026-04.md) |
+| Cómo se cerraron las race conditions (journal, may-2026) | [`docs/history/race-conditions-fix-2026-05.md`](../history/race-conditions-fix-2026-05.md) |
+| Cambios production-readiness (journal, jun-2026) | [`docs/history/production-readiness-2026-06-16.md`](../history/production-readiness-2026-06-16.md) |
 
 ---
 
@@ -126,10 +135,10 @@ Use case → uow.begin() → repos escopados (FOR UPDATE) → dominio → uow.co
 - La **fila del budget funciona como mutex lógico** del invariante "Σ gastos del período ≤ límite":
   todo flujo que toque ese invariante lockea esa fila primero.
 
-**Profundizar:** `uow-decision.md` (jerarquía de puertos), `race-conditions-fix-2026-05.md`
-(diagramas TOCTOU de las races cerradas), y la sección "Concurrency" de `CLAUDE.md` (tabla
-completa de locks). El diagrama E2E paso a paso está en el plan
-`~/.claude/plans/planifica-que-falta-para-vectorized-lecun.md`.
+**Profundizar:** [`uow-decision.md`](../../src/shared/domain/uow-decision.md) (jerarquía de puertos),
+[`history/race-conditions-fix-2026-05.md`](../history/race-conditions-fix-2026-05.md) (diagramas TOCTOU de
+las races cerradas), [`concurrency-model.md`](../concurrency-model.md) (modelo completo) y la sección
+"Concurrency" de `CLAUDE.md` (tabla completa de locks).
 
 ---
 
@@ -152,7 +161,7 @@ Referencia viva: `src/modules/auth/notes.md`.
 ## 7. Deploy
 
 El empaquetado y el contrato con la plataforma están implementados; ver el runbook completo en
-[`docs/DEPLOYMENT.md`](./DEPLOYMENT.md). Resumen del modelo **Build → Release → Run**:
+[`docs/deployment.md`](../deployment.md). Resumen del modelo **Build → Release → Run**:
 
 - **Build:** `Dockerfile` multi-stage → imagen mínima con `dist/` + deps de prod (usuario no-root, `tini`).
 - **Release:** `docker-entrypoint.sh` corre `migration:run` (sobre `dist/data-source.js`) antes de arrancar.
@@ -170,24 +179,25 @@ npm run test:integration  # integración con Postgres real (test/.env.test)
 npm run test:cov          # cobertura
 ```
 
-- **Unit:** ~593 tests, dominio y casos de uso cubiertos con fakes in-memory.
-- **Integración:** suite contra Postgres real (hoy los specs están como `.bak` — reactivarlos es
-  el próximo hito de testing; ver §9).
-- CI (`.github/workflows/ci.yml`): jobs de `lint`, `build`, unit, integración y *migration smoke*
-  (corre las migraciones desde cero para detectar un schema inicial incompleto).
+- **Unit:** ~595 tests, dominio y casos de uso cubiertos con fakes in-memory.
+- **Integración:** suite **activa** contra Postgres real (auth, users, accounts, categories, budgets,
+  transactions y un spec dedicado de **concurrencia**) vía `npm run test:integration`. Detalle en
+  [`testing.md`](../testing.md).
+- CI (`.github/workflows/ci.yml`): 7 jobs — `lint`, `build`, unit (con cobertura), integración,
+  *migration smoke*, *docker build* y *security audit*.
 
 ---
 
 ## 9. Estado y qué falta
 
 **Sólido hoy:** dominio, concurrencia (races cerradas), auth con rotación, migraciones
-consolidadas en una sola `InitialSchema`, bootstrap endurecido, empaquetado de deploy verificado E2E.
+consolidadas en una sola `InitialSchema`, bootstrap endurecido, empaquetado de deploy verificado E2E,
+suite de integración activa, métricas Prometheus + health/readiness.
 
 **Pendiente (no bloquea el primer deploy):**
-1. Reactivar los integration tests (`test/integration/*.bak`) y que CI falle si fallan.
-2. Hacer el primer deploy real (PaaS) y enlazar la URL viva + Swagger en el README.
-3. Observabilidad: métricas (Prometheus) + tracing + error tracking (Sentry).
-4. Índice parcial `WHERE nature='expense'` (optimización; ojo con el drift entity↔DB).
+1. Enlazar la URL viva + Swagger en el README (el deploy ya está hecho).
+2. Observabilidad: **tracing** (OpenTelemetry) + **error tracking** (Sentry) — métricas y logs ya están.
+3. Índice parcial `WHERE nature='expense'` (optimización; ojo con el drift entity↔DB).
 
 ---
 
@@ -200,6 +210,6 @@ npm run lint               # eslint
 npm test                   # tests unitarios
 npm run migration:run      # aplica migraciones (dev, ts-node)
 npm run migration:generate # genera migración desde el diff de entities
-docker compose up -d       # Postgres (5433) + Redis + pgAdmin (5050)
+docker compose up -d       # Postgres (5433) + Redis + pgAdmin (5051)
 docker build -t personal-finance-api .   # imagen de producción
 ```

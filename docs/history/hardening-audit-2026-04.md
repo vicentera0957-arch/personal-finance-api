@@ -1,4 +1,4 @@
-# Hardening Audit — 2026-04-18
+# Hardening Audit — 2026-04
 
 > **Estado 2026-04-26:** Los cambios documentados aquí están implementados.
 > Los bugs identificados en este audit que aún están abiertos (Bug A, Bug B, Bug E) están

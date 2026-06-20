@@ -128,7 +128,7 @@ El `forwardRef()` es un artefacto del DI graph de NestJS. La dirección de depen
 
 ## Estado de los races (histórico)
 
-Movido a [notes-history.md](./notes-history.md): la race de "check-then-insert" en `CreateBudget` (cerrada con `@Unique` + `catch 23505`) y el write-skew **Bug A**. Los races que cruzan módulos (Race 1: `DELETE /budgets/:id` vs `POST /transactions`) están en [docs/race-conditions-fix-2026-05.md](../../../docs/race-conditions-fix-2026-05.md).
+Movido a [notes-history.md](./notes-history.md): la race de "check-then-insert" en `CreateBudget` (cerrada con `@Unique` + `catch 23505`) y el write-skew **Bug A**. Los races que cruzan módulos (Race 1: `DELETE /budgets/:id` vs `POST /transactions`) están en [docs/history/race-conditions-fix-2026-05.md](../../../docs/history/race-conditions-fix-2026-05.md).
 
 ---
 

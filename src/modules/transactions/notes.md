@@ -190,7 +190,7 @@ Exports: `IExpenseChecker` (implementación usada por `BudgetsModule` para valid
 
 Los bugs de concurrencia ya cerrados **propios de este módulo** (Bug A, Bug A.2, Bug B) y su análisis completo se movieron a [notes-history.md](./notes-history.md).
 
-Los races que **cruzan módulos** — Race 1 (`DELETE /budgets/:id` vs `POST /transactions`) y Race 2 (mutaciones de cuenta vs `POST /transactions`) — están documentados centralmente en [docs/race-conditions-fix-2026-05.md](../../../docs/race-conditions-fix-2026-05.md).
+Los races que **cruzan módulos** — Race 1 (`DELETE /budgets/:id` vs `POST /transactions`) y Race 2 (mutaciones de cuenta vs `POST /transactions`) — están documentados centralmente en [docs/history/race-conditions-fix-2026-05.md](../../../docs/history/race-conditions-fix-2026-05.md).
 
 ---
 

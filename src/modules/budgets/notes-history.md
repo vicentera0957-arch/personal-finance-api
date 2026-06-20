@@ -22,6 +22,6 @@ Anclado a `CreateTransaction`. El análisis completo (escenario, fix, por qué f
 
 ## Race 1 — DELETE /budgets/:id vs POST /transactions (cross-cutting)
 
-Documentado centralmente en [docs/race-conditions-fix-2026-05.md](../../../docs/race-conditions-fix-2026-05.md).
+Documentado centralmente en [docs/history/race-conditions-fix-2026-05.md](../../../docs/history/race-conditions-fix-2026-05.md).
 
 En breve: `DeleteBudgetUseCase` corre dentro de `IBudgetUnitOfWork`; `ScopedBudgetRepository.findById` toma `FOR UPDATE` y `getScopedExpenseChecker().hasExpensesInPeriod` corre bajo el mismo `QueryRunner`. El budget row actúa de mutex: quien gana el lock completa su sección crítica de forma atómica, y el perdedor o ve el budget borrado (404) o ve gastos en el período (409).

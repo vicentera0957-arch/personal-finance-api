@@ -1,4 +1,4 @@
-# Módulo `auth` — Histórico
+# Módulo `auth` — Histórico y post-mortems
 
 > Estado **actual** en [notes.md](./notes.md). Aquí queda el registro de gaps que en su momento eran prioritarios y ya fueron cerrados.
 

@@ -1,4 +1,4 @@
-El patron UoW en este proyecto
+# Unit of Work — decisiones de diseño
 
 Nivel 1 - Contrato generico (shared/domain/IUnitOfWork.ts)
 Define solo el ciclo de vida transaccional (begin, commit, rollback, release, isActive). No sabe nada de repos. Vive en shared porque "tener una transaccion de DB" es cross-cutting, no pertenece a ningun bounded context.

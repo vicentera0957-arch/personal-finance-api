@@ -102,7 +102,7 @@ await updateBalance.execute(command.accountId, amount.getValue(), 'inflow' | 'ou
 
 Al usar el repositorio escopado, la actualización del balance corre dentro de la misma transacción de PostgreSQL que el `txRepo.save(transaction)`. Esto garantiza atomicidad: si el save de la transacción falla, el balance tampoco se actualiza.
 
-✅ **Bug B (lost update de balance) — CERRADO.** `ScopedAccountRepository.findById` toma `FOR UPDATE`, así que dos transacciones concurrentes sobre la misma cuenta se serializan: la segunda espera el COMMIT de la primera y lee el balance vigente. Post-mortem completo en [transactions/notes-history.md](../../transactions/notes-history.md). La competencia entre mutaciones de cuenta y transacciones (Race 2) está en [docs/race-conditions-fix-2026-05.md](../../../docs/race-conditions-fix-2026-05.md).
+✅ **Bug B (lost update de balance) — CERRADO.** `ScopedAccountRepository.findById` toma `FOR UPDATE`, así que dos transacciones concurrentes sobre la misma cuenta se serializan: la segunda espera el COMMIT de la primera y lee el balance vigente. Post-mortem completo en [transactions/notes-history.md](../../transactions/notes-history.md). La competencia entre mutaciones de cuenta y transacciones (Race 2) está en [docs/history/race-conditions-fix-2026-05.md](../../../docs/history/race-conditions-fix-2026-05.md).
 
 ---
 

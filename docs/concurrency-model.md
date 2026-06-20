@@ -1,8 +1,8 @@
-# Modelo de concurrencia — vista completa
+# Modelo de concurrencia
 
 > Documento de referencia y estudio. Reúne en un solo lugar lo que está fragmentado entre
 > [CLAUDE.md](../CLAUDE.md) (mapa de locks autoritativo), [uow-decision.md](../src/shared/domain/uow-decision.md)
-> (el patrón), [race-conditions-fix-2026-05.md](./race-conditions-fix-2026-05.md) (post-mortems
+> (el patrón), [race-conditions-fix-2026-05.md](./history/race-conditions-fix-2026-05.md) (post-mortems
 > cross-módulo) y los `notes.md` de cada módulo. Cuando el código y este doc discrepen, gana el
 > código — pero abre un PR para corregir el doc.
 
@@ -318,7 +318,7 @@ sequenceDiagram
 | Race 3 | Dos `DELETE /transactions/:id` (doble-reversa) | `FOR UPDATE` sobre la fila de la tx; fail-fast fuera + re-fetch dentro |
 | B4 | `PATCH /budgets/:id/limit` bajaba el límite por debajo de lo gastado | suma bajo el lock del budget → `BudgetLimitBelowSpentException` (409) |
 
-Post-mortems detallados: [race-conditions-fix-2026-05.md](./race-conditions-fix-2026-05.md) (Race 1/2)
+Post-mortems detallados: [race-conditions-fix-2026-05.md](./history/race-conditions-fix-2026-05.md) (Race 1/2)
 y los `notes-history.md` de cada módulo (Bug A/A.2/B, Bug E).
 
 ---

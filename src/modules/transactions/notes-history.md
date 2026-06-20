@@ -2,7 +2,7 @@
 
 > Registro de bugs de concurrencia ya **cerrados**, conservado para que futuros contribuyentes no rehagan el análisis. El estado **actual** del módulo vive en [notes.md](./notes.md).
 >
-> Los races que **cruzan módulos** — Race 1 (`DELETE /budgets/:id` vs `POST /transactions`) y Race 2 (mutaciones de cuenta vs `POST /transactions`) — están documentados centralmente en [docs/race-conditions-fix-2026-05.md](../../../../docs/race-conditions-fix-2026-05.md). Aquí solo viven los bugs cuyo análisis es propio de `transactions`.
+> Los races que **cruzan módulos** — Race 1 (`DELETE /budgets/:id` vs `POST /transactions`) y Race 2 (mutaciones de cuenta vs `POST /transactions`) — están documentados centralmente en [docs/history/race-conditions-fix-2026-05.md](../../../../docs/history/race-conditions-fix-2026-05.md). Aquí solo viven los bugs cuyo análisis es propio de `transactions`.
 
 ---
 
