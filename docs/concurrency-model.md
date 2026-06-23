@@ -193,6 +193,12 @@ decisión es lo que cierra la ventana de race.
    de revocar, por la FK auto-referencial.
 7. `commit` / `rollback`.
 
+> **Bug latente (anotado, no activo):** el impl **global** `RefreshTokenRepositoryImpl.findByTokenHashWithLock`
+> también pide `pessimistic_write`. Fuera de un `QueryRunner` (conexión en autocommit) eso lanzaría
+> `PessimisticLockTransactionRequiredError`. No explota porque está muerto: solo el scoped
+> (`ScopedRefreshTokenRepository`, dentro del UoW) lo invoca. Regla: no llamar `findByTokenHashWithLock`
+> sobre el repo global.
+
 ---
 
 ## 8. Orden de locks y deadlocks

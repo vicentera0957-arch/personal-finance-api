@@ -18,6 +18,7 @@ export class AccountRepositoryImpl extends IAccountRepository {
     super();
   }
 
+  // No lock — query/read path. The FOR UPDATE variant lives in ScopedAccountRepository (UoW).
   async findById(id: string): Promise<Account | null> {
     const orm = await this.ormRepository.findOne({ where: { id } });
 

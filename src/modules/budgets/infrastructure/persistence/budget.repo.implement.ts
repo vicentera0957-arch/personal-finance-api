@@ -20,6 +20,7 @@ export class BudgetRepositoryImpl extends IBudgetRepository {
     super();
   }
 
+  // No lock — query/read path. The FOR UPDATE variant lives in ScopedBudgetRepository (UoW).
   async findById(id: string): Promise<Budget | null> {
     const orm = await this.ormRepository.findOne({ where: { id } });
     if (!orm) return null;
@@ -50,6 +51,7 @@ export class BudgetRepositoryImpl extends IBudgetRepository {
     return orms.map((orm) => this.mapper.toDomain(orm));
   }
 
+  // No lock — pre-check/query path. The FOR UPDATE variant lives in ScopedBudgetRepository (UoW).
   async findByUserIdAndCategoryIdAndPeriod(
     userId: string,
     categoryId: string,
