@@ -1,10 +1,11 @@
-import { Injectable } from '@nestjs/common';
 import { IAccountRepository } from '../../domain/repository/accounts.repository';
 import { Balance } from '../../domain/value-objects/balance.vo';
 import { Account } from '../../domain/entities/account.entity';
 import { AccountNotFoundException } from '../../domain/exceptions/account.exceptions';
 
-@Injectable()
+// Internal collaborator — NOT a DI provider. Mutates the Account aggregate and MUST run inside a
+// UoW with a scoped, row-locked repository (FOR UPDATE). Always built via `new(scopedRepo)` by
+// Create/DeleteTransaction; never injected.
 export class UpdateAccountBalanceUseCase {
   constructor(private readonly accountRepository: IAccountRepository) {}
 
