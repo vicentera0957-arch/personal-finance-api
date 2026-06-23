@@ -11,8 +11,6 @@ import { TransactionsController } from './infrastructure/http/transactions-contr
 import { TypeOrmUnitOfWorkImpl } from './infrastructure/persistence/unit-of-work.impl';
 // Domain
 import { ITransactionRepository } from './domain/repository/transaction.repository';
-import { IExpenseChecker } from '../budgets/domain/repository/expense-checker.port';
-import { ExpenseCheckerImpl } from './infrastructure/persistence/expense-checker.implement';
 import { ITransactionUnitOfWork } from './domain/ITransactionUnitOfWork';
 import { IBudgetUnitOfWork } from '../budgets/domain/IBudgetUnitOfWork';
 import { IAccountUnitOfWork } from '../accounts/domain/IAccountUnitOfWork';
@@ -52,10 +50,6 @@ import { BudgetsModule } from '../budgets/budgets.module';
       provide: ITransactionRepository,
       useClass: TransactionRepositoryImpl,
     },
-    {
-      provide: IExpenseChecker,
-      useClass: ExpenseCheckerImpl,
-    },
     // The concrete UoW is provided once as request-scoped, then aliased
     // to each module-specific port via `useExisting` so all consumers share
     // the SAME instance (and therefore the same QueryRunner) per request.
@@ -80,7 +74,6 @@ import { BudgetsModule } from '../budgets/budgets.module';
     },
   ],
   exports: [
-    IExpenseChecker,
     ITransactionUnitOfWork,
     IBudgetUnitOfWork,
     IAccountUnitOfWork,

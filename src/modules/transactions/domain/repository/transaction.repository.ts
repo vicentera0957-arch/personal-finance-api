@@ -8,7 +8,10 @@ export interface TransactionQueryOptions {
   to?: Date;
 }
 
-// Puerto de salida como clase abstracta — token de DI para NestJS.
+// Query-side port (DI token for NestJS). Read-only, no locks — runs on the global
+// connection in autocommit. Mutations and locking reads live on IScopedTransactionRepository,
+// reachable only through the Unit of Work. Splitting the two makes it impossible (by types)
+// to write a transaction outside an open DB transaction.
 export abstract class ITransactionRepository {
   abstract findById(id: string): Promise<Transaction | null>;
   abstract findByAccountId(
@@ -19,12 +22,4 @@ export abstract class ITransactionRepository {
     userId: string,
     options?: TransactionQueryOptions,
   ): Promise<Transaction[]>;
-  abstract save(transaction: Transaction): Promise<Transaction>;
-  abstract sumExpenseAmountByUserCategoryAndPeriod(
-    userId: string,
-    categoryId: string,
-    month: number,
-    year: number,
-  ): Promise<number>;
-  abstract delete(id: string): Promise<void>;
 }

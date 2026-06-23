@@ -27,9 +27,9 @@ export class DeleteTransactionUseCase {
       const acctRepo = this.uow.getScopedAccountRepository();
 
       // LOCK (FOR UPDATE): transaction row. The lock lives inside the scoped repo's
-      // findById(). Serializes concurrent DELETEs on the same row: if another request
-      // already deleted and committed, findById returns null here (→ 404, no double reverse).
-      const transaction = await txRepo.findById(id);
+      // findByIdWithLock(). Serializes concurrent DELETEs on the same row: if another request
+      // already deleted and committed, it returns null here (→ 404, no double reverse).
+      const transaction = await txRepo.findByIdWithLock(id);
       if (!transaction) throw new TransactionNotFoundException(id);
 
       const updateBalance = new UpdateAccountBalanceUseCase(acctRepo);

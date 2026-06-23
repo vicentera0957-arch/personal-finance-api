@@ -1,19 +1,9 @@
 import { Injectable, Scope } from '@nestjs/common';
-import {
-  DataSource,
-  EntityManager,
-  QueryRunner,
-  Between,
-  MoreThanOrEqual,
-  LessThanOrEqual,
-} from 'typeorm';
+import { DataSource, EntityManager, QueryRunner } from 'typeorm';
 import { ITransactionUnitOfWork } from '../../domain/ITransactionUnitOfWork';
 import { IBudgetUnitOfWork } from '../../../budgets/domain/IBudgetUnitOfWork';
 import { IAccountUnitOfWork } from '../../../accounts/domain/IAccountUnitOfWork';
-import {
-  ITransactionRepository,
-  TransactionQueryOptions,
-} from '../../domain/repository/transaction.repository';
+import { IScopedTransactionRepository } from '../../domain/repository/scoped-transaction.repository';
 import { IAccountRepository } from '../../../accounts/domain/repository/accounts.repository';
 import { IBudgetRepository } from '../../../budgets/domain/repository/budgets.repository';
 import { IExpenseChecker } from '../../../budgets/domain/repository/expense-checker.port';
@@ -26,7 +16,6 @@ import { Account } from '../../../accounts/domain/entities/account.entity';
 import { BudgetOrmEntity } from '../../../budgets/infrastructure/persistence/budget.orm.entity';
 import { BudgetMapper } from '../../../budgets/infrastructure/persistence/budget.mapper';
 import { Budget } from '../../../budgets/domain/budget.entity';
-import { FindOptionsWhere } from 'typeorm';
 
 // ── Scoped repositories — private to this file; only the UoW constructs them ──
 //
@@ -38,7 +27,7 @@ import { FindOptionsWhere } from 'typeorm';
 // write. (If these ran on the global DataSource in autocommit, the lock would be
 // released right after the SELECT and would be useless — hence scoped repos only.)
 
-class ScopedTransactionRepository extends ITransactionRepository {
+class ScopedTransactionRepository extends IScopedTransactionRepository {
   constructor(
     private readonly manager: EntityManager,
     private readonly mapper: TransactionMapper,
@@ -50,42 +39,12 @@ class ScopedTransactionRepository extends ITransactionRepository {
   // concurrent DELETE /transactions/:id on the same row — the second arrival
   // blocks here, then sees null after the first commits and throws
   // TransactionNotFound, preventing a double-reverse of the balance (Race 3).
-  async findById(id: string): Promise<Transaction | null> {
+  async findByIdWithLock(id: string): Promise<Transaction | null> {
     const orm = await this.manager.findOne(TransactionOrmEntity, {
       where: { id },
       lock: { mode: 'pessimistic_write' },
     });
     return orm ? this.mapper.toDomain(orm) : null;
-  }
-
-  async findByAccountId(
-    accountId: string,
-    options?: TransactionQueryOptions,
-  ): Promise<Transaction[]> {
-    const where: FindOptionsWhere<TransactionOrmEntity> = { accountId };
-    this.applyDateFilter(where, options);
-    const orms = await this.manager.find(TransactionOrmEntity, {
-      where,
-      skip: options?.offset,
-      take: options?.limit,
-      order: { transactionDate: 'DESC' },
-    });
-    return orms.map((orm) => this.mapper.toDomain(orm));
-  }
-
-  async findByUserId(
-    userId: string,
-    options?: TransactionQueryOptions,
-  ): Promise<Transaction[]> {
-    const where: FindOptionsWhere<TransactionOrmEntity> = { userId };
-    this.applyDateFilter(where, options);
-    const orms = await this.manager.find(TransactionOrmEntity, {
-      where,
-      skip: options?.offset,
-      take: options?.limit,
-      order: { transactionDate: 'DESC' },
-    });
-    return orms.map((orm) => this.mapper.toDomain(orm));
   }
 
   async save(transaction: Transaction): Promise<Transaction> {
@@ -128,19 +87,6 @@ class ScopedTransactionRepository extends ITransactionRepository {
 
   async delete(id: string): Promise<void> {
     await this.manager.delete(TransactionOrmEntity, id);
-  }
-
-  private applyDateFilter(
-    where: FindOptionsWhere<TransactionOrmEntity>,
-    options?: TransactionQueryOptions,
-  ): void {
-    if (options?.from && options?.to) {
-      where.transactionDate = Between(options.from, options.to);
-    } else if (options?.from) {
-      where.transactionDate = MoreThanOrEqual(options.from);
-    } else if (options?.to) {
-      where.transactionDate = LessThanOrEqual(options.to);
-    }
   }
 }
 
@@ -338,7 +284,7 @@ export class TypeOrmUnitOfWorkImpl
     return this.queryRunner !== null;
   }
   // repository getters — return SCOPED repositories that share the same Conection/Transaction via the QueryRunner.
-  getScopedTransactionRepository(): ITransactionRepository {
+  getScopedTransactionRepository(): IScopedTransactionRepository {
     return new ScopedTransactionRepository(
       this.queryRunner!.manager,
       this.transactionMapper,

@@ -2,14 +2,9 @@ import { Between, LessThanOrEqual, MoreThanOrEqual, Repository } from 'typeorm';
 import { TransactionRepositoryImpl } from './transaction.repo.implement';
 import { TransactionMapper } from './transaction.mapper';
 import { TransactionOrmEntity } from './transaction.orm.entity';
-import { makeTransaction } from '../../../../test-support/factories';
 
-type OrmMock = jest.Mocked<
-  Pick<
-    Repository<TransactionOrmEntity>,
-    'findOne' | 'find' | 'save' | 'delete' | 'createQueryBuilder'
-  >
->;
+// Query-only port now: save/delete/sum moved to the scoped (command) repo in the UoW.
+type OrmMock = jest.Mocked<Pick<Repository<TransactionOrmEntity>, 'findOne' | 'find'>>;
 
 describe('TransactionRepositoryImpl', () => {
   let ormRepo: OrmMock;
@@ -35,9 +30,6 @@ describe('TransactionRepositoryImpl', () => {
     ormRepo = {
       findOne: jest.fn(),
       find: jest.fn(),
-      save: jest.fn(),
-      delete: jest.fn(),
-      createQueryBuilder: jest.fn(),
     };
     repo = new TransactionRepositoryImpl(
       ormRepo as unknown as Repository<TransactionOrmEntity>,
@@ -115,68 +107,6 @@ describe('TransactionRepositoryImpl', () => {
 
       expect(txs).toHaveLength(2);
       expect(txs[0].id).toBe('t1');
-    });
-  });
-
-  describe('save', () => {
-    it('should save using ormRepository', async () => {
-      ormRepo.save.mockImplementation(
-        async (orm) => orm as TransactionOrmEntity,
-      );
-
-      const saved = await repo.save(makeTransaction({ id: 't1' }));
-
-      expect(ormRepo.save).toHaveBeenCalledTimes(1);
-      expect(saved.id).toBe('t1');
-    });
-  });
-
-  describe('sumExpenseAmountByUserCategoryAndPeriod', () => {
-    it('should build a query with user+category+nature+date filters and return the sum', async () => {
-      const getRawOne = jest.fn().mockResolvedValue({ total: '250' });
-      const setLock = jest.fn().mockReturnThis();
-      const andWhere = jest.fn().mockReturnThis();
-      const where = jest.fn().mockReturnThis();
-      const select = jest.fn().mockReturnThis();
-
-      const qb = {
-        select,
-        where,
-        andWhere,
-        setLock,
-        getRawOne,
-      } as unknown as ReturnType<typeof ormRepo.createQueryBuilder>;
-      ormRepo.createQueryBuilder.mockReturnValue(qb);
-
-      const total = await repo.sumExpenseAmountByUserCategoryAndPeriod(
-        'user-1',
-        'c1',
-        3,
-        2026,
-      );
-
-      expect(ormRepo.createQueryBuilder).toHaveBeenCalledWith('transaction');
-      expect(andWhere).toHaveBeenCalledWith(
-        'transaction.categoryId = :categoryId',
-        {
-          categoryId: 'c1',
-        },
-      );
-      expect(andWhere).toHaveBeenCalledWith('transaction.nature = :nature', {
-        nature: 'expense',
-      });
-      expect(setLock).not.toHaveBeenCalled();
-      expect(total).toBe(250);
-    });
-  });
-
-  describe('delete', () => {
-    it('should delegate to ormRepository.delete', async () => {
-      ormRepo.delete.mockResolvedValue({ affected: 1, raw: [] } as never);
-
-      await repo.delete('t1');
-
-      expect(ormRepo.delete).toHaveBeenCalledWith('t1');
     });
   });
 });

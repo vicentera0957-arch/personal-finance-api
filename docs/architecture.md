@@ -107,7 +107,7 @@ flowchart LR
 
     subgraph transactions["transactions module"]
         direction TB
-        ECI["«impl» ExpenseCheckerImpl<br/><i>transactions/infrastructure</i>"]
+        ECI["«impl» ScopedExpenseChecker<br/><i>transactions/infrastructure (UoW)</i>"]
         TR["TransactionRepository<br/>SUM expenses in period"]
         ECI -->|uses| TR
     end
@@ -129,7 +129,7 @@ The **same shape** is used twice more, all implemented by `transactions`:
 
 | Port (contract) | Owned by (domain) | Implemented by | Consumed by |
 | --- | --- | --- | --- |
-| `IExpenseChecker` | `budgets` | `transactions` (`ExpenseCheckerImpl`) | `DeleteBudget`, `UpdateBudgetLimit` |
+| `IExpenseChecker` | `budgets` | `transactions` (`ScopedExpenseChecker`, in the UoW) | `DeleteBudget`, `UpdateBudgetLimit` |
 | `IBudgetUnitOfWork` | `budgets` | `transactions` (`TypeOrmUnitOfWorkImpl`) | `UpdateBudgetLimit`, `DeleteBudget` |
 | `IAccountUnitOfWork` | `accounts` | `transactions` (`TypeOrmUnitOfWorkImpl`) | `Archive`, `Unarchive`, `Rename` |
 

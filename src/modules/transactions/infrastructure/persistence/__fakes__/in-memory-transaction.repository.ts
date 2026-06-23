@@ -2,12 +2,23 @@ import {
   ITransactionRepository,
   TransactionQueryOptions,
 } from '../../../domain/repository/transaction.repository';
+import { IScopedTransactionRepository } from '../../../domain/repository/scoped-transaction.repository';
 import { Transaction } from '../../../domain/entities/transaction.entity';
 
-export class InMemoryTransactionRepository extends ITransactionRepository {
+// Test double playing both roles: the query port (global repo) and the command port
+// (scoped repo handed out by the UoW fake). In-memory has no real locks, so
+// findByIdWithLock is the same lookup as findById.
+export class InMemoryTransactionRepository
+  extends ITransactionRepository
+  implements IScopedTransactionRepository
+{
   private readonly store = new Map<string, Transaction>();
 
   async findById(id: string): Promise<Transaction | null> {
+    return this.store.get(id) ?? null;
+  }
+
+  async findByIdWithLock(id: string): Promise<Transaction | null> {
     return this.store.get(id) ?? null;
   }
 

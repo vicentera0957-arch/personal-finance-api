@@ -1,6 +1,6 @@
 import { ITransactionUnitOfWork } from '../../../domain/ITransactionUnitOfWork';
 import { IBudgetUnitOfWork } from '../../../../budgets/domain/IBudgetUnitOfWork';
-import { ITransactionRepository } from '../../../domain/repository/transaction.repository';
+import { IScopedTransactionRepository } from '../../../domain/repository/scoped-transaction.repository';
 import { IAccountRepository } from '../../../../accounts/domain/repository/accounts.repository';
 import { IBudgetRepository } from '../../../../budgets/domain/repository/budgets.repository';
 import { IExpenseChecker } from '../../../../budgets/domain/repository/expense-checker.port';
@@ -14,7 +14,7 @@ export class InMemoryUnitOfWork
   private active = false;
 
   constructor(
-    private readonly txRepo: ITransactionRepository,
+    private readonly txRepo: IScopedTransactionRepository,
     private readonly acctRepo: IAccountRepository,
     private readonly budgetRepo?: IBudgetRepository,
     private readonly expenseChecker?: IExpenseChecker,
@@ -42,7 +42,7 @@ export class InMemoryUnitOfWork
     return this.active;
   }
 
-  getScopedTransactionRepository(): ITransactionRepository {
+  getScopedTransactionRepository(): IScopedTransactionRepository {
     return this.txRepo;
   }
 

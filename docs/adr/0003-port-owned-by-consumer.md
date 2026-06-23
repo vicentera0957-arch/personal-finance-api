@@ -12,8 +12,8 @@ which would create a circular module dependency.
 
 > Fact from the code: the port `IExpenseChecker` is declared in **budgets'** domain
 > ([`expense-checker.port.ts`](../../src/modules/budgets/domain/repository/expense-checker.port.ts))
-> and implemented in **transactions'** infrastructure
-> ([`expense-checker.implement.ts`](../../src/modules/transactions/infrastructure/persistence/expense-checker.implement.ts)).
+> and implemented by `ScopedExpenseChecker` in **transactions'** infrastructure
+> ([`unit-of-work.impl.ts`](../../src/modules/transactions/infrastructure/persistence/unit-of-work.impl.ts)).
 > The same shape applies to `IAccountUnitOfWork`. `forwardRef()` resolves the NestJS DI graph.
 
 ## Decision

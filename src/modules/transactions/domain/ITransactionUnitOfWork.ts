@@ -1,5 +1,5 @@
 import { IUnitOfWork } from '../../../shared/domain/IUnitOfWork';
-import { ITransactionRepository } from './repository/transaction.repository';
+import { IScopedTransactionRepository } from './repository/scoped-transaction.repository';
 import { IAccountRepository } from '../../accounts/domain/repository/accounts.repository';
 import { IBudgetRepository } from '../../budgets/domain/repository/budgets.repository';
 
@@ -16,7 +16,7 @@ import { IBudgetRepository } from '../../budgets/domain/repository/budgets.repos
  * the full sequence of reads + writes.
  */
 export abstract class ITransactionUnitOfWork extends IUnitOfWork {
-  abstract getScopedTransactionRepository(): ITransactionRepository;
+  abstract getScopedTransactionRepository(): IScopedTransactionRepository;
   abstract getScopedAccountRepository(): IAccountRepository;
   abstract getScopedBudgetRepository(): IBudgetRepository;
 }
