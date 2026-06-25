@@ -4,7 +4,9 @@ import { TransactionMapper } from './transaction.mapper';
 import { TransactionOrmEntity } from './transaction.orm.entity';
 
 // Query-only port now: save/delete/sum moved to the scoped (command) repo in the UoW.
-type OrmMock = jest.Mocked<Pick<Repository<TransactionOrmEntity>, 'findOne' | 'find'>>;
+type OrmMock = jest.Mocked<
+  Pick<Repository<TransactionOrmEntity>, 'findOne' | 'find'>
+>;
 
 describe('TransactionRepositoryImpl', () => {
   let ormRepo: OrmMock;

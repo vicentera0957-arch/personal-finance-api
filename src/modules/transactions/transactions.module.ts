@@ -73,10 +73,6 @@ import { BudgetsModule } from '../budgets/budgets.module';
       useExisting: TypeOrmUnitOfWorkImpl,
     },
   ],
-  exports: [
-    ITransactionUnitOfWork,
-    IBudgetUnitOfWork,
-    IAccountUnitOfWork,
-  ],
+  exports: [ITransactionUnitOfWork, IBudgetUnitOfWork, IAccountUnitOfWork],
 })
 export class TransactionsModule {}

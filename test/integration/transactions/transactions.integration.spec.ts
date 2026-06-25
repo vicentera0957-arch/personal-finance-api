@@ -28,13 +28,21 @@ describe('Transactions: balance and budget invariants against the real DB', () =
 
     const authRes = await request(app.getHttpServer())
       .post('/auth/register')
-      .send({ name: 'Test User', email: 'user@example.com', password: 'Password1!' });
+      .send({
+        name: 'Test User',
+        email: 'user@example.com',
+        password: 'Password1!',
+      });
     accessToken = authRes.body.accessToken;
 
     const accountRes = await request(app.getHttpServer())
       .post('/accounts')
       .set('Authorization', `Bearer ${accessToken}`)
-      .send({ name: 'Checking Account', type: 'corriente', initialBalance: 5000 });
+      .send({
+        name: 'Checking Account',
+        type: 'corriente',
+        initialBalance: 5000,
+      });
     accountId = accountRes.body.id;
 
     const expCatRes = await request(app.getHttpServer())
@@ -154,7 +162,11 @@ describe('Transactions: balance and budget invariants against the real DB', () =
     it('rejects access to another user account (403)', async () => {
       const other = await request(app.getHttpServer())
         .post('/auth/register')
-        .send({ name: 'Other User', email: 'other@example.com', password: 'Password1!' });
+        .send({
+          name: 'Other User',
+          email: 'other@example.com',
+          password: 'Password1!',
+        });
 
       await request(app.getHttpServer())
         .get(`/transactions/account/${accountId}`)
@@ -211,7 +223,11 @@ describe('Transactions: balance and budget invariants against the real DB', () =
     it('rejects deleting another user transaction (403)', async () => {
       const other = await request(app.getHttpServer())
         .post('/auth/register')
-        .send({ name: 'Other User', email: 'other@example.com', password: 'Password1!' });
+        .send({
+          name: 'Other User',
+          email: 'other@example.com',
+          password: 'Password1!',
+        });
 
       await request(app.getHttpServer())
         .delete(`/transactions/${transactionId}`)
@@ -578,7 +594,10 @@ describe('Transactions: balance and budget invariants against the real DB', () =
   // =======================================================================
   describe('ownership barrier', () => {
     it('responds 401 without a token (global guard active)', async () => {
-      await request(app.getHttpServer()).post('/transactions').send({}).expect(401);
+      await request(app.getHttpServer())
+        .post('/transactions')
+        .send({})
+        .expect(401);
     });
   });
 });

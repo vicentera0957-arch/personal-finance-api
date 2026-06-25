@@ -28,13 +28,21 @@ describe('Concurrency: pessimistic locks and invariant serialization under load'
 
     const authRes = await request(app.getHttpServer())
       .post('/auth/register')
-      .send({ name: 'Test User', email: 'concurrency@example.com', password: 'Password1!' });
+      .send({
+        name: 'Test User',
+        email: 'concurrency@example.com',
+        password: 'Password1!',
+      });
     accessToken = authRes.body.accessToken;
 
     const accountRes = await request(app.getHttpServer())
       .post('/accounts')
       .set('Authorization', `Bearer ${accessToken}`)
-      .send({ name: 'Test Account', type: 'corriente', initialBalance: 10_000 });
+      .send({
+        name: 'Test Account',
+        type: 'corriente',
+        initialBalance: 10_000,
+      });
     accountId = accountRes.body.id;
 
     const incCatRes = await request(app.getHttpServer())
@@ -487,8 +495,12 @@ describe('Concurrency: pessimistic locks and invariant serialization under load'
       const refreshToken = loginRes.body.refreshToken;
 
       const results = await Promise.all([
-        request(app.getHttpServer()).post('/auth/refresh').send({ refreshToken }),
-        request(app.getHttpServer()).post('/auth/refresh').send({ refreshToken }),
+        request(app.getHttpServer())
+          .post('/auth/refresh')
+          .send({ refreshToken }),
+        request(app.getHttpServer())
+          .post('/auth/refresh')
+          .send({ refreshToken }),
       ]);
 
       results.forEach((r) => expect(r.status).not.toBe(500));

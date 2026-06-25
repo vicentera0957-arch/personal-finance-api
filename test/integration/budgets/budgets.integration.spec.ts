@@ -27,7 +27,11 @@ describe('Budgets: limit >= spent invariant and spend-blocking, against real dat
 
     const auth = await request(app.getHttpServer())
       .post('/auth/register')
-      .send({ name: 'Test User', email: 'user@example.com', password: 'Password1!' });
+      .send({
+        name: 'Test User',
+        email: 'user@example.com',
+        password: 'Password1!',
+      });
     accessToken = auth.body.accessToken;
 
     const account = await request(app.getHttpServer())

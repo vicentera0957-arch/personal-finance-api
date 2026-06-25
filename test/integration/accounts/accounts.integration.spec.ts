@@ -25,13 +25,21 @@ describe('Accounts: lifecycle persistence and FK-reference blocking against the 
 
     const auth = await request(app.getHttpServer())
       .post('/auth/register')
-      .send({ name: 'Test User', email: 'user@example.com', password: 'Password1!' });
+      .send({
+        name: 'Test User',
+        email: 'user@example.com',
+        password: 'Password1!',
+      });
     accessToken = auth.body.accessToken;
 
     const account = await request(app.getHttpServer())
       .post('/accounts')
       .set('Authorization', `Bearer ${accessToken}`)
-      .send({ name: 'Checking Account', type: 'corriente', initialBalance: 5000 });
+      .send({
+        name: 'Checking Account',
+        type: 'corriente',
+        initialBalance: 5000,
+      });
     accountId = account.body.id;
   });
 
@@ -146,7 +154,11 @@ describe('Accounts: lifecycle persistence and FK-reference blocking against the 
     it('GET /accounts/:id of another user responds 403 (real chain)', async () => {
       const other = await request(app.getHttpServer())
         .post('/auth/register')
-        .send({ name: 'Other User', email: 'other@example.com', password: 'Password1!' });
+        .send({
+          name: 'Other User',
+          email: 'other@example.com',
+          password: 'Password1!',
+        });
 
       await request(app.getHttpServer())
         .get(`/accounts/${accountId}`)

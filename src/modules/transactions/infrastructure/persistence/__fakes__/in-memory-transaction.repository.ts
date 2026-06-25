@@ -9,8 +9,8 @@ import { Transaction } from '../../../domain/entities/transaction.entity';
 // (scoped repo handed out by the UoW fake). In-memory has no real locks, so
 // findByIdWithLock is the same lookup as findById.
 export class InMemoryTransactionRepository
-  extends ITransactionRepository
-  implements IScopedTransactionRepository
+  extends IScopedTransactionRepository
+  implements ITransactionRepository
 {
   private readonly store = new Map<string, Transaction>();
 

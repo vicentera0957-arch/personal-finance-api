@@ -25,7 +25,11 @@ describe('Categories: uniqueness and in-use blocking, against the real DB', () =
 
     const auth = await request(app.getHttpServer())
       .post('/auth/register')
-      .send({ name: 'Test User', email: 'user@example.com', password: 'Password1!' });
+      .send({
+        name: 'Test User',
+        email: 'user@example.com',
+        password: 'Password1!',
+      });
     accessToken = auth.body.accessToken;
 
     // Base category: expense 'Food'.

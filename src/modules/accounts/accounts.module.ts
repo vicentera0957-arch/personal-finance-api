@@ -48,10 +48,6 @@ import { DeleteAccountUseCase } from './application/use-cases/delete-account.use
       useClass: AccountRepositoryImpl,
     },
   ],
-  exports: [
-    AccountMapper,
-    GetAccountByIdUseCase,
-    GetAccountsByUserIdUseCase,
-  ],
+  exports: [AccountMapper, GetAccountByIdUseCase, GetAccountsByUserIdUseCase],
 })
 export class AccountsModule {}

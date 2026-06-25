@@ -22,7 +22,11 @@ describe('Users: profile round-trip and ownership with the real guard', () => {
 
     const res = await request(app.getHttpServer())
       .post('/auth/register')
-      .send({ name: 'Test User', email: 'user@example.com', password: 'Password1!' });
+      .send({
+        name: 'Test User',
+        email: 'user@example.com',
+        password: 'Password1!',
+      });
 
     accessToken = res.body.accessToken;
     // register/login don't return the id in the body: we read it from the `sub` claim.
@@ -65,7 +69,11 @@ describe('Users: profile round-trip and ownership with the real guard', () => {
     it("user B's token on user A's id responds 403", async () => {
       const other = await request(app.getHttpServer())
         .post('/auth/register')
-        .send({ name: 'Other User', email: 'other@example.com', password: 'Password1!' });
+        .send({
+          name: 'Other User',
+          email: 'other@example.com',
+          password: 'Password1!',
+        });
 
       // B uses its token against A's id -> 403.
       await request(app.getHttpServer())
