@@ -5,12 +5,17 @@ services:
       POSTGRES_DB: personal_finance_db
       POSTGRES_USER: finance_user
       POSTGRES_PASSWORD: finance_password
-      PGDATA: /var/lib/postgresql/17/docker
     ports:
       - '5433:5432'
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./docker/init-test-db.sql:/docker-entrypoint-initdb.d/init-test-db.sql
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U finance_user -d personal_finance_db']
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
 
   # Optional: pgAdmin for database management
   pgadmin:
@@ -37,6 +42,53 @@ services:
       timeout: 3s
       retries: 3
       start_period: 5s
+  # ───────────────────────────────────────────────────────────────────────────
+  # App — SOLO se levanta con el profile 'fullstack':
+  #   docker compose --profile fullstack up --build
+  #
+  # Sin el profile, `docker compose up` sigue levantando solo la infra
+  # (postgres/pgadmin/redis) para desarrollar con `npm run start:dev` en el host.
+  #
+  # Objetivo: "cloná y corré en un comando" — la API + DB + Redis andando sin
+  # instalar Node ni nada. Buildea la imagen del Dockerfile; el entrypoint corre
+  # las migraciones contra la DB fresca antes de arrancar (mismo flujo que prod).
+  #
+  # Valores dev auto-contenidos a propósito (no leen tu .env, que es gitignored y
+  # no existe en un clon limpio). Son dummies de desarrollo — NUNCA de producción.
+  # ───────────────────────────────────────────────────────────────────────────
+  api:
+    build: .
+    profiles: ['fullstack']
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: development
+      PORT: 3000
+      LOG_LEVEL: debug
+      # DB: dentro de la red de compose se llega por el NOMBRE del servicio
+      # (postgres) y el puerto INTERNO (5432), no por localhost:5433 del host.
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: finance_user
+      DB_PASSWORD: finance_password
+      DB_NAME: personal_finance_db
+      DB_SYNCHRONIZE: 'false'
+      # JWT: dummies de dev (≥32 chars para pasar la validación de Joi).
+      JWT_SECRET: dev-only-jwt-secret-not-for-production-min-32
+      JWT_REFRESH_SECRET: dev-only-refresh-secret-not-for-production-32
+      JWT_ACCESS_EXPIRES_IN: 15m
+      JWT_REFRESH_EXPIRES_IN: 7d
+      CORS_ORIGIN: '*'
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_KEY_PREFIX: 'pf:'
+      SWAGGER_ENABLED: 'true'
+    ports:
+      - '3000:3000'
+
 volumes:
   postgres_data:
   pgadmin_data:

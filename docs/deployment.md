@@ -109,6 +109,50 @@ curl -X POST https://<host>/api/v1/auth/register -H 'content-type: application/j
 
 ## Pendientes conocidos (no bloquean el primer deploy)
 
-- Restaurar los integration tests (`test/integration/*.bak`) y activarlos en CI.
-- Observabilidad: métricas (Prometheus) + tracing + error tracking (Sentry).
-- Build de la imagen Docker como job de CI (catch temprano de errores del Dockerfile).
+- **Observabilidad:** falta **tracing distribuido** y **error tracking (Sentry)**.
+  Métricas (Prometheus, `/metrics`) y logs estructurados (pino) ya están en su lugar.
+- **CD:** el CI construye la imagen (`docker-build`) pero con `push: false` — nadie la
+  publica a un registry ni la deploya. El deploy hoy es manual. Falta un job que
+  pushee a GHCR/registry en push a `main` (o en tag).
+- **Borrado de usuario:** `DELETE /users/:id` confía en el `ON DELETE CASCADE` desde
+  `users` para limpiar accounts/categories/transactions/budgets/refresh_tokens. La
+  dirección es correcta, pero el camino **no tiene test de integración** que borre un
+  usuario con grafo completo, y conviven `CASCADE` (desde user) con `RESTRICT`
+  (transactions→accounts, transactions/budgets→categories) en un diamante cuyo orden
+  de resolución en Postgres no está verificado. Ver nota abajo.
+
+> **Resuelto (eran pendientes):** los integration tests viven en `test/integration/`
+> (sin `.bak`) y corren en CI (`integration-tests` contra Postgres+Redis reales). El
+> build de la imagen Docker es un job de CI (`docker-build`). Las métricas Prometheus
+> (`/metrics`) están activas.
+
+### Nota — borrado de usuario y el diamante CASCADE/RESTRICT
+
+El grafo de FKs (en `InitialSchema`) es:
+
+```
+users ──CASCADE──▶ accounts, categories, transactions, budgets, refresh_tokens
+transactions ──RESTRICT──▶ accounts
+transactions ──RESTRICT──▶ categories
+budgets ──RESTRICT──▶ categories
+```
+
+El `CASCADE` desde `users` es el diseño correcto para "borrá mi cuenta y no dejes datos
+a la deriva". El `RESTRICT` cruzado también es correcto para el flujo normal: impide
+borrar una cuenta/categoría que aún tiene transacciones (→ `AccountInUseException` /
+`CategoryInUseException`, 409).
+
+El riesgo está en la **combinación**: al borrar un user, Postgres debe cascadear tanto
+`accounts` como `transactions`. `RESTRICT` se chequea de inmediato (no es diferible,
+a diferencia de `NO ACTION`), así que si el cascade intenta borrar la cuenta **antes**
+de que el cascade de transactions termine, el `RESTRICT` puede dispararse y abortar todo
+el borrado con un FK violation. El comportamiento depende del orden de resolución y
+**no está testeado**. Antes de exponer el endpoint a usuarios reales:
+
+1. Escribir un integration test que cree user → account → category → transaction → budget
+   y luego `DELETE /users/:id`, verificando que todo desaparece (o falla limpio).
+2. Si el diamante falla: o las aristas cruzadas pasan a `NO ACTION` (chequeo diferido al
+   fin del statement — pero se pierde el guard 409 a nivel DB), o el borrado se hace en
+   orden explícito en la capa de aplicación dentro de una transacción.
+3. Independiente del resultado: hard-delete es **irreversible**. Para datos financieros,
+   los backups de la DB son la red de seguridad real (ver pendiente de runbook de backups).
