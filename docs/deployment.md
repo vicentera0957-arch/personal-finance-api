@@ -1,134 +1,134 @@
 # Deployment runbook
 
-Guía para desplegar la Personal Finance API. Pensada para un primer deploy: explica
-el **qué** y el **por qué**. Es agnóstica de plataforma; al final hay notas por plataforma.
+Guide for deploying the Personal Finance API. Written for a first deploy: it explains
+the **what** and the **why**. It is platform-agnostic; platform-specific notes are at the end.
 
 ---
 
-## Modelo mental: Build → Release → Run (12-factor)
+## Mental model: Build → Release → Run (12-factor)
 
 ```
-BUILD    docker build  →  imagen inmutable con dist/ + deps de prod
-RELEASE  migration:run  →  el schema de la DB queda al día (ANTES de levantar la app)
-RUN      node dist/main →  la app sirve tráfico
+BUILD    docker build  →  immutable image with dist/ + prod deps
+RELEASE  migration:run  →  the DB schema is brought up to date (BEFORE the app starts)
+RUN      node dist/main →  the app serves traffic
 ```
 
-Las tres fases están separadas a propósito. La imagen es la misma en cualquier entorno;
-lo único que cambia entre dev/staging/prod son las **variables de entorno**.
+The three phases are deliberately separated. The image is the same in every environment;
+the only thing that changes between dev/staging/prod is the **environment variables**.
 
 ---
 
-## 1. Empaquetado (imagen Docker)
+## 1. Packaging (Docker image)
 
-Dockerfile **multi-stage** (`./Dockerfile`):
+**Multi-stage** Dockerfile (`./Dockerfile`):
 
-- **Stage build:** `npm ci` (todas las deps) + `nest build` → `dist/`.
-- **Stage runtime:** `node:20-alpine`, solo `npm ci --omit=dev`, copia `dist/`, usuario
-  no-root, `tini` como PID 1 (reenvía SIGTERM para que `enableShutdownHooks()` cierre limpio).
+- **Build stage:** `npm ci` (all deps) + `nest build` → `dist/`.
+- **Runtime stage:** `node:20-alpine`, only `npm ci --omit=dev`, copies `dist/`, non-root
+  user, `tini` as PID 1 (forwards SIGTERM so `enableShutdownHooks()` closes cleanly).
 
 ```bash
 docker build -t personal-finance-api:latest .
 ```
 
-El `.dockerignore` evita hornear `node_modules`, `.env`, tests y docs en la imagen.
-**Los secretos nunca van en la imagen** — se inyectan por env de la plataforma.
+The `.dockerignore` avoids baking `node_modules`, `.env`, tests and docs into the image.
+**Secrets never go into the image** — they are injected via the platform's env.
 
 ---
 
-## 2. Release phase (migraciones)
+## 2. Release phase (migrations)
 
-El `docker-entrypoint.sh` corre `migration:run` (sobre `dist/data-source.js`) **antes**
-de arrancar la app. Si una migración falla, el contenedor no levanta (preferible a
-correr código nuevo contra un schema viejo).
+`docker-entrypoint.sh` runs `migration:run` (against `dist/data-source.js`) **before**
+starting the app. If a migration fails, the container doesn't come up (preferable to
+running new code against an old schema).
 
-- Saltar migraciones en el contenedor de la app: `RUN_MIGRATIONS=false`
-  (úsalo si las corrés en un Job/initContainer separado — patrón recomendado en Kubernetes).
-- Manual dentro del contenedor: `npm run migration:run:prod`
-- Ver estado: `npm run migration:show:prod`
+- Skip migrations in the app container: `RUN_MIGRATIONS=false`
+  (use it if you run them in a separate Job/initContainer — the recommended pattern on Kubernetes).
+- Manually inside the container: `npm run migration:run:prod`
+- Check status: `npm run migration:show:prod`
 
-> El `data-source.ts` detecta si corre compilado (`.js`→`dist/`) o por ts-node (`.ts`→`src/`),
-> así el **mismo** archivo sirve para dev y para la imagen de prod.
+> `data-source.ts` detects whether it runs compiled (`.js`→`dist/`) or via ts-node (`.ts`→`src/`),
+> so the **same** file serves both dev and the prod image.
 
-Para cambios de schema sin downtime, seguir **expand/contract**:
-`EXPAND (col nullable) → BACKFILL → MIGRATE (lee la nueva) → CONTRACT (drop la vieja)`.
+For zero-downtime schema changes, follow **expand/contract**:
+`EXPAND (nullable col) → BACKFILL → MIGRATE (reads the new one) → CONTRACT (drop the old one)`.
 
 ---
 
-## 3. Configuración (variables de entorno)
+## 3. Configuration (environment variables)
 
-Validadas por Joi al arrancar (`src/config/env.validation.ts`) — si falta una required
-o `CORS_ORIGIN='*'` en prod, **la app no arranca** (fail-fast).
+Validated by Joi at startup (`src/config/env.validation.ts`) — if a required one is missing
+or `CORS_ORIGIN='*'` in prod, **the app does not start** (fail-fast).
 
-| Variable | Prod | Nota |
+| Variable | Prod | Note |
 |---|---|---|
-| `NODE_ENV` | `production` | desactiva `synchronize`, logs JSON |
-| `JWT_SECRET` / `JWT_REFRESH_SECRET` | **requeridas, ≥32 chars** | generar con `node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"` |
-| `DB_HOST/PORT/USER/PASSWORD/NAME` | requeridas | credenciales de la DB gestionada |
-| `DB_SSL` | `true` | exigido por Neon/Supabase/RDS |
-| `DB_SSL_REJECT_UNAUTHORIZED` | `true` | `false` solo con cert self-signed |
-| `DB_POOL_MAX` | ~10 | ajustar al límite de conexiones del server |
-| `CORS_ORIGIN` | dominios explícitos | **no** `'*'` |
-| `TRUST_PROXY` | `1` (o nº de proxies) | detrás de LB, para IP real del cliente |
-| `REDIS_HOST/PORT/PASSWORD` | requeridas | cache + throttler multi-instancia |
-| `SWAGGER_ENABLED` | `false` opcional | si no querés exponer el spec |
+| `NODE_ENV` | `production` | disables `synchronize`, JSON logs |
+| `JWT_SECRET` / `JWT_REFRESH_SECRET` | **required, ≥32 chars** | generate with `node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"` |
+| `DB_HOST/PORT/USER/PASSWORD/NAME` | required | managed DB credentials |
+| `DB_SSL` | `true` | required by Neon/Supabase/RDS |
+| `DB_SSL_REJECT_UNAUTHORIZED` | `true` | `false` only with a self-signed cert |
+| `DB_POOL_MAX` | ~10 | tune to the server's connection limit |
+| `CORS_ORIGIN` | explicit domains | **not** `'*'` |
+| `TRUST_PROXY` | `1` (or number of proxies) | behind a LB, for the real client IP |
+| `REDIS_HOST/PORT/PASSWORD` | required | cache + multi-instance throttler |
+| `SWAGGER_ENABLED` | `false` optional | if you don't want to expose the spec |
 
 ---
 
 ## 4. Health checks
 
-- **Liveness** `GET /health` → 200 si el proceso vive. Si falla → el orquestador **reinicia**.
-- **Readiness** `GET /ready` → 200 si la DB responde, 503 si no. Si falla → el orquestador
-  **deja de routear** tráfico (sin reiniciar). Un blip transitorio de DB no mata el contenedor.
+- **Liveness** `GET /health` → 200 if the process is alive. If it fails → the orchestrator **restarts**.
+- **Readiness** `GET /ready` → 200 if the DB responds, 503 if not. If it fails → the orchestrator
+  **stops routing** traffic (without restarting). A transient DB blip doesn't kill the container.
 
-Ambas son públicas y están fuera del prefix `api/v1`.
+Both are public and live outside the `api/v1` prefix.
 
 ---
 
-## 5. Verificación post-deploy
+## 5. Post-deploy verification
 
 ```bash
 curl -f https://<host>/health    # 200
-curl -f https://<host>/ready     # 200 (503 si la DB está caída)
-# smoke: registrar y loguear
+curl -f https://<host>/ready     # 200 (503 if the DB is down)
+# smoke: register and log in
 curl -X POST https://<host>/api/v1/auth/register -H 'content-type: application/json' \
   -d '{"email":"a@b.com","password":"Str0ng!pass","name":"Test"}'
 ```
 
 ---
 
-## Notas por plataforma
+## Platform notes
 
-- **PaaS (Render / Railway / Fly.io):** apuntá la build al `Dockerfile`. TLS y health checks
-  los da la plataforma (configurá `/ready`). Migraciones: las corre el entrypoint, o usá el
-  "release command" de la plataforma con `RUN_MIGRATIONS=false` en la app. Secrets en el panel.
-- **Kubernetes:** `Deployment` con `livenessProbe: /health` y `readinessProbe: /ready`;
-  migraciones en un `initContainer` o `Job` (`RUN_MIGRATIONS=false` en el pod de la app);
-  `Secret`/`ConfigMap` para env; `TRUST_PROXY=1` por el Ingress.
-- **VPS con Docker:** reverse proxy (nginx/Caddy) para TLS, `TRUST_PROXY=1`, `.env` fuera del
-  repo (`--env-file`), `docker compose` para orquestar app + Postgres + Redis.
+- **PaaS (Render / Railway / Fly.io):** point the build at the `Dockerfile`. TLS and health checks
+  come from the platform (configure `/ready`). Migrations: the entrypoint runs them, or use the
+  platform's "release command" with `RUN_MIGRATIONS=false` in the app. Secrets in the panel.
+- **Kubernetes:** `Deployment` with `livenessProbe: /health` and `readinessProbe: /ready`;
+  migrations in an `initContainer` or `Job` (`RUN_MIGRATIONS=false` in the app pod);
+  `Secret`/`ConfigMap` for env; `TRUST_PROXY=1` because of the Ingress.
+- **VPS with Docker:** reverse proxy (nginx/Caddy) for TLS, `TRUST_PROXY=1`, `.env` outside the
+  repo (`--env-file`), `docker compose` to orchestrate app + Postgres + Redis.
 
-## Pendientes conocidos (no bloquean el primer deploy)
+## Known pending items (do not block the first deploy)
 
-- **Observabilidad:** falta **tracing distribuido** y **error tracking (Sentry)**.
-  Métricas (Prometheus, `/metrics`) y logs estructurados (pino) ya están en su lugar.
-- **CD:** el CI construye la imagen (`docker-build`) pero con `push: false` — nadie la
-  publica a un registry ni la deploya. El deploy hoy es manual. Falta un job que
-  pushee a GHCR/registry en push a `main` (o en tag).
-- **Borrado de usuario:** `DELETE /users/:id` confía en el `ON DELETE CASCADE` desde
-  `users` para limpiar accounts/categories/transactions/budgets/refresh_tokens. La
-  dirección es correcta, pero el camino **no tiene test de integración** que borre un
-  usuario con grafo completo, y conviven `CASCADE` (desde user) con `RESTRICT`
-  (transactions→accounts, transactions/budgets→categories) en un diamante cuyo orden
-  de resolución en Postgres no está verificado. Ver nota abajo.
+- **Observability:** **distributed tracing** and **error tracking (Sentry)** are missing.
+  Metrics (Prometheus, `/metrics`) and structured logs (pino) are already in place.
+- **CD:** CI builds the image (`docker-build`) but with `push: false` — nobody
+  publishes it to a registry or deploys it. Deploys are manual today. A job is missing that
+  pushes to GHCR/a registry on push to `main` (or on tag).
+- **User deletion:** `DELETE /users/:id` relies on the `ON DELETE CASCADE` from
+  `users` to clean up accounts/categories/transactions/budgets/refresh_tokens. The
+  direction is right, but the path **has no integration test** that deletes a
+  user with a full graph, and `CASCADE` (from user) coexists with `RESTRICT`
+  (transactions→accounts, transactions/budgets→categories) in a diamond whose resolution
+  order in Postgres is unverified. See note below.
 
-> **Resuelto (eran pendientes):** los integration tests viven en `test/integration/`
-> (sin `.bak`) y corren en CI (`integration-tests` contra Postgres+Redis reales). El
-> build de la imagen Docker es un job de CI (`docker-build`). Las métricas Prometheus
-> (`/metrics`) están activas.
+> **Resolved (were pending):** the integration tests live in `test/integration/`
+> (no `.bak`) and run in CI (`integration-tests` against real Postgres+Redis). The
+> Docker image build is a CI job (`docker-build`). Prometheus metrics
+> (`/metrics`) are active.
 
-### Nota — borrado de usuario y el diamante CASCADE/RESTRICT
+### Note — user deletion and the CASCADE/RESTRICT diamond
 
-El grafo de FKs (en `InitialSchema`) es:
+The FK graph (in `InitialSchema`) is:
 
 ```
 users ──CASCADE──▶ accounts, categories, transactions, budgets, refresh_tokens
@@ -137,22 +137,22 @@ transactions ──RESTRICT──▶ categories
 budgets ──RESTRICT──▶ categories
 ```
 
-El `CASCADE` desde `users` es el diseño correcto para "borrá mi cuenta y no dejes datos
-a la deriva". El `RESTRICT` cruzado también es correcto para el flujo normal: impide
-borrar una cuenta/categoría que aún tiene transacciones (→ `AccountInUseException` /
+The `CASCADE` from `users` is the right design for "delete my account and leave no data
+adrift". The cross `RESTRICT` is also right for the normal flow: it prevents
+deleting an account/category that still has transactions (→ `AccountInUseException` /
 `CategoryInUseException`, 409).
 
-El riesgo está en la **combinación**: al borrar un user, Postgres debe cascadear tanto
-`accounts` como `transactions`. `RESTRICT` se chequea de inmediato (no es diferible,
-a diferencia de `NO ACTION`), así que si el cascade intenta borrar la cuenta **antes**
-de que el cascade de transactions termine, el `RESTRICT` puede dispararse y abortar todo
-el borrado con un FK violation. El comportamiento depende del orden de resolución y
-**no está testeado**. Antes de exponer el endpoint a usuarios reales:
+The risk is in the **combination**: when deleting a user, Postgres must cascade both
+`accounts` and `transactions`. `RESTRICT` is checked immediately (it is not deferrable,
+unlike `NO ACTION`), so if the cascade tries to delete the account **before**
+the transactions cascade finishes, the `RESTRICT` can fire and abort the entire
+deletion with an FK violation. The behavior depends on the resolution order and
+**is not tested**. Before exposing the endpoint to real users:
 
-1. Escribir un integration test que cree user → account → category → transaction → budget
-   y luego `DELETE /users/:id`, verificando que todo desaparece (o falla limpio).
-2. Si el diamante falla: o las aristas cruzadas pasan a `NO ACTION` (chequeo diferido al
-   fin del statement — pero se pierde el guard 409 a nivel DB), o el borrado se hace en
-   orden explícito en la capa de aplicación dentro de una transacción.
-3. Independiente del resultado: hard-delete es **irreversible**. Para datos financieros,
-   los backups de la DB son la red de seguridad real (ver pendiente de runbook de backups).
+1. Write an integration test that creates user → account → category → transaction → budget
+   and then `DELETE /users/:id`, verifying that everything disappears (or fails cleanly).
+2. If the diamond fails: either the cross edges become `NO ACTION` (check deferred to the
+   end of the statement — but the DB-level 409 guard is lost), or the deletion is done in
+   explicit order at the application layer inside a transaction.
+3. Regardless of the outcome: hard-delete is **irreversible**. For financial data,
+   DB backups are the real safety net (see the pending backup-runbook item).

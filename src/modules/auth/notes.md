@@ -1,31 +1,31 @@
-# Módulo `auth` — Referencia actual
+# `auth` module — Current reference
 
-## Arquitectura de autenticación
+## Authentication architecture
 
 ### JwtAuthGuard (global)
 
-Registrado como `APP_GUARD` en `auth.module.ts`. Valida el JWT en cada request excepto rutas marcadas con `@Public()`. Payload del token: `{ sub: userId, email, iat, exp }`.
+Registered as `APP_GUARD` in `auth.module.ts`. Validates the JWT on every request except routes marked with `@Public()`. Token payload: `{ sub: userId, email, iat, exp }`.
 
 ### `@CurrentUser()` decorator
 
-**Archivo:** `infrastructure/decorators/current-user.decorator.ts`
+**File:** `infrastructure/decorators/current-user.decorator.ts`
 
-Tipo: `AuthenticatedUser = { userId: string, email: string }`. Inyecta el usuario autenticado en parámetros de controller. Solo funciona en rutas protegidas.
+Type: `AuthenticatedUser = { userId: string, email: string }`. Injects the authenticated user into controller parameters. Only works on protected routes.
 
-**Regla:** `userId` nunca viene del body ni de la URL. Solo de `@CurrentUser()`.
+**Rule:** `userId` never comes from the body or the URL. Only from `@CurrentUser()`.
 
 ### Ports
 
-| Port | Implementación | Ubicación |
+| Port | Implementation | Location |
 |------|---------------|-----------|
 | `IPasswordHasher` | `BcryptPasswordHasher` | `infrastructure/adapters/bcrypt-password-hasher.ts` |
 | `ITokenProvider` | `JwtTokenProvider` | `infrastructure/adapters/jwt-token-provider.ts` |
 
-Los use cases de auth inyectan los ports abstractos — no bcrypt ni JWT directamente. Esto permite testear sin el costo computacional de bcrypt.
+The auth use cases inject the abstract ports — not bcrypt or JWT directly. This allows testing without bcrypt's computational cost.
 
-### Variables de entorno requeridas
+### Required environment variables
 
-Validadas con Joi en `infrastructure/config/env.validation.ts` — el proceso no arranca si faltan.
+Validated with Joi in `infrastructure/config/env.validation.ts` — the process doesn't start if they are missing.
 
 ```
 JWT_SECRET
@@ -40,47 +40,47 @@ JWT_REFRESH_EXPIRES_IN  # e.g. "7d"
 
 ### `RegisterUseCase`
 
-`POST /auth/register` es `@Public()`. Delega la creación del usuario a `CreateUserUseCase` (módulo `users`). Retorna tokens de acceso + refresh.
+`POST /auth/register` is `@Public()`. Delegates user creation to `CreateUserUseCase` (`users` module). Returns access + refresh tokens.
 
 ### `LoginUseCase`
 
-1. Busca el user por email con `GetUserByEmailUseCase`
-2. Si el user NO existe: ejecuta `bcrypt.compare` contra un **hash dummy** de todos modos — timing-safe para no revelar si el email está registrado
-3. Compara hash con `IPasswordHasher.compare`
-4. Si falla: `InvalidCredentialsException` (mismo mensaje que si el user no existiera — sin señales para el atacante)
-5. Genera tokens con `ITokenProvider`
+1. Looks up the user by email with `GetUserByEmailUseCase`
+2. If the user does NOT exist: runs `bcrypt.compare` against a **dummy hash** anyway — timing-safe so as not to reveal whether the email is registered
+3. Compares the hash with `IPasswordHasher.compare`
+4. On failure: `InvalidCredentialsException` (same message as if the user didn't exist — no signals for the attacker)
+5. Generates tokens with `ITokenProvider`
 
-**Por qué timing-safe:** sin el hash dummy, la latencia de ~5ms (user no existe) vs ~100ms (hash compare) permite enumerar emails válidos con suficientes requests.
+**Why timing-safe:** without the dummy hash, the ~5ms latency (user doesn't exist) vs ~100ms (hash compare) allows enumerating valid emails with enough requests.
 
-### Refresh tokens — modelo
+### Refresh tokens — model
 
-Persistidos en `refresh_tokens`. **Nunca se guarda el token en claro** — solo `sha256(token)`. Cada fila: `id` (= el claim `jti`), `familyId` (mismo UUID para toda la cadena de rotación), `tokenHash` (único), `expiresAt`, `revokedAt`, `replacedById`. Un `@Cron('0 3 * * *')` (scheduler) borra los expirados a diario.
+Persisted in `refresh_tokens`. **The plaintext token is never stored** — only `sha256(token)`. Each row: `id` (= the `jti` claim), `familyId` (same UUID for the whole rotation chain), `tokenHash` (unique), `expiresAt`, `revokedAt`, `replacedById`. A `@Cron('0 3 * * *')` (scheduler) deletes expired ones daily.
 
 ### `RefreshTokenUseCase`
 
-Rotación con detección de replay, todo dentro de `IAuthUnitOfWork` (una transacción de PG):
+Rotation with replay detection, all inside `IAuthUnitOfWork` (one PG transaction):
 
-1. Verifica la firma (`ITokenProvider.verifyRefreshToken`) — fail-fast sin tocar DB si el token está corrupto.
-2. Abre el UoW y lee la fila por `sha256(token)` con `FOR UPDATE` (`findByTokenHashWithLock`) — serializa dos `/refresh` simultáneos con el mismo token.
-3. No existe → `InvalidRefreshTokenException` (401).
-4. **Revocada → replay detectado:** revoca toda la familia (`revokeFamily`), **commitea** la revocación (a propósito) y lanza `RefreshTokenReplayDetectedException` (401).
-5. Expirada → `RefreshTokenExpiredException` (401).
-6. Válida → inserta el token nuevo (misma `familyId`), revoca el viejo (`replacedById = nuevo jti`), retorna el par nuevo. Inserta el nuevo **antes** de revocar el viejo, por la FK auto-referencial `replacedById`.
+1. Verifies the signature (`ITokenProvider.verifyRefreshToken`) — fail-fast without touching the DB if the token is corrupt.
+2. Opens the UoW and reads the row by `sha256(token)` with `FOR UPDATE` (`findByTokenHashWithLock`) — serializes two simultaneous `/refresh` calls with the same token.
+3. Doesn't exist → `InvalidRefreshTokenException` (401).
+4. **Revoked → replay detected:** revokes the entire family (`revokeFamily`), **commits** the revocation (on purpose) and throws `RefreshTokenReplayDetectedException` (401).
+5. Expired → `RefreshTokenExpiredException` (401).
+6. Valid → inserts the new token (same `familyId`), revokes the old one (`replacedById = new jti`), returns the new pair. Inserts the new one **before** revoking the old one, because of the self-referential `replacedById` FK.
 
 ### `LogoutUseCase`
 
-`POST /auth/logout` es `@Public()` → revoca el refresh token enviado. Público a propósito: un access token expirado no debe impedir cerrar sesión.
+`POST /auth/logout` is `@Public()` → revokes the submitted refresh token. Public on purpose: an expired access token must not prevent signing out.
 
 ---
 
-## Ownership validation (implementado 2026-04-11)
+## Ownership validation (implemented 2026-04-11)
 
-### Principio
+### Principle
 
-**La validación de ownership ocurre en el use case, nunca en el controller ni en la entidad.**
+**Ownership validation happens in the use case, never in the controller or the entity.**
 
 ```typescript
-// GetAccountByIdUseCase — puerta central
+// GetAccountByIdUseCase — central gate
 async execute(id: string, requestUserId: string): Promise<Account> {
   const account = await this.accountRepository.findById(id);
   if (!account) throw new AccountNotFoundException(id);
@@ -89,56 +89,56 @@ async execute(id: string, requestUserId: string): Promise<Account> {
 }
 ```
 
-Todos los use cases que mutan un recurso (`rename`, `archive`, `delete`, etc.) delegan a `getXByIdUseCase` y heredan la validación automáticamente.
+All use cases that mutate a resource (`rename`, `archive`, `delete`, etc.) delegate to `getXByIdUseCase` and inherit the validation automatically.
 
 ### `ResourceOwnershipException`
 
-**Archivo:** `src/shared/domain/exceptions/resource-ownership.exception.ts`
+**File:** `src/shared/domain/exceptions/resource-ownership.exception.ts`
 
-Excepción genérica compartida por todos los módulos. Controllers la mapean a `ForbiddenException` (403). Es genérica porque todos los casos mapean a 403 y no necesitamos granularidad.
+Generic exception shared by all modules. Controllers map it to `ForbiddenException` (403). It is generic because all cases map to 403 and we don't need granularity.
 
-### Patrones de ownership en la codebase
+### Ownership patterns in the codebase
 
-| Patrón | Afectados |
+| Pattern | Affected |
 |--------|-----------|
-| **Get-by-ID como puerta** | `GetAccountByIdUseCase`, `GetCategoryByIdUseCase`, `GetBudgetByIdUseCase`, `GetTransactionByIdUseCase` |
-| **Operaciones que delegan al get** | `RenameAccount`, `Archive`, `Unarchive`, `DeleteAccount`, `UpdateBudgetLimit`, `DeleteBudget`, etc. |
-| **Cross-module** | `CreateBudgetUseCase` (valida que la category pertenece al usuario), `CreateTransactionUseCase` (valida account + category) |
-| **Self-access en users** | `GetUserByIdUseCase`, `UpdateUserProfileUseCase`, `DeleteUserUseCase` — solo tu propio perfil |
+| **Get-by-ID as gate** | `GetAccountByIdUseCase`, `GetCategoryByIdUseCase`, `GetBudgetByIdUseCase`, `GetTransactionByIdUseCase` |
+| **Operations delegating to the get** | `RenameAccount`, `Archive`, `Unarchive`, `DeleteAccount`, `UpdateBudgetLimit`, `DeleteBudget`, etc. |
+| **Cross-module** | `CreateBudgetUseCase` (validates the category belongs to the user), `CreateTransactionUseCase` (validates account + category) |
+| **Self-access in users** | `GetUserByIdUseCase`, `UpdateUserProfileUseCase`, `DeleteUserUseCase` — only your own profile |
 
-### Rutas de colección — sin `:userId` en la URL
+### Collection routes — no `:userId` in the URL
 
 ```
-ANTES: GET /accounts/user/:userId   ← vulnerable, el cliente pasaba cualquier userId
-AHORA: GET /accounts                ← userId viene del JWT, solo lista tus propias cuentas
+BEFORE: GET /accounts/user/:userId   ← vulnerable, the client passed any userId
+NOW:    GET /accounts                ← userId comes from the JWT, lists only your own accounts
 ```
 
 ---
 
 ## Rate limiting
 
-`@nestjs/throttler` con dos throttlers:
+`@nestjs/throttler` with two throttlers:
 - `default` — 100 req/min (global)
-- `auth` — 5 req/min en `AuthController`
+- `auth` — 5 req/min on `AuthController`
 
-Previene fuerza bruta de login, spam de registros y abuso de refresh.
+Prevents login brute force, registration spam and refresh abuse.
 
 ---
 
-## Gaps prioritarios
+## Priority gaps
 
-| Prioridad | Gap |
+| Priority | Gap |
 |-----------|-----|
-| Baja | **OAuth Google/GitHub** — `passport-google-oauth20` / `passport-github2`. Plug-in sobre la arquitectura existente sin tocar dominio. |
+| Low | **OAuth Google/GitHub** — `passport-google-oauth20` / `passport-github2`. Plugs into the existing architecture without touching the domain. |
 
-> **Refresh token rotation + revocación de familia, logout y `jti` ya están implementados** (hardening 2026). Ver el modelo de refresh tokens arriba y el histórico de gaps cerrados en [notes-history.md](./notes-history.md).
+> **Refresh token rotation + family revocation, logout and `jti` are already implemented** (2026 hardening). See the refresh-token model above and the history of closed gaps in [notes-history.md](./notes-history.md).
 
 ---
 
-## Recursos
+## Resources
 
-- 📄 **Auth0 Blog → "Refresh Token Rotation"** — diagrama del reuse-detection
-- 🎥 **"OAuth 2.0 and OpenID Connect (in plain English)"** — Nate Barbettini (OktaDev), 1h
-- 📄 **RFC 7519** (JWT) — sección 4 (claims)
-- 📄 **OWASP Authentication Cheat Sheet**
-- 📄 **OWASP "Password Storage Cheat Sheet"** — bcrypt vs argon2, work factors
+- Article: **Auth0 Blog → "Refresh Token Rotation"** — reuse-detection diagram
+- Video: **"OAuth 2.0 and OpenID Connect (in plain English)"** — Nate Barbettini (OktaDev), 1h
+- Article: **RFC 7519** (JWT) — section 4 (claims)
+- Article: **OWASP Authentication Cheat Sheet**
+- Article: **OWASP "Password Storage Cheat Sheet"** — bcrypt vs argon2, work factors

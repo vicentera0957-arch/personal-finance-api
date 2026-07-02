@@ -1,128 +1,128 @@
-# Módulo `users` — Referencia actual
+# `users` module — Current reference
 
-## Dominio
+## Domain
 
-### Value object `Email`
+### `Email` value object
 
-**Archivo:** `domain/value-objects/email.vo.ts`
+**File:** `domain/value-objects/email.vo.ts`
 
-Clase inmutable. Valida formato y vacío en `Email.create(raw)`. Normaliza a minúsculas. No depende de `class-validator` — TypeScript puro.
+Immutable class. Validates format and emptiness in `Email.create(raw)`. Normalizes to lowercase. Doesn't depend on `class-validator` — pure TypeScript.
 
-Métodos: `create(raw)`, `getValue()`, `equals()`, `getDomain()`.
+Methods: `create(raw)`, `getValue()`, `equals()`, `getDomain()`.
 
-El mapper usa `Email.create()` (no `reconstitute()`) porque los emails ya estaban validados al guardarse y el format check es barato. Si en el futuro cambia la regex de validación, usar `Email.reconstitute()` en el mapper para evitar que datos históricos "se rompan" al ser leídos.
+The mapper uses `Email.create()` (not `reconstitute()`) because emails were already validated when saved and the format check is cheap. If the validation regex changes in the future, use `Email.reconstitute()` in the mapper so historical data doesn't "break" when read.
 
-### Entidad `User`
+### `User` entity
 
-**Archivo:** `domain/entities/user.entity.ts`
+**File:** `domain/entities/user.entity.ts`
 
-Constructor privado. Dos factory methods:
-- `User.create(props)` — genera `createdAt` y `updatedAt`
-- `User.reconstitute(props)` — respeta fechas originales
+Private constructor. Two factory methods:
+- `User.create(props)` — generates `createdAt` and `updatedAt`
+- `User.reconstitute(props)` — respects the original dates
 
-Propiedades: `id`, `email` (`Email`), `passwordHash`, `name`, `createdAt`, `updatedAt`.
+Properties: `id`, `email` (`Email`), `passwordHash`, `name`, `createdAt`, `updatedAt`.
 
-Métodos: `updateProfile(name)` → lanza `InvalidNameException` si vacío. `changePassword(newHash)` → lanza `InvalidPasswordHashException` si vacío.
+Methods: `updateProfile(name)` → throws `InvalidNameException` if empty. `changePassword(newHash)` → throws `InvalidPasswordHashException` if empty.
 
-### Excepciones de dominio
+### Domain exceptions
 
-**Archivo:** `domain/exceptions/user.exceptions.ts`
+**File:** `domain/exceptions/user.exceptions.ts`
 
-Base: `UserException extends Error`. HTTP mapping solo en el controlador.
+Base: `UserException extends Error`. HTTP mapping only in the controller.
 
-| Excepción | HTTP |
+| Exception | HTTP |
 |-----------|------|
 | `UserNotFoundException` | 404 |
 | `UserAlreadyExistsException` | 409 |
-| `InvalidCredentialsException` | 401 (usado por auth) |
+| `InvalidCredentialsException` | 401 (used by auth) |
 | `InvalidNameException` | 400 |
 | `InvalidPasswordHashException` | 400 |
 | `EmptyEmailException` | 400 |
 | `InvalidEmailFormatException` | 400 |
 
-### Puerto `IUserRepository`
+### `IUserRepository` port
 
-Clase abstracta. Métodos: `findById`, `findByEmail`, `save`, `delete`.
+Abstract class. Methods: `findById`, `findByEmail`, `save`, `delete`.
 
 ---
 
-## Capa application
+## Application layer
 
-| Use case | Flujo |
+| Use case | Flow |
 |----------|-------|
-| `CreateUserUseCase` | Verifica email único (`GetUserByEmailUseCase`) → hashea password con `IPasswordHasher` → crea entidad → persiste |
-| `GetUserByIdUseCase` | Valida self-access (`id !== requestUserId` → `ResourceOwnershipException`) → busca → lanza `UserNotFoundException` |
-| `GetUserByEmailUseCase` | Búsqueda interna para `auth` — no expuesta como endpoint HTTP |
-| `UpdateUserProfileUseCase` | Valida self-access → `user.updateProfile(name)` → persiste |
-| `DeleteUserUseCase` | Valida self-access → `repo.delete()` |
+| `CreateUserUseCase` | Verifies the email is unique (`GetUserByEmailUseCase`) → hashes the password with `IPasswordHasher` → creates entity → persists |
+| `GetUserByIdUseCase` | Validates self-access (`id !== requestUserId` → `ResourceOwnershipException`) → finds → throws `UserNotFoundException` |
+| `GetUserByEmailUseCase` | Internal lookup for `auth` — not exposed as an HTTP endpoint |
+| `UpdateUserProfileUseCase` | Validates self-access → `user.updateProfile(name)` → persists |
+| `DeleteUserUseCase` | Validates self-access → `repo.delete()` |
 
-**Nota sobre `IPasswordHasher`:** `CreateUserUseCase` inyecta el port abstracto (no bcrypt directamente). La implementación concreta (`BcryptPasswordHasher`) vive en `auth/infrastructure/adapters/`. El módulo `users` importa el adapter vía `AuthModule` exports. Esto permite cambiar el algoritmo de hashing sin tocar los use cases.
+**Note on `IPasswordHasher`:** `CreateUserUseCase` injects the abstract port (not bcrypt directly). The concrete implementation (`BcryptPasswordHasher`) lives in `auth/infrastructure/adapters/`. The `users` module imports the adapter via `AuthModule` exports. This allows changing the hashing algorithm without touching the use cases.
 
 ---
 
-## Capa infrastructure
+## Infrastructure layer
 
 ### `UserOrmEntity`
 
-**Archivo:** `infrastructure/persistence/user.orm.entity.ts`
+**File:** `infrastructure/persistence/user.orm.entity.ts`
 
-| Columna | Tipo | Notas |
+| Column | Type | Notes |
 |---------|------|-------|
-| `id` | `uuid` | PK, generado con `randomUUID()` |
+| `id` | `uuid` | PK, generated with `randomUUID()` |
 | `email` | `varchar` | `@Index('uq_users_email', { unique: true })` |
 | `password_hash` | `varchar` | |
 | `full_name` | `varchar` | |
-| `created_at` | `timestamp` | `@Column` simple |
-| `updated_at` | `timestamp` | `@Column` simple |
+| `created_at` | `timestamp` | Plain `@Column` |
+| `updated_at` | `timestamp` | Plain `@Column` |
 
-El índice único en `email` existe a nivel DB y es la última línea de defensa contra emails duplicados. Por qué `@Column` simple en lugar de `@CreateDateColumn`: TypeORM con `@CreateDateColumn`/`@UpdateDateColumn` sobreescribiría las fechas en cada `save()`, ignorando lo que el dominio setea.
+The unique index on `email` exists at the DB level and is the last line of defense against duplicate emails. Why a plain `@Column` instead of `@CreateDateColumn`: TypeORM with `@CreateDateColumn`/`@UpdateDateColumn` would overwrite the dates on every `save()`, ignoring what the domain sets.
 
 ### `UserMapper`
 
-`toDomain(orm)` — usa `Email.create()` para reconstruir el VO. `User.reconstitute()` para preservar timestamps.  
-`toOrm(domain)` — extrae valores con getters.
+`toDomain(orm)` — uses `Email.create()` to rebuild the VO. `User.reconstitute()` to preserve timestamps.
+`toOrm(domain)` — extracts values with getters.
 
 ### `UserRepositoryImpl`
 
-**Archivo:** `infrastructure/persistence/user.repo.implement.ts`
+**File:** `infrastructure/persistence/user.repo.implement.ts`
 
-`save()` atrapa `QueryFailedError` con `code === '23505'` → lanza `UserAlreadyExistsException` (409). El índice único en `email` es la garantía a nivel DB; el catch evita que el error de Postgres se propague como 500. (Cierra el antiguo Bug E — post-mortem en [notes-history.md](./notes-history.md).)
+`save()` catches `QueryFailedError` with `code === '23505'` → throws `UserAlreadyExistsException` (409). The unique index on `email` is the DB-level guarantee; the catch prevents the Postgres error from propagating as a 500. (Closes the old Bug E — post-mortem in [notes-history.md](./notes-history.md).)
 
-### Rutas
+### Routes
 
-| Método | Ruta | Use case | HTTP |
+| Method | Route | Use case | HTTP |
 |--------|------|----------|------|
 | GET | `/users/:id` | `GetUserByIdUseCase` | 200 |
 | PATCH | `/users/:id/profile` | `UpdateUserProfileUseCase` | 200 |
 | DELETE | `/users/:id` | `DeleteUserUseCase` | 204 |
 
-No hay `POST /users` — la creación de usuarios ocurre en `POST /auth/register`.
+There is no `POST /users` — user creation happens in `POST /auth/register`.
 
 ---
 
 ## Wiring — `UsersModule`
 
-Exports: `GetUserByEmailUseCase` — consumido por `AuthModule` en el flujo de login.
+Exports: `GetUserByEmailUseCase` — consumed by `AuthModule` in the login flow.
 
 ---
 
-## Bug E — Concurrent register → 500 (RESUELTO)
+## Bug E — Concurrent register → 500 (RESOLVED)
 
-Cerrado: `UserRepositoryImpl.save()` ahora atrapa `QueryFailedError` con `code === '23505'` → `UserAlreadyExistsException` (409). El post-mortem completo (escenario + fix) está en [notes-history.md](./notes-history.md).
+Closed: `UserRepositoryImpl.save()` now catches `QueryFailedError` with `code === '23505'` → `UserAlreadyExistsException` (409). The full post-mortem (scenario + fix) is in [notes-history.md](./notes-history.md).
 
 ---
 
-## Gaps de features (no bugs)
+## Feature gaps (not bugs)
 
-| Gap | Notas |
+| Gap | Notes |
 |----|-------|
-| Email verification | Al registrarse, el email se asume válido. Real-world: token de verificación + endpoint `/auth/verify-email`. Requiere cola (BullMQ) para enviar mail sin bloquear el register. |
-| Reset password | `/auth/forgot-password` → email con token → `/auth/reset-password`. Token con TTL corto (~15 min). |
-| Soft delete | Hoy el delete es hard. `deletedAt` + filtros en todos los queries es más seguro para producción. |
+| Email verification | On register, the email is assumed valid. Real-world: verification token + `/auth/verify-email` endpoint. Requires a queue (BullMQ) to send the mail without blocking the register. |
+| Password reset | `/auth/forgot-password` → email with token → `/auth/reset-password`. Token with a short TTL (~15 min). |
+| Soft delete | Today the delete is hard. `deletedAt` + filters on every query is safer for production. |
 
 ---
 
-## Recursos
+## Resources
 
-- 📄 OWASP "Password Storage Cheat Sheet" — bcrypt vs argon2, work factors
-- 📄 Martin Fowler — "Soft Deletes" (pros y contras)
+- Article: OWASP "Password Storage Cheat Sheet" — bcrypt vs argon2, work factors
+- Article: Martin Fowler — "Soft Deletes" (pros and cons)

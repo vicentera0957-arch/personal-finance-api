@@ -1,62 +1,62 @@
-# Módulo `transactions` — Histórico y post-mortems
+# `transactions` module — History and post-mortems
 
-> Registro de bugs de concurrencia ya **cerrados**, conservado para que futuros contribuyentes no rehagan el análisis. El estado **actual** del módulo vive en [notes.md](./notes.md).
+> Record of already **closed** concurrency bugs, kept so future contributors don't redo the analysis. The module's **current** state lives in [notes.md](./notes.md).
 >
-> Los races que **cruzan módulos** — Race 1 (`DELETE /budgets/:id` vs `POST /transactions`) y Race 2 (mutaciones de cuenta vs `POST /transactions`) — están documentados centralmente en [docs/history/race-conditions-fix-2026-05.md](../../../../docs/history/race-conditions-fix-2026-05.md). Aquí solo viven los bugs cuyo análisis es propio de `transactions`.
+> The races that **cross modules** — Race 1 (`DELETE /budgets/:id` vs `POST /transactions`) and Race 2 (account mutations vs `POST /transactions`) — are documented centrally in [docs/history/race-conditions-fix-2026-05.md](../../../../docs/history/race-conditions-fix-2026-05.md). Only the bugs whose analysis belongs to `transactions` live here.
 
 ---
 
-## Race conditions resueltas (abril 2026)
+## Resolved race conditions (April 2026)
 
-### Bug A — Write skew en budget limit (RESUELTO)
+### Bug A — Write skew on the budget limit (RESOLVED)
 
-**Escenario original:** User tenía budget limit=$100, había gastado $80.
-1. `PATCH /budgets/X/limit` → `UpdateBudgetLimitUseCase` abría UoW, leía budget sin lock, cambiaba limit a $60, hacía commit.
-2. Simultáneamente: `POST /transactions` expense $20 → leía budget FUERA del UoW (la línea ~111 usaba `getBudgetByUserCategoryPeriodUseCase` global, no el repo escopado) → veía limit=$100 → $80+$20=100 ≤ 100 → insertaba.
-3. Resultado: el user gastaba $100 pero el limit era $60. R8 violada.
+**Original scenario:** the user had a budget limit=$100 and had spent $80.
+1. `PATCH /budgets/X/limit` → `UpdateBudgetLimitUseCase` opened the UoW, read the budget without a lock, changed the limit to $60, committed.
+2. Simultaneously: `POST /transactions` expense $20 → read the budget OUTSIDE the UoW (line ~111 used the global `getBudgetByUserCategoryPeriodUseCase`, not the scoped repo) → saw limit=$100 → $80+$20=100 ≤ 100 → inserted.
+3. Result: the user spent $100 but the limit was $60. R8 violated.
 
-**Archivos afectados:** `create-transaction.use-case.ts` (segunda lectura de budget) y `unit-of-work.impl.ts` (`ScopedBudgetRepository.findById` y `findByUserIdAndCategoryIdAndPeriod`).
+**Affected files:** `create-transaction.use-case.ts` (second budget read) and `unit-of-work.impl.ts` (`ScopedBudgetRepository.findById` and `findByUserIdAndCategoryIdAndPeriod`).
 
-**Solución aplicada:**
-1. La segunda lectura del budget en `CreateTransactionUseCase` se movió **dentro** del UoW: ahora usa `uow.getBudgetRepository().findByUserIdAndCategoryIdAndPeriod(...)` en vez del use case global. Esta lectura ahora viaja por el `QueryRunner` activo y participa de la misma transacción de PG.
-2. `ScopedBudgetRepository.findByUserIdAndCategoryIdAndPeriod` agregó `lock: { mode: 'pessimistic_write' }` → emite `SELECT ... FOR UPDATE`.
-3. `ScopedBudgetRepository.findById` agregó el mismo lock → protege también el lado de `UpdateBudgetLimitUseCase`.
+**Applied solution:**
+1. The second budget read in `CreateTransactionUseCase` was moved **inside** the UoW: it now uses `uow.getBudgetRepository().findByUserIdAndCategoryIdAndPeriod(...)` instead of the global use case. This read now travels through the active `QueryRunner` and participates in the same PG transaction.
+2. `ScopedBudgetRepository.findByUserIdAndCategoryIdAndPeriod` added `lock: { mode: 'pessimistic_write' }` → emits `SELECT ... FOR UPDATE`.
+3. `ScopedBudgetRepository.findById` added the same lock → also protects the `UpdateBudgetLimitUseCase` side.
 
-**Por qué funciona:** ambos flujos (`CreateTransaction` y `UpdateBudgetLimit`) ahora compiten por el mismo lock de fila sobre el budget. PostgreSQL serializa: el segundo en llegar espera al COMMIT del primero antes de leer, garantizando que el limit visto sea el vigente.
+**Why it works:** both flows (`CreateTransaction` and `UpdateBudgetLimit`) now compete for the same row lock on the budget. PostgreSQL serializes: the second arrival waits for the first one's COMMIT before reading, guaranteeing that the limit it sees is the current one.
 
-### Bug A.2 — Stale sum vs phantom inserts en período vacío (RESUELTO)
+### Bug A.2 — Stale sum vs phantom inserts in an empty period (RESOLVED)
 
-**Escenario original (post Bug A):** dos `POST /transactions` concurrentes de expense sobre un período **vacío** (sin gasto previo). El flujo era `SUM FOR UPDATE` → `SELECT budget FOR UPDATE` → validar → insertar.
+**Original scenario (post Bug A):** two concurrent `POST /transactions` expenses on an **empty** period (no prior spend). The flow was `SUM FOR UPDATE` → `SELECT budget FOR UPDATE` → validate → insert.
 
-1. TX A ejecuta `SUM ... FOR UPDATE` sobre 0 filas → sum=0. **`FOR UPDATE` sobre un resultset vacío no lockea nada** (no hay filas que lockear; phantoms no se previenen).
-2. TX B ejecuta `SUM ... FOR UPDATE` sobre 0 filas → sum=0. Tampoco lockea nada.
-3. TX A toma `SELECT budget FOR UPDATE`, valida `0 + 60 ≤ 100` ✓, inserta, COMMIT.
-4. TX B espera el lock del budget, despierta, valida con el `sum=0` **stale** que leyó en (2), `0 + 60 ≤ 100` ✓, inserta, COMMIT.
-5. Total real $120 > $100. R8 violada.
+1. TX A runs `SUM ... FOR UPDATE` over 0 rows → sum=0. **`FOR UPDATE` over an empty resultset locks nothing** (there are no rows to lock; phantoms aren't prevented).
+2. TX B runs `SUM ... FOR UPDATE` over 0 rows → sum=0. Also locks nothing.
+3. TX A takes `SELECT budget FOR UPDATE`, validates `0 + 60 ≤ 100` OK, inserts, COMMIT.
+4. TX B waits on the budget lock, wakes up, validates with the **stale** `sum=0` it read in (2), `0 + 60 ≤ 100` OK, inserts, COMMIT.
+5. Real total $120 > $100. R8 violated.
 
-**Por qué el test original no lo detectaba:** partía de $90 ya gastados → el `FOR UPDATE` del `SUM` agarraba filas reales y serializaba **por casualidad**. La corrección no debía depender del estado de los datos.
+**Why the original test didn't catch it:** it started from $90 already spent → the `SUM`'s `FOR UPDATE` grabbed real rows and serialized **by luck**. The correctness must not depend on the state of the data.
 
-**Archivos afectados:** `create-transaction.use-case.ts` (orden de operaciones dentro del UoW) y `unit-of-work.impl.ts` (`ScopedTransactionRepository.sumExpenseAmountByUserCategoryAndPeriod`).
+**Affected files:** `create-transaction.use-case.ts` (order of operations inside the UoW) and `unit-of-work.impl.ts` (`ScopedTransactionRepository.sumExpenseAmountByUserCategoryAndPeriod`).
 
-**Solución aplicada:**
-1. **Reordenar** el bloque expense en `CreateTransactionUseCase`: primero `budgetRepo.findByUserIdAndCategoryIdAndPeriod(...)` (gate), después `txRepo.sumExpenseAmountByUserCategoryAndPeriod(...)`.
-2. **Quitar** el `setLock('pessimistic_write')` redundante de `ScopedTransactionRepository.sumExpenseAmountByUserCategoryAndPeriod`. Con el gate del budget, ese lock no agrega correctitud y sí agrega contención con lecturas concurrentes.
-3. Test de regresión en `test/integration/concurrency/concurrency.integration.spec.ts` que reproduce el escenario de período vacío.
+**Applied solution:**
+1. **Reorder** the expense block in `CreateTransactionUseCase`: first `budgetRepo.findByUserIdAndCategoryIdAndPeriod(...)` (the gate), then `txRepo.sumExpenseAmountByUserCategoryAndPeriod(...)`.
+2. **Remove** the redundant `setLock('pessimistic_write')` from `ScopedTransactionRepository.sumExpenseAmountByUserCategoryAndPeriod`. With the budget gate, that lock adds no correctness and does add contention with concurrent reads.
+3. Regression test in `test/integration/concurrency/concurrency.integration.spec.ts` that reproduces the empty-period scenario.
 
-**Por qué funciona:** una vez que el budget row es el mutex, dos TX competidoras se serializan en el `SELECT budget FOR UPDATE`. La que despierta segunda ejecuta su `SUM` como un **statement nuevo** post-COMMIT del ganador; en `READ COMMITTED` ese statement ve los datos commiteados al momento de ejecutarse, así que el `sum` incluye el INSERT de la ganadora. El invariante se valida con datos frescos sin necesidad de elevar a `SERIALIZABLE`.
+**Why it works:** once the budget row is the mutex, two competing TXs serialize on the `SELECT budget FOR UPDATE`. The one that wakes up second runs its `SUM` as a **new statement** post-COMMIT of the winner; in `READ COMMITTED` that statement sees the data committed at the moment it executes, so the `sum` includes the winner's INSERT. The invariant is validated with fresh data without needing to raise to `SERIALIZABLE`.
 
-**Patrón:** `UpdateBudgetLimitUseCase` ya lo aplicaba (lock del budget primero, luego recalcular sumatoria). Este cambio alinea `CreateTransaction` con el mismo patrón. La regla generalizada: **cualquier dato que entre en la decisión del invariante debe leerse después de adquirir el lock del gate**.
+**Pattern:** `UpdateBudgetLimitUseCase` already applied it (budget lock first, then recompute the sum). This change aligns `CreateTransaction` with the same pattern. The generalized rule: **any data that feeds the invariant's decision must be read after acquiring the gate's lock**.
 
-### Bug B — Lost update en balance de cuenta (RESUELTO)
+### Bug B — Lost update on the account balance (RESOLVED)
 
-**Escenario original:** Dos requests concurrentes `POST /transactions` sobre la misma cuenta.
-1. TX1 leía `account.balance = $1000` (sin lock)
-2. TX2 leía `account.balance = $1000` (sin lock)
-3. TX1 calculaba $1000 + $500 = $1500, escribía
-4. TX2 calculaba $1000 - $300 = $700, escribía → **los $500 de TX1 se perdían**
+**Original scenario:** two concurrent `POST /transactions` requests on the same account.
+1. TX1 read `account.balance = $1000` (no lock)
+2. TX2 read `account.balance = $1000` (no lock)
+3. TX1 computed $1000 + $500 = $1500, wrote
+4. TX2 computed $1000 - $300 = $700, wrote → **TX1's $500 were lost**
 
-**Archivo afectado:** `unit-of-work.impl.ts` — `ScopedAccountRepository.findById` usaba `manager.findOne` sin lock.
+**Affected file:** `unit-of-work.impl.ts` — `ScopedAccountRepository.findById` used `manager.findOne` without a lock.
 
-**Solución aplicada:** `ScopedAccountRepository.findById` agregó `lock: { mode: 'pessimistic_write' }` → emite `SELECT ... FOR UPDATE`.
+**Applied solution:** `ScopedAccountRepository.findById` added `lock: { mode: 'pessimistic_write' }` → emits `SELECT ... FOR UPDATE`.
 
-**Por qué funciona sin tocar `UpdateAccountBalanceUseCase`:** ese use case (en `accounts/application/`) es agnóstico al mecanismo del repo. Recibe `IAccountRepository` y llama `findById` — cuando el UoW le inyecta el repo escopado, hereda el lock automáticamente. Buena separación de responsabilidades: el dominio de accounts no necesita saber de transacciones SQL.
+**Why it works without touching `UpdateAccountBalanceUseCase`:** that use case (in `accounts/application/`) is agnostic to the repo's mechanism. It receives `IAccountRepository` and calls `findById` — when the UoW injects the scoped repo, it inherits the lock automatically. Good separation of responsibilities: the accounts domain doesn't need to know about SQL transactions.

@@ -36,7 +36,7 @@ database layer, not by hoping requests don't overlap.
 
 The decisions worth reviewing — each links to the code and, where written, an ADR.
 
-### 🔒 Concurrency-safe money — Unit of Work + pessimistic locks
+### Concurrency-safe money — Unit of Work + pessimistic locks
 
 Multi-aggregate, money-touching invariants (account balance, budget limit, period
 spend) run inside a **request-scoped Unit of Work**: one `QueryRunner`, one PostgreSQL
@@ -46,7 +46,7 @@ limit". A catalogue of races (write skew, lost update, TOCTOU) is documented as
 **reproduced and closed**.
 → [ADR-0002](docs/adr/0002-unit-of-work-pessimistic-locks.md) · [concurrency model](docs/concurrency-model.md) · [`create-transaction.use-case.ts`](src/modules/transactions/application/use-cases/create-transaction.use-case.ts)
 
-### 🧱 Strict DDD / Clean architecture
+### Strict DDD / Clean architecture
 
 Three layers per module with dependencies pointing inward; the domain has **zero**
 NestJS/TypeORM/HTTP imports. Ports are `abstract class` so they serve as both type and
@@ -54,7 +54,7 @@ DI token. Rich entities with private constructors and `create()` / `reconstitute
 factories; immutable, self-validating value objects.
 → [architecture](docs/architecture.md) · [ADR-0001](docs/adr/0001-ports-as-abstract-classes.md)
 
-### 🔁 Refresh-token rotation with replay detection
+### Refresh-token rotation with replay detection
 
 Refresh tokens are persisted as `sha256(token)` (never plaintext), grouped into a
 **family** per login. Every refresh rotates the token; a replayed token revokes the
@@ -62,14 +62,14 @@ Refresh tokens are persisted as `sha256(token)` (never plaintext), grouped into 
 emails) to prevent enumeration.
 → [ADR-0004](docs/adr/0004-refresh-token-rotation.md)
 
-### 🧾 Immutable, single-entry transactions
+### Immutable, single-entry transactions
 
 Transactions are immutable accounting records — no in-place update; corrections are
 delete + recreate. The model is **single-entry** by design for V1 (documented honestly,
 with trade-offs, not dressed up as a ledger it isn't).
 → [ADR-0005](docs/adr/0005-single-entry-immutable-transactions.md)
 
-### 🛡️ Defense in depth & production hardening
+### Defense in depth & production hardening
 
 Uniqueness enforced in three layers (DB constraint + `23505` catch → domain exception +
 application pre-check). Helmet, env validation with Joi (fail-fast on missing prod

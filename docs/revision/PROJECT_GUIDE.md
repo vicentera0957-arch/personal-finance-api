@@ -1,215 +1,215 @@
 # Project Guide — Personal Finance API
 
-> **⚠️ Archivado / superseado.** Esta guía maestra legacy fue reemplazada por
-> [`architecture.md`](../architecture.md), el [índice de docs](../README.md) y los
-> [ADRs](../adr/). Se conserva como referencia; parte del contenido puede estar desactualizado.
+> **Archived / superseded.** This legacy master guide was replaced by
+> [`architecture.md`](../architecture.md), the [docs index](../README.md) and the
+> [ADRs](../adr/). It is kept as a reference; parts of the content may be outdated.
 
-Documento maestro para **entender el proyecto en cada parte**. Es el punto de entrada:
-empezá acá y seguí los enlaces según lo que necesites. Pensado tanto para vos en 6 meses
-como para alguien que llega por primera vez (o un recruiter revisando el repo).
+Master document to **understand every part of the project**. It is the entry point:
+start here and follow the links depending on what you need. Written both for you in 6 months
+and for someone arriving for the first time (or a recruiter reviewing the repo).
 
-> **Por qué existe este doc:** `CLAUDE.md` (la referencia exhaustiva para IA) está
-> gitignored, así que **este** es el documento de arquitectura versionado del repo.
-
----
-
-## 1. Qué es esto
-
-API REST de finanzas personales: un usuario registra **cuentas**, define **categorías**
-(ingreso/gasto), fija **presupuestos** mensuales por categoría, y registra **transacciones**
-que mueven el balance de sus cuentas respetando los límites de presupuesto.
-
-- **Stack:** NestJS 11 · TypeORM · PostgreSQL 15 · JWT (access + refresh con rotación) · Redis (cache + rate-limit).
-- **Estilo:** Domain-Driven Design estricto, Ports & Adapters, Unit of Work con locks pesimistas.
-- **Estado:** dominio y seguridad maduros; listo para un primer deploy (ver §7).
-
-Diagramas de referencia:
-- 🖼️ Diagramas (Mermaid, actualizados) en [`architecture.md`](../architecture.md). Los SVG/PNG viejos están en esta misma carpeta (`revision/`).
-- [Modelo de datos (PDF)](../database/Finanzas%20V1.pdf)
-- [Reglas de negocio (PDF)](../domain/Reglas%20de%20negocio.docx.pdf)
+> **Why this doc exists:** `CLAUDE.md` (the exhaustive reference for AI) was
+> gitignored, so **this** was the repo's versioned architecture document.
 
 ---
 
-## 2. Mapa de la documentación
+## 1. What this is
 
-| Necesitás… | Leé |
+A personal finance REST API: a user registers **accounts**, defines **categories**
+(income/expense), sets monthly **budgets** per category, and records **transactions**
+that move their account balances while respecting budget limits.
+
+- **Stack:** NestJS 11 · TypeORM · PostgreSQL 15 · JWT (access + refresh with rotation) · Redis (cache + rate-limit).
+- **Style:** strict Domain-Driven Design, Ports & Adapters, Unit of Work with pessimistic locks.
+- **Status:** mature domain and security; ready for a first deploy (see §7).
+
+Reference diagrams:
+- Diagrams (Mermaid, up to date) in [`architecture.md`](../architecture.md). The old SVG/PNGs are in this same folder (`revision/`).
+- [Data model (PDF)](../database/Finanzas%20V1.pdf)
+- [Business rules (PDF)](../domain/Reglas%20de%20negocio.docx.pdf)
+
+---
+
+## 2. Documentation map
+
+| You need… | Read |
 |---|---|
-| Arrancar el proyecto en local | [`README.md`](../../README.md) |
-| Entender la arquitectura completa (este doc) | **PROJECT_GUIDE.md** |
-| Referencia exhaustiva (patrones, tablas, anti-patrones) | `CLAUDE.md` *(gitignored, local)* |
-| Detalle vivo de un módulo | `src/modules/<m>/notes.md` |
-| Por qué el cache usa composición y no herencia | [`src/shared/domain/cache-decision.md`](../../src/shared/domain/cache-decision.md) |
-| Por qué el UoW usa herencia de puertos | [`src/shared/domain/uow-decision.md`](../../src/shared/domain/uow-decision.md) |
-| Arquitectura + diagramas (Mermaid) | [`docs/architecture.md`](../architecture.md) |
-| Decisiones de diseño (ADRs) | [`docs/adr/`](../adr/) |
-| Testing (unit + integración, dobles) | [`docs/testing.md`](../testing.md) |
-| Observabilidad (logs, métricas, trazas) | [`docs/observability.md`](../observability.md) |
-| Cómo desplegar (build/release/run, env vars, health) | [`docs/deployment.md`](../deployment.md) |
-| Historial de endurecimiento (journal, abr-2026) | [`docs/history/hardening-audit-2026-04.md`](../history/hardening-audit-2026-04.md) |
-| Cómo se cerraron las race conditions (journal, may-2026) | [`docs/history/race-conditions-fix-2026-05.md`](../history/race-conditions-fix-2026-05.md) |
-| Cambios production-readiness (journal, jun-2026) | [`docs/history/production-readiness-2026-06-16.md`](../history/production-readiness-2026-06-16.md) |
+| Start the project locally | [`README.md`](../../README.md) |
+| Understand the full architecture (this doc) | **PROJECT_GUIDE.md** |
+| Exhaustive reference (patterns, tables, anti-patterns) | `CLAUDE.md` |
+| Living detail of a module | `src/modules/<m>/notes.md` |
+| Why the cache uses composition and not inheritance | [`src/shared/domain/cache-decision.md`](../../src/shared/domain/cache-decision.md) |
+| Why the UoW uses port inheritance | [`src/shared/domain/uow-decision.md`](../../src/shared/domain/uow-decision.md) |
+| Architecture + diagrams (Mermaid) | [`docs/architecture.md`](../architecture.md) |
+| Design decisions (ADRs) | [`docs/adr/`](../adr/) |
+| Testing (unit + integration, test doubles) | [`docs/testing.md`](../testing.md) |
+| Observability (logs, metrics, traces) | [`docs/observability.md`](../observability.md) |
+| How to deploy (build/release/run, env vars, health) | [`docs/deployment.md`](../deployment.md) |
+| Hardening history (journal, Apr 2026) | [`docs/history/hardening-audit-2026-04.md`](../history/hardening-audit-2026-04.md) |
+| How the race conditions were closed (journal, May 2026) | [`docs/history/race-conditions-fix-2026-05.md`](../history/race-conditions-fix-2026-05.md) |
+| Production-readiness changes (journal, Jun 2026) | [`docs/history/production-readiness-2026-06-16.md`](../history/production-readiness-2026-06-16.md) |
 
 ---
 
-## 3. Arquitectura en tres capas
+## 3. Three-layer architecture
 
-Cada módulo (`auth`, `users`, `accounts`, `categories`, `budgets`, `transactions`) tiene
-la misma esqueleto:
+Every module (`auth`, `users`, `accounts`, `categories`, `budgets`, `transactions`) has
+the same skeleton:
 
 ```
 src/modules/<module>/
-  domain/           # PURO: sin NestJS, sin TypeORM, sin HTTP
-    entities/         # entidades ricas, constructor privado, factories create()/reconstitute()
-    value-objects/    # inmutables, auto-validantes
-    exceptions/       # subclases de Error (NO HttpException)
-    repository/       # puertos (abstract class)
+  domain/           # PURE: no NestJS, no TypeORM, no HTTP
+    entities/         # rich entities, private constructor, create()/reconstitute() factories
+    value-objects/    # immutable, self-validating
+    exceptions/       # Error subclasses (NOT HttpException)
+    repository/       # ports (abstract class)
   application/
-    use-cases/        # una clase por caso de uso, un execute()
-    schedulers/       # @Cron (solo auth hoy)
+    use-cases/        # one class per use case, one execute()
+    schedulers/       # @Cron (auth only today)
   infrastructure/
     persistence/      # ORM entity, mapper, repo impl, UoW impl
     http/             # controllers + DTOs (class-validator)
     adapters/         # bcrypt, JWT, etc.
 ```
 
-**La regla de oro:** las dependencias apuntan hacia adentro. `domain` no conoce a nadie;
-`application` conoce `domain`; `infrastructure` conoce a ambos. El dominio nunca importa
-TypeORM ni HTTP.
+**The golden rule:** dependencies point inward. `domain` knows nobody;
+`application` knows `domain`; `infrastructure` knows both. The domain never imports
+TypeORM or HTTP.
 
-### Por qué los puertos son `abstract class` y no `interface`
+### Why the ports are `abstract class` and not `interface`
 
-NestJS necesita un **token en runtime** para inyectar. Una `interface` de TypeScript se borra
-al compilar → no sirve como token. Por eso los puertos (repositorios, UoW, caches) son
-`abstract class`: funcionan como tipo *y* como token DI. Cambiarlos a `interface` rompe el
-grafo de inyección. (Detalle ampliado en `cache-decision.md`.)
+NestJS needs a **runtime token** to inject. A TypeScript `interface` is erased
+at compile time → it can't be a token. That is why the ports (repositories, UoW, caches) are
+`abstract class`: they work as a type *and* as a DI token. Changing them to `interface` breaks the
+injection graph. (Expanded detail in `cache-decision.md`.)
 
-### Jerarquía y dependencias entre módulos
+### Module hierarchy and dependencies
 
 ```
 auth → users → (accounts, categories, budgets, transactions)
 ```
 
-- `auth` usa `users` (login/register llaman a casos de uso de users).
-- Dentro de los módulos de finanzas: **transactions → budgets → categories → accounts**.
-- Hay un ciclo `accounts ↔ transactions` resuelto con `forwardRef()` + el patrón
-  **"port owned by consumer"**: cuando A necesita preguntarle algo a B pero B ya depende de A,
-  el *puerto* se define en el dominio de A y la *implementación* en la infraestructura de B
-  (ej. `IExpenseChecker`, `IAccountUnitOfWork`).
+- `auth` uses `users` (login/register call users' use cases).
+- Within the finance modules: **transactions → budgets → categories → accounts**.
+- There is an `accounts ↔ transactions` cycle resolved with `forwardRef()` + the
+  **"port owned by consumer"** pattern: when A needs to ask B something but B already depends on A,
+  the *port* is defined in A's domain and the *implementation* in B's infrastructure
+  (e.g. `IExpenseChecker`, `IAccountUnitOfWork`).
 
 ---
 
-## 4. Patrones que no cambian
+## 4. Patterns that don't change
 
-| Patrón | Qué es | Por qué |
+| Pattern | What it is | Why |
 |---|---|---|
-| **Factory methods** | `Entity.create(props)` (nuevo) vs `Entity.reconstitute(props)` (desde DB) | `create` genera timestamps y valida; `reconstitute` preserva timestamps y no re-valida. Los mappers usan **siempre** `reconstitute`. |
-| **Value Objects** | Inmutables, validan en `create`, no en `reconstitute` | Una vez creado, es válido. Nunca se guarda un VO inválido. |
-| **Excepciones de dominio** | El dominio lanza `BudgetNotFoundException extends Error`, no `NotFoundException` | El dominio no sabe de HTTP. El **controller** traduce con `instanceof` → código HTTP. |
-| **`userId` desde `@CurrentUser()`** | El actor sale del JWT, nunca del body/URL | Regla de seguridad: un body con `userId:'X'` es un intento de actuar como X. Se confía solo en el JWT. |
-| **Defensa en profundidad** | Unique en DB + `catch 23505` → excepción de dominio + pre-check en use case | Tres capas para cada regla de unicidad. |
+| **Factory methods** | `Entity.create(props)` (new) vs `Entity.reconstitute(props)` (from DB) | `create` generates timestamps and validates; `reconstitute` preserves timestamps and doesn't re-validate. Mappers **always** use `reconstitute`. |
+| **Value Objects** | Immutable, validate in `create`, not in `reconstitute` | Once created, it is valid. An invalid VO is never persisted. |
+| **Domain exceptions** | The domain throws `BudgetNotFoundException extends Error`, not `NotFoundException` | The domain knows nothing about HTTP. The **controller** translates with `instanceof` → HTTP code. |
+| **`userId` from `@CurrentUser()`** | The actor comes from the JWT, never from the body/URL | Security rule: a body with `userId:'X'` is an attempt to act as X. Only the JWT is trusted. |
+| **Defense in depth** | DB unique + `catch 23505` → domain exception + pre-check in the use case | Three layers for every uniqueness rule. |
 
 ---
 
-## 5. Concurrencia: Unit of Work + locks pesimistas
+## 5. Concurrency: Unit of Work + pessimistic locks
 
-El corazón técnico del proyecto. Toda invariante que cruza varios agregados (balance de cuenta,
-límite de presupuesto, suma de gastos del período) se protege con una **transacción de DB +
+The technical heart of the project. Every invariant that crosses multiple aggregates (account balance,
+budget limit, period expense sum) is protected with a **DB transaction +
 `SELECT ... FOR UPDATE`**.
 
-**Idea central:** cada request HTTP que muta varios agregados abre un `IUnitOfWork`
-(request-scoped) → un único `QueryRunner` → una única transacción PostgreSQL. Los repositorios
-"escopados" que entrega el UoW comparten ese `EntityManager`, así que los locks pesimistas son
-efectivos a lo largo de toda la secuencia lee→valida→escribe.
+**Core idea:** every HTTP request that mutates several aggregates opens an `IUnitOfWork`
+(request-scoped) → a single `QueryRunner` → a single PostgreSQL transaction. The "scoped"
+repositories the UoW hands out share that `EntityManager`, so the pessimistic locks are
+effective throughout the whole read→validate→write sequence.
 
 ```
-Use case → uow.begin() → repos escopados (FOR UPDATE) → dominio → uow.commit()
-                                                                 ↘ catch → uow.rollback()
-                                                                 ↘ finally → uow.release()
+Use case → uow.begin() → scoped repos (FOR UPDATE) → domain → uow.commit()
+                                                             ↘ catch → uow.rollback()
+                                                             ↘ finally → uow.release()
 ```
 
-- Una sola clase (`TypeOrmUnitOfWorkImpl`, en `transactions/infrastructure/`) satisface tres
-  puertos de módulo (`ITransactionUnitOfWork`, `IBudgetUnitOfWork`, `IAccountUnitOfWork`)
-  vía `useExisting` → la misma instancia y transacción por request.
-- `auth` tiene su propio UoW (`AuthUnitOfWorkImpl`) porque su frontera (rotación de refresh
-  tokens) no comparte invariante con los agregados financieros.
-- La **fila del budget funciona como mutex lógico** del invariante "Σ gastos del período ≤ límite":
-  todo flujo que toque ese invariante lockea esa fila primero.
+- A single class (`TypeOrmUnitOfWorkImpl`, in `transactions/infrastructure/`) satisfies three
+  module ports (`ITransactionUnitOfWork`, `IBudgetUnitOfWork`, `IAccountUnitOfWork`)
+  via `useExisting` → the same instance and transaction per request.
+- `auth` has its own UoW (`AuthUnitOfWorkImpl`) because its boundary (refresh-token
+  rotation) shares no invariant with the financial aggregates.
+- The **budget row works as a logical mutex** for the "Σ period expenses ≤ limit" invariant:
+  every flow that touches that invariant locks that row first.
 
-**Profundizar:** [`uow-decision.md`](../../src/shared/domain/uow-decision.md) (jerarquía de puertos),
-[`history/race-conditions-fix-2026-05.md`](../history/race-conditions-fix-2026-05.md) (diagramas TOCTOU de
-las races cerradas), [`concurrency-model.md`](../concurrency-model.md) (modelo completo) y la sección
-"Concurrency" de `CLAUDE.md` (tabla completa de locks).
+**Go deeper:** [`uow-decision.md`](../../src/shared/domain/uow-decision.md) (port hierarchy),
+[`history/race-conditions-fix-2026-05.md`](../history/race-conditions-fix-2026-05.md) (TOCTOU diagrams of
+the closed races), [`concurrency-model.md`](../concurrency-model.md) (full model) and the
+"Concurrency" section of `CLAUDE.md` (full lock table).
 
 ---
 
-## 6. Autenticación
+## 6. Authentication
 
-- **Access token** (15 min, `JWT_SECRET`) stateless; **refresh token** (7 días,
-  `JWT_REFRESH_SECRET`) persistido en `refresh_tokens` (solo `sha256(token)`, nunca el plano).
-- **Rotación con detección de replay:** cada `/auth/refresh` invalida el token viejo y emite uno
-  nuevo en la misma *familia*. Si llega un token ya rotado → se revoca **toda la familia**
-  (`UPDATE … WHERE family_id = $1`) y se rechaza. Cierre de sesión real vía `/auth/logout`.
-- **Login timing-safe:** corre `bcrypt.compare` aun cuando el email no existe (contra un hash
-  dummy) y devuelve un error genérico → no filtra qué emails están registrados.
-- **Guard global** `JwtAuthGuard` (deny-by-default); `@Public()` libera rutas (`/auth/*`,
-  `/health`, `/ready`). Rate-limit estricto (5/min) en `/auth/*`.
+- **Access token** (15 min, `JWT_SECRET`) stateless; **refresh token** (7 days,
+  `JWT_REFRESH_SECRET`) persisted in `refresh_tokens` (only `sha256(token)`, never the plaintext).
+- **Rotation with replay detection:** each `/auth/refresh` invalidates the old token and issues a
+  new one in the same *family*. If an already-rotated token arrives → the **entire family** is revoked
+  (`UPDATE … WHERE family_id = $1`) and it is rejected. Real sign-out via `/auth/logout`.
+- **Timing-safe login:** runs `bcrypt.compare` even when the email doesn't exist (against a dummy
+  hash) and returns a generic error → doesn't leak which emails are registered.
+- **Global guard** `JwtAuthGuard` (deny-by-default); `@Public()` opens routes (`/auth/*`,
+  `/health`, `/ready`). Strict rate limit (5/min) on `/auth/*`.
 
-Referencia viva: `src/modules/auth/notes.md`.
+Living reference: `src/modules/auth/notes.md`.
 
 ---
 
 ## 7. Deploy
 
-El empaquetado y el contrato con la plataforma están implementados; ver el runbook completo en
-[`docs/deployment.md`](../deployment.md). Resumen del modelo **Build → Release → Run**:
+The packaging and the platform contract are implemented; see the full runbook in
+[`docs/deployment.md`](../deployment.md). Summary of the **Build → Release → Run** model:
 
-- **Build:** `Dockerfile` multi-stage → imagen mínima con `dist/` + deps de prod (usuario no-root, `tini`).
-- **Release:** `docker-entrypoint.sh` corre `migration:run` (sobre `dist/data-source.js`) antes de arrancar.
-- **Run:** `node dist/main.js`, con `enableShutdownHooks()` para cierre limpio en SIGTERM.
-- **Config:** validada por Joi al arrancar; en prod la app **no arranca** si falta un secret o si `CORS_ORIGIN='*'`.
-- **Health:** `/health` (liveness) y `/ready` (readiness, valida la DB con Terminus).
+- **Build:** multi-stage `Dockerfile` → minimal image with `dist/` + prod deps (non-root user, `tini`).
+- **Release:** `docker-entrypoint.sh` runs `migration:run` (against `dist/data-source.js`) before starting.
+- **Run:** `node dist/main.js`, with `enableShutdownHooks()` for clean shutdown on SIGTERM.
+- **Config:** validated by Joi at startup; in prod the app **doesn't start** if a secret is missing or if `CORS_ORIGIN='*'`.
+- **Health:** `/health` (liveness) and `/ready` (readiness, validates the DB with Terminus).
 
 ---
 
 ## 8. Testing
 
 ```bash
-npm test                  # unit (domain + use cases), sin DB
-npm run test:integration  # integración con Postgres real (test/.env.test)
-npm run test:cov          # cobertura
+npm test                  # unit (domain + use cases), no DB
+npm run test:integration  # integration with real Postgres (test/.env.test)
+npm run test:cov          # coverage
 ```
 
-- **Unit:** ~595 tests, dominio y casos de uso cubiertos con fakes in-memory.
-- **Integración:** suite **activa** contra Postgres real (auth, users, accounts, categories, budgets,
-  transactions y un spec dedicado de **concurrencia**) vía `npm run test:integration`. Detalle en
+- **Unit:** ~595 tests, domain and use cases covered with in-memory fakes.
+- **Integration:** **active** suite against real Postgres (auth, users, accounts, categories, budgets,
+  transactions and a dedicated **concurrency** spec) via `npm run test:integration`. Details in
   [`testing.md`](../testing.md).
-- CI (`.github/workflows/ci.yml`): 7 jobs — `lint`, `build`, unit (con cobertura), integración,
-  *migration smoke*, *docker build* y *security audit*.
+- CI (`.github/workflows/ci.yml`): 7 jobs — `lint`, `build`, unit (with coverage), integration,
+  *migration smoke*, *docker build* and *security audit*.
 
 ---
 
-## 9. Estado y qué falta
+## 9. Status and what's missing
 
-**Sólido hoy:** dominio, concurrencia (races cerradas), auth con rotación, migraciones
-consolidadas en una sola `InitialSchema`, bootstrap endurecido, empaquetado de deploy verificado E2E,
-suite de integración activa, métricas Prometheus + health/readiness.
+**Solid today:** domain, concurrency (races closed), auth with rotation, migrations
+consolidated into a single `InitialSchema`, hardened bootstrap, deploy packaging verified E2E,
+active integration suite, Prometheus metrics + health/readiness.
 
-**Pendiente (no bloquea el primer deploy):**
-1. Enlazar la URL viva + Swagger en el README (el deploy ya está hecho).
-2. Observabilidad: **tracing** (OpenTelemetry) + **error tracking** (Sentry) — métricas y logs ya están.
-3. Índice parcial `WHERE nature='expense'` (optimización; ojo con el drift entity↔DB).
+**Pending (doesn't block the first deploy):**
+1. Link the live URL + Swagger in the README (the deploy is already done).
+2. Observability: **tracing** (OpenTelemetry) + **error tracking** (Sentry) — metrics and logs are done.
+3. Partial index `WHERE nature='expense'` (optimization; careful with the entity↔DB drift).
 
 ---
 
-## 10. Comandos de un vistazo
+## 10. Commands at a glance
 
 ```bash
-npm run start:dev          # desarrollo con hot-reload
-npm run build              # compila a dist/
+npm run start:dev          # development with hot reload
+npm run build              # compiles to dist/
 npm run lint               # eslint
-npm test                   # tests unitarios
-npm run migration:run      # aplica migraciones (dev, ts-node)
-npm run migration:generate # genera migración desde el diff de entities
+npm test                   # unit tests
+npm run migration:run      # applies migrations (dev, ts-node)
+npm run migration:generate # generates a migration from the entity diff
 docker compose up -d       # Postgres (5433) + Redis + pgAdmin (5051)
-docker build -t personal-finance-api .   # imagen de producción
+docker build -t personal-finance-api .   # production image
 ```

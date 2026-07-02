@@ -1,27 +1,27 @@
-# Unit of Work — decisiones de diseño
+# Unit of Work — design decisions
 
-Nivel 1 - Contrato generico (shared/domain/IUnitOfWork.ts)
-Define solo el ciclo de vida transaccional (begin, commit, rollback, release, isActive). No sabe nada de repos. Vive en shared porque "tener una transaccion de DB" es cross-cutting, no pertenece a ningun bounded context.
+Level 1 - Generic contract (shared/domain/IUnitOfWork.ts)
+Defines only the transactional lifecycle (begin, commit, rollback, release, isActive). It knows nothing about repos. It lives in shared because "having a DB transaction" is cross-cutting; it belongs to no bounded context.
 
-Nivel 2 - Puerto por modulo (<modulo>/domain/I<Modulo>UnitOfWork.ts)
-Cada modulo que necesita atomicidad define su propio puerto que extends IUnitOfWork y anade getters de los repos que ese flujo necesita - incluyendo repos de otros modulos que consume (no solo los propios).
+Level 2 - Per-module port (<module>/domain/I<Module>UnitOfWork.ts)
+Each module that needs atomicity defines its own port that extends IUnitOfWork and adds getters for the repos that flow needs - including repos of other modules it consumes (not just its own).
 
-Ejemplo: ITransactionUnitOfWork expone getTransactionRepository() + getAccountRepository() + getBudgetRepository() porque CreateTransaction mantiene invariantes que tocan las tres tablas en una sola transaccion de PostgreSQL.
+Example: ITransactionUnitOfWork exposes getTransactionRepository() + getAccountRepository() + getBudgetRepository() because CreateTransaction maintains invariants that touch all three tables in a single PostgreSQL transaction.
 
-Este puerto vive en el domain/ del modulo consumidor (patron "port owned by consumer"), aunque devuelva interfaces de repo de otros modulos. Esas interfaces de repo son las del dominio de su modulo dueno (ej. IAccountRepository sigue siendo de accounts/domain), el UoW solo las expone agrupadas segun lo que el caso de uso necesite.
+This port lives in the consumer module's domain/ ("port owned by consumer" pattern), even though it returns repo interfaces of other modules. Those repo interfaces are those of their owning module's domain (e.g. IAccountRepository still belongs to accounts/domain); the UoW merely exposes them grouped according to what the use case needs.
 
-Nivel 3 - Implementacion unica (infrastructure/persistence/unit-of-work.impl.ts)
-Una sola clase TypeOrmUnitOfWorkImpl que satisface todos los puertos de UoW cuyos getters sabe servir. Se ata en NestJS con useExisting apuntando todos los puertos al mismo provider request-scoped -> misma instancia, mismo QueryRunner, misma transaccion de DB dentro de una request.
+Level 3 - Single implementation (infrastructure/persistence/unit-of-work.impl.ts)
+A single class TypeOrmUnitOfWorkImpl that satisfies every UoW port whose getters it knows how to serve. It is wired in NestJS with useExisting, pointing all the ports to the same request-scoped provider -> same instance, same QueryRunner, same DB transaction within a request.
 
-Como lo consume el use case (referencia: create-transaction.use-case.ts:30)
+How the use case consumes it (reference: create-transaction.use-case.ts:30)
 
-Inyecta el puerto del propio modulo (ITransactionUnitOfWork), nunca el IUnitOfWork generico ni el impl concreto.
-begin() -> pide los repos al UoW (que son ScopedXRepository compartiendo el EntityManager del QueryRunner) -> opera -> commit() / rollback() en try/catch -> release() en finally.
-Los locks pesimistas (FOR UPDATE) viven dentro de los scoped repos, no en el use case - el use case solo confia en que findById bajo UoW serializa por agregado.
+It injects its own module's port (ITransactionUnitOfWork), never the generic IUnitOfWork nor the concrete impl.
+begin() -> asks the UoW for the repos (which are ScopedXRepository sharing the QueryRunner's EntityManager) -> operates -> commit() / rollback() in try/catch -> release() in finally.
+The pessimistic locks (FOR UPDATE) live inside the scoped repos, not in the use case - the use case only trusts that findById under the UoW serializes per aggregate.
 
-Notas adicionales (por que esta decision es importante)
+Additional notes (why this decision matters)
 
-- Evita acoplar los casos de uso a TypeORM o a DataSource; el dominio conoce solo puertos.
-- Permite transacciones consistentes en flujos que cruzan modulos sin romper la regla de dependencias.
-- Mantiene un solo QueryRunner por request, evitando transacciones anidadas y estados parciales.
-- Hace explicita la combinacion de repos requerida por cada caso de uso, facilitando pruebas y razonamiento.
+- Avoids coupling the use cases to TypeORM or DataSource; the domain knows only ports.
+- Enables consistent transactions in flows that cross modules without breaking the dependency rule.
+- Keeps a single QueryRunner per request, avoiding nested transactions and partial states.
+- Makes the combination of repos each use case requires explicit, easing testing and reasoning.

@@ -1,58 +1,58 @@
-# Módulo `accounts` — Referencia actual
+# `accounts` module — Current reference
 
-## Dominio
+## Domain
 
-### Value object `Balance`
+### `Balance` value object
 
-**Archivo:** `domain/value-objects/balance.vo.ts`
+**File:** `domain/value-objects/balance.vo.ts`
 
-Monto monetario en CLP (sin decimales). Inmutable.
+Monetary amount in CLP (no decimals). Immutable.
 
-Métodos:
-- `Balance.create(amount)` — valida finito, no negativo, sin decimales
-- `Balance.reconstitute(value)` — reconstruye desde persistencia sin re-validar (el mapper SIEMPRE usa este)
-- `Balance.zero()` — factory para balance cero
-- `add(other)` / `subtract(other)` — aritmética inmutable; `subtract` lanza `InsufficientFundsException` si el resultado sería negativo
+Methods:
+- `Balance.create(amount)` — validates finite, non-negative, no decimals
+- `Balance.reconstitute(value)` — rebuilds from persistence without re-validating (the mapper ALWAYS uses this one)
+- `Balance.zero()` — factory for a zero balance
+- `add(other)` / `subtract(other)` — immutable arithmetic; `subtract` throws `InsufficientFundsException` if the result would be negative
 - `getValue()`, `equals()`, `greaterThan()`, `isZero()`
 
-CLP no tiene centavos — almacenar en centavos solo añade conversión sin beneficio. Si en el futuro se soportan otras monedas habrá que migrar la columna a `decimal(15,2)`.
+CLP has no cents — storing in cents only adds conversion with no benefit. If other currencies are supported in the future, the column will have to migrate to `decimal(15,2)`.
 
-La regla "un balance no puede ser negativo" vive en el VO porque es la única forma de garantizar que sea imposible construir un `Balance` inválido desde cualquier punto del sistema.
+The rule "a balance cannot be negative" lives in the VO because that is the only way to guarantee it is impossible to construct an invalid `Balance` from anywhere in the system.
 
-### Value object `AccountType`
+### `AccountType` value object
 
-**Archivo:** `domain/value-objects/type.vo.ts`
+**File:** `domain/value-objects/type.vo.ts`
 
-Lista cerrada normalizada a minúsculas: `ahorro`, `corriente`, `vista`, `ruta`, `otros`.
+Closed list normalized to lowercase: `ahorro`, `corriente`, `vista`, `ruta`, `otros`.
 
-### Entidad `Account`
+### `Account` entity
 
-**Archivo:** `domain/entities/account.entity.ts`
+**File:** `domain/entities/account.entity.ts`
 
-Constructor privado. Dos factory methods:
-- `Account.create(props)` — `currentBalance` arranca igual a `initialBalance`; `isArchived = false`
-- `Account.reconstitute(props)` — acepta `currentBalance` independiente del inicial
+Private constructor. Two factory methods:
+- `Account.create(props)` — `currentBalance` starts equal to `initialBalance`; `isArchived = false`
+- `Account.reconstitute(props)` — accepts a `currentBalance` independent of the initial one
 
-Métodos de negocio:
+Business methods:
 
-| Método | Comportamiento | Bloqueado si archivada |
+| Method | Behavior | Blocked if archived |
 |--------|---------------|----------------------|
-| `inflow(amount)` | Suma al balance | ✅ `CannotOperateOnArchivedAccountException` |
-| `outflow(amount)` | Resta al balance (delega en `Balance.subtract`) | ✅ |
-| `rename(name)` | Actualiza nombre | ✅ |
-| `archive()` | Archiva; lanza error si ya archivada | — |
-| `unarchive()` | Desarchiva; lanza error si no archivada | — |
-| `hasSufficientFunds(amount)` | Solo lectura | — |
+| `inflow(amount)` | Adds to the balance | Yes — `CannotOperateOnArchivedAccountException` |
+| `outflow(amount)` | Subtracts from the balance (delegates to `Balance.subtract`) | Yes |
+| `rename(name)` | Updates the name | Yes |
+| `archive()` | Archives; throws if already archived | — |
+| `unarchive()` | Unarchives; throws if not archived | — |
+| `hasSufficientFunds(amount)` | Read-only | — |
 
-**Invariante:** una cuenta archivada es inmutable. El usuario debe llamar `unarchive()` explícitamente antes de volver a operar. `archive()` y `unarchive()` no son idempotentes — lanzan excepción si el estado ya es el pedido.
+**Invariant:** an archived account is immutable. The user must call `unarchive()` explicitly before operating again. `archive()` and `unarchive()` are not idempotent — they throw an exception if the state is already the requested one.
 
-### Excepciones de dominio
+### Domain exceptions
 
-**Archivo:** `domain/exceptions/account.exceptions.ts`
+**File:** `domain/exceptions/account.exceptions.ts`
 
-Base: `AccountException extends Error`. El controlador es el único lugar donde se mapean a HTTP.
+Base: `AccountException extends Error`. The controller is the only place where they are mapped to HTTP.
 
-| Excepción | HTTP |
+| Exception | HTTP |
 |-----------|------|
 | `AccountNotFoundException` | 404 |
 | `AccountAlreadyArchivedDomainException` | 409 |
@@ -66,76 +66,76 @@ Base: `AccountException extends Error`. El controlador es el único lugar donde 
 | `NoTypeProvidedException` | 400 |
 | `InvalidAccountTypeException` | 400 |
 
-### Puerto `IAccountRepository`
+### `IAccountRepository` port
 
-Clase abstracta. Métodos: `findById`, `findByUserId`, `save`, `delete`.
+Abstract class. Methods: `findById`, `findByUserId`, `save`, `delete`.
 
 ---
 
-## Capa application
+## Application layer
 
-| Use case | Flujo |
+| Use case | Flow |
 |----------|-------|
-| `CreateAccountUseCase` | Crea VOs → crea entidad → persiste |
-| `GetAccountByIdUseCase` | Busca por id → valida ownership (`requestUserId`) → lanza `AccountNotFoundException` si no existe |
-| `GetAccountsByUserIdUseCase` | Retorna array (vacío es válido) |
-| `RenameAccountUseCase` | Abre `IAccountUnitOfWork` → `findById` (FOR UPDATE) → ownership inline → `account.rename()` → persiste |
-| `ArchiveAccountUseCase` | Abre `IAccountUnitOfWork` → `findById` (FOR UPDATE) → ownership inline → `account.archive()` → persiste |
-| `UnarchiveAccountUseCase` | Abre `IAccountUnitOfWork` → `findById` (FOR UPDATE) → ownership inline → `account.unarchive()` → persiste |
-| `DeleteAccountUseCase` | Delega a `GetAccountByIdUseCase` (existencia + ownership) → `repo.delete()` — sin UoW (no muta balance) |
+| `CreateAccountUseCase` | Creates VOs → creates entity → persists |
+| `GetAccountByIdUseCase` | Finds by id → validates ownership (`requestUserId`) → throws `AccountNotFoundException` if it doesn't exist |
+| `GetAccountsByUserIdUseCase` | Returns an array (empty is valid) |
+| `RenameAccountUseCase` | Opens `IAccountUnitOfWork` → `findById` (FOR UPDATE) → inline ownership → `account.rename()` → persists |
+| `ArchiveAccountUseCase` | Opens `IAccountUnitOfWork` → `findById` (FOR UPDATE) → inline ownership → `account.archive()` → persists |
+| `UnarchiveAccountUseCase` | Opens `IAccountUnitOfWork` → `findById` (FOR UPDATE) → inline ownership → `account.unarchive()` → persists |
+| `DeleteAccountUseCase` | Delegates to `GetAccountByIdUseCase` (existence + ownership) → `repo.delete()` — no UoW (doesn't mutate balance) |
 
-> **Por qué Rename/Archive/Unarchive usan UoW y Delete no:** los tres primeros compiten por el lock de la fila de la cuenta contra `CreateTransaction`/`DeleteTransaction` (ver Race 2). `Delete` no muta balance, así que no necesita serializarse con las mutaciones financieras.
-| `UpdateAccountBalanceUseCase` | `repo.findById()` → `account.inflow()` o `account.outflow()` → `repo.save()` |
+> **Why Rename/Archive/Unarchive use the UoW and Delete doesn't:** the first three compete for the account row's lock against `CreateTransaction`/`DeleteTransaction` (see Race 2). `Delete` doesn't mutate the balance, so it doesn't need to serialize with the financial mutations.
+| `UpdateAccountBalanceUseCase` | `repo.findById()` → `account.inflow()` or `account.outflow()` → `repo.save()` |
 
-### `UpdateAccountBalanceUseCase` — consumido por `transactions`
+### `UpdateAccountBalanceUseCase` — consumed by `transactions`
 
-**Archivo:** `application/use-cases/update-account-balance.use-case.ts`
+**File:** `application/use-cases/update-account-balance.use-case.ts`
 
-Este use case ES consumido por `CreateTransactionUseCase` y `DeleteTransactionUseCase`. El módulo `transactions` construye una instancia directamente inyectando el **repositorio escopado del UoW**:
+This use case IS consumed by `CreateTransactionUseCase` and `DeleteTransactionUseCase`. The `transactions` module builds an instance directly, injecting the **UoW's scoped repository**:
 
 ```typescript
-// create-transaction.use-case.ts (dentro del bloque UoW)
+// create-transaction.use-case.ts (inside the UoW block)
 const acctRepo = this.uow.getAccountRepository(); // ScopedAccountRepository
 const updateBalance = new UpdateAccountBalanceUseCase(acctRepo);
 await updateBalance.execute(command.accountId, amount.getValue(), 'inflow' | 'outflow');
 ```
 
-Al usar el repositorio escopado, la actualización del balance corre dentro de la misma transacción de PostgreSQL que el `txRepo.save(transaction)`. Esto garantiza atomicidad: si el save de la transacción falla, el balance tampoco se actualiza.
+By using the scoped repository, the balance update runs inside the same PostgreSQL transaction as the `txRepo.save(transaction)`. This guarantees atomicity: if the transaction save fails, the balance is not updated either.
 
-✅ **Bug B (lost update de balance) — CERRADO.** `ScopedAccountRepository.findById` toma `FOR UPDATE`, así que dos transacciones concurrentes sobre la misma cuenta se serializan: la segunda espera el COMMIT de la primera y lee el balance vigente. Post-mortem completo en [transactions/notes-history.md](../../transactions/notes-history.md). La competencia entre mutaciones de cuenta y transacciones (Race 2) está en [docs/history/race-conditions-fix-2026-05.md](../../../docs/history/race-conditions-fix-2026-05.md).
+**Bug B (balance lost update) — CLOSED.** `ScopedAccountRepository.findById` takes `FOR UPDATE`, so two concurrent transactions on the same account are serialized: the second one waits for the first one's COMMIT and reads the current balance. Full post-mortem in [transactions/notes-history.md](../../transactions/notes-history.md). The competition between account mutations and transactions (Race 2) is in [docs/history/race-conditions-fix-2026-05.md](../../../docs/history/race-conditions-fix-2026-05.md).
 
 ---
 
-## Capa infrastructure
+## Infrastructure layer
 
 ### `AccountOrmEntity`
 
-**Archivo:** `infrastructure/persistance/account.orm.entity.ts`
+**File:** `infrastructure/persistance/account.orm.entity.ts`
 
-| Columna | Tipo | Notas |
+| Column | Type | Notes |
 |---------|------|-------|
-| `id` | `uuid` | PK, generado con `randomUUID()` |
-| `userId` | `varchar` | Referencia lógica |
+| `id` | `uuid` | PK, generated with `randomUUID()` |
+| `userId` | `varchar` | Logical reference |
 | `name` | `varchar` | |
-| `type` | `varchar` | String del VO `AccountType` |
+| `type` | `varchar` | String from the `AccountType` VO |
 | `initialBalance` | `int` | CLP |
 | `currentBalance` | `int` | CLP |
 | `isArchived` | `boolean` | Default `false` |
-| `created_at` | `timestamp` | `@Column` simple — el dominio controla el valor |
-| `updated_at` | `timestamp` | `@Column` simple — el dominio controla el valor |
+| `created_at` | `timestamp` | Plain `@Column` — the domain controls the value |
+| `updated_at` | `timestamp` | Plain `@Column` — the domain controls the value |
 
-Índice: `@Index('idx_account_user', ['userId'])` — el listado por usuario es hot-path.
+Index: `@Index('idx_account_user', ['userId'])` — the per-user listing is a hot path.
 
-**Por qué `@Column` simple en lugar de `@CreateDateColumn`:** TypeORM con `@CreateDateColumn`/`@UpdateDateColumn` sobreescribe los valores en cada `save()`, ignorando lo que el dominio setea. Con `@Column` simple, la entidad de dominio es la única fuente de verdad para las fechas.
+**Why a plain `@Column` instead of `@CreateDateColumn`:** TypeORM with `@CreateDateColumn`/`@UpdateDateColumn` overwrites the values on every `save()`, ignoring what the domain sets. With a plain `@Column`, the domain entity is the single source of truth for the dates.
 
 ### `AccountMapper`
 
-`toDomain(orm)` — usa `Balance.reconstitute()` y `AccountType.reconstitute()` (no re-valida datos persistidos). `Account.reconstitute()` para preservar timestamps.  
-`toOrm(domain)` — extrae valores con getters.
+`toDomain(orm)` — uses `Balance.reconstitute()` and `AccountType.reconstitute()` (doesn't re-validate persisted data). `Account.reconstitute()` to preserve timestamps.
+`toOrm(domain)` — extracts values with getters.
 
-### Rutas
+### Routes
 
-| Método | Ruta | Use case | HTTP |
+| Method | Route | Use case | HTTP |
 |--------|------|----------|------|
 | POST | `/accounts` | `CreateAccountUseCase` | 201 |
 | GET | `/accounts` | `GetAccountsByUserIdUseCase` | 200 |
@@ -150,16 +150,16 @@ Al usar el repositorio escopado, la actualización del balance corre dentro de l
 ## Wiring — `AccountsModule`
 
 Exports:
-- `GetAccountByIdUseCase` — consumido por `budgets` y `transactions` (ownership check cross-module)
-- `GetAccountsByUserIdUseCase` — consumido por `transactions`
-- `UpdateAccountBalanceUseCase` — consumido por `transactions`
-- `IAccountRepository` — consumido por `transactions` para el UoW scoped repo
+- `GetAccountByIdUseCase` — consumed by `budgets` and `transactions` (cross-module ownership check)
+- `GetAccountsByUserIdUseCase` — consumed by `transactions`
+- `UpdateAccountBalanceUseCase` — consumed by `transactions`
+- `IAccountRepository` — consumed by `transactions` for the UoW scoped repo
 
 ---
 
-## Extensión futura: transferencias
+## Future extension: transfers
 
-Para "mover $X de cuenta A a cuenta B":
+For "move $X from account A to account B":
 
 ```
 TransferUseCase(fromId, toId, amount):
@@ -171,11 +171,11 @@ TransferUseCase(fromId, toId, amount):
   uow.commit()
 ```
 
-Ambas transacciones deben compartir un `transferGroupId` para reconstruir el transfer lógico. El UoW ya existe — la extensión es agregar el campo y el use case.
+Both transactions must share a `transferGroupId` to reconstruct the logical transfer. The UoW already exists — the extension is adding the field and the use case.
 
 ---
 
-## Recursos
+## Resources
 
-- 📚 DDIA cap. 7 — lost update problem y pessimistic/optimistic locking
-- 📄 postgresql.org/docs → "Explicit Locking"
+- Book: DDIA ch. 7 — the lost update problem and pessimistic/optimistic locking
+- Article: postgresql.org/docs → "Explicit Locking"

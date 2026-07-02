@@ -1,161 +1,161 @@
-# Módulo `transactions` — Referencia actual
+# `transactions` module — Current reference
 
-## Dominio
+## Domain
 
 ### Value objects
 
-**`TransactionNature`** (`domain/value-objects/transaction-nature.vo.ts`)  
-Valores válidos: `income` | `expense`. Separado de `CategoryNature` intencionalmente — son bounded contexts distintos que pueden evolucionar independientemente. No incluye `transfer` (las transferencias son una entidad separada en el esquema de BD).
+**`TransactionNature`** (`domain/value-objects/transaction-nature.vo.ts`)
+Valid values: `income` | `expense`. Intentionally separate from `CategoryNature` — they are distinct bounded contexts that can evolve independently. It doesn't include `transfer` (transfers are a separate entity in the DB schema).
 
-**`Amount`** (`domain/value-objects/amount.vo.ts`)  
-Monto de una transacción en CLP. Validaciones: número finito, entero, estrictamente mayor que cero. Separado de `Balance` (que pertenece a `accounts`) porque representan conceptos distintos: `Amount` es un monto puntual, `Balance` es un saldo acumulado. `Balance` permite cero; `Amount` no.
+**`Amount`** (`domain/value-objects/amount.vo.ts`)
+A transaction amount in CLP. Validations: finite number, integer, strictly greater than zero. Separate from `Balance` (which belongs to `accounts`) because they represent different concepts: `Amount` is a point-in-time amount, `Balance` is an accumulated balance. `Balance` allows zero; `Amount` doesn't.
 
-### Entidad `Transaction`
+### `Transaction` entity
 
-Constructor privado. Dos factory methods:
-- `Transaction.create(props)` — genera `createdAt`
-- `Transaction.reconstitute(props)` — reconstruye desde persistencia sin generar timestamps
+Private constructor. Two factory methods:
+- `Transaction.create(props)` — generates `createdAt`
+- `Transaction.reconstitute(props)` — rebuilds from persistence without generating timestamps
 
-Propiedades: `id`, `userId`, `accountId`, `categoryId`, `nature` (`TransactionNature`), `amount` (`Amount`), `description?`, `transactionDate`, `createdAt`.
+Properties: `id`, `userId`, `accountId`, `categoryId`, `nature` (`TransactionNature`), `amount` (`Amount`), `description?`, `transactionDate`, `createdAt`.
 
-Sin `updatedAt` — las transacciones son registros contables inmutables. Corrección = eliminar + recrear.
+No `updatedAt` — transactions are immutable accounting records. Correction = delete + recreate.
 
-Sin métodos de mutación (solo getters). Esto refleja que una transacción contable no "se edita"; se contra-asienta.
+No mutation methods (only getters). This reflects that an accounting transaction is not "edited"; it is counter-entered.
 
-### Excepciones de dominio
+### Domain exceptions
 
-| Excepción | Cuándo |
+| Exception | When |
 |-----------|--------|
-| `TransactionNotFoundException` | `findById` retorna null |
+| `TransactionNotFoundException` | `findById` returns null |
 | `IncompatibleCategoryNatureException` | `category.nature !== transaction.nature` (R7) |
-| `BudgetLimitExceededException` | Gasto proyectado > `budget.limit` |
-| `BudgetRequiredForExpenseTransactionException` | Expense sin budget en el período |
-| `CannotDeleteTransactionException` | Revertir un income dejaría el balance negativo |
+| `BudgetLimitExceededException` | Projected spend > `budget.limit` |
+| `BudgetRequiredForExpenseTransactionException` | Expense without a budget in the period |
+| `CannotDeleteTransactionException` | Reversing an income would leave the balance negative |
 
-### Puerto `ITransactionRepository`
+### `ITransactionRepository` port
 
-Clase abstracta (necesario para DI en NestJS). Métodos:
+Abstract class (required for DI in NestJS). Methods:
 - `findById`, `findByAccountId`, `findByUserId`, `save`, `delete`
-- `sumExpenseAmountByUserCategoryAndPeriod` — query de suma para validar R8
+- `sumExpenseAmountByUserCategoryAndPeriod` — sum query to validate R8
 
-### Puerto `ITransactionUnitOfWork`
+### `ITransactionUnitOfWork` port
 
-**Archivo:** `domain/ITransactionUnitOfWork.ts`
+**File:** `domain/ITransactionUnitOfWork.ts`
 
-Clase abstracta que **extiende `IUnitOfWork`** (`shared/domain`). El contrato de ciclo de vida (`begin`, `commit`, `rollback`, `release`, `isActive`) es transversal, se hereda de esa abstracción y se documenta allá — **no se redocumenta aquí**.
+Abstract class that **extends `IUnitOfWork`** (`shared/domain`). The lifecycle contract (`begin`, `commit`, `rollback`, `release`, `isActive`) is cross-cutting, inherited from that abstraction and documented there — **it is not re-documented here**.
 
-Lo que este puerto **añade** son los getters de los repositorios que `CreateTransactionUseCase` y `DeleteTransactionUseCase` necesitan para coordinar escrituras sobre los tres aggregates dentro de una sola transacción:
+What this port **adds** are the getters for the repositories that `CreateTransactionUseCase` and `DeleteTransactionUseCase` need to coordinate writes across the three aggregates within a single transaction:
 
-- `getTransactionRepository()` → `ITransactionRepository` escopado
-- `getAccountRepository()` → `IAccountRepository` escopado
-- `getBudgetRepository()` → `IBudgetRepository` escopado
+- `getTransactionRepository()` → scoped `ITransactionRepository`
+- `getAccountRepository()` → scoped `IAccountRepository`
+- `getBudgetRepository()` → scoped `IBudgetRepository`
 
-Los tres repos escopados comparten el `EntityManager` del `QueryRunner` activo, así que toda lectura/escritura corre en la misma transacción de PostgreSQL. Por construcción (solo se obtienen vía el UoW, ya dentro de una tx abierta) sus lecturas por id toman `FOR UPDATE` — ver la sección *Decisión arquitectónica — locks en repos escopados* más abajo.
+The three scoped repos share the active `QueryRunner`'s `EntityManager`, so every read/write runs in the same PostgreSQL transaction. By construction (they are only obtained via the UoW, already inside an open tx) their by-id reads take `FOR UPDATE` — see the *Architectural decision — locks in scoped repos* section below.
 
-> El puerto base `IUnitOfWork` no se documenta en este módulo: vive en `shared/domain` y lo consumen también `IBudgetUnitOfWork`, `IAccountUnitOfWork` e `IAuthUnitOfWork`. Documentar su lifecycle aquí sería duplicar el contrato de la abstracción.
+> The base `IUnitOfWork` port is not documented in this module: it lives in `shared/domain` and is also consumed by `IBudgetUnitOfWork`, `IAccountUnitOfWork` and `IAuthUnitOfWork`. Documenting its lifecycle here would duplicate the abstraction's contract.
 
 ---
 
-## Capa application
+## Application layer
 
 ### `CreateTransactionUseCase`
 
-**Flujo pre-transacción (fuera del UoW):**
-1. Crea VOs `TransactionNature` y `Amount`
-2. Valida que la cuenta existe y pertenece al usuario (`GetAccountByIdUseCase`)
-3. Valida que la categoría existe, pertenece al usuario, y su naturaleza coincide con la transacción (R7)
-4. Si es expense: valida que existe un budget para el período (falla rápido sin abrir la transacción). La categoría debe ser `expense`; la "budgetabilidad" se **deriva de `nature`**, no de un flag `isBudgetable` (ese flag fue eliminado).
+**Pre-transaction flow (outside the UoW):**
+1. Creates the `TransactionNature` and `Amount` VOs
+2. Validates the account exists and belongs to the user (`GetAccountByIdUseCase`)
+3. Validates the category exists, belongs to the user, and its nature matches the transaction's (R7)
+4. If it is an expense: validates a budget exists for the period (fails fast without opening the transaction). The category must be `expense`; "budgetability" is **derived from `nature`**, not from an `isBudgetable` flag (that flag was removed).
 
-**Flujo dentro del UoW:**
-1. `uow.begin()` — abre `QueryRunner`, inicia transacción de PG
-2. `budgetRepo.findByUserIdAndCategoryIdAndPeriod(...)` (repo escopado, `FOR UPDATE` implícito) — **gate del invariante**: lockea la fila del budget del período antes de leer cualquier dato que entre en la decisión. Es el único objeto que existe siempre y por el que pasan todos los escritores concurrentes del período.
-3. `txRepo.sumExpenseAmountByUserCategoryAndPeriod(...)` (sin lock propio) — se ejecuta post-gate, así que en `READ COMMITTED` ve los commits previos. La consistencia la da el lock del budget, no un `FOR UPDATE` sobre el rango (que no previene phantoms).
-4. `UpdateAccountBalanceUseCase(acctRepo).execute(...)` — actualiza balance usando el repositorio escopado (lock pesimista implícito en `findById`)
-5. `txRepo.save(transaction)` — persiste la transacción
-6. `uow.commit()` / `uow.rollback()` en `finally`
+**Flow inside the UoW:**
+1. `uow.begin()` — opens the `QueryRunner`, starts the PG transaction
+2. `budgetRepo.findByUserIdAndCategoryIdAndPeriod(...)` (scoped repo, implicit `FOR UPDATE`) — **the invariant's gate**: locks the period's budget row before reading any data that feeds the decision. It is the only object that always exists and that every concurrent writer of the period goes through.
+3. `txRepo.sumExpenseAmountByUserCategoryAndPeriod(...)` (no own lock) — runs post-gate, so under `READ COMMITTED` it sees prior commits. Consistency comes from the budget lock, not from a `FOR UPDATE` over the range (which doesn't prevent phantoms).
+4. `UpdateAccountBalanceUseCase(acctRepo).execute(...)` — updates the balance using the scoped repository (implicit pessimistic lock in `findById`)
+5. `txRepo.save(transaction)` — persists the transaction
+6. `uow.commit()` / `uow.rollback()` in `finally`
 
 ### `DeleteTransactionUseCase`
 
-Similar al create pero en reversa:
-1. Recupera la transacción y la cuenta
-2. Verifica que el owner coincide
-3. `uow.begin()` — revert del balance + delete de la transacción en un mismo `QueryRunner`
-4. Si el revert de un income dejaría el balance negativo → `CannotDeleteTransactionException`
+Similar to create but in reverse:
+1. Retrieves the transaction and the account
+2. Verifies the owner matches
+3. `uow.begin()` — balance revert + transaction delete in the same `QueryRunner`
+4. If reverting an income would leave the balance negative → `CannotDeleteTransactionException`
 
-### Use cases de lectura
+### Read use cases
 
-`GetTransactionByIdUseCase`, `GetTransactionsByAccountIdUseCase`, `GetTransactionsByUserIdUseCase` — sin complejidad especial. Los de colección soportan paginación (`offset`, `limit`) y filtro por rango de fechas (`from`, `to`).
+`GetTransactionByIdUseCase`, `GetTransactionsByAccountIdUseCase`, `GetTransactionsByUserIdUseCase` — no special complexity. The collection ones support pagination (`offset`, `limit`) and date-range filtering (`from`, `to`).
 
 ---
 
-## Capa infrastructure
+## Infrastructure layer
 
 ### `TransactionOrmEntity`
 
-| Columna | Tipo | Notas |
+| Column | Type | Notes |
 |---------|------|-------|
-| `id` | `uuid` | PK, generado con `randomUUID()` en el use case |
-| `userId` | `varchar` | Referencia lógica |
-| `accountId` | `varchar` | Referencia lógica |
-| `categoryId` | `varchar` | Referencia lógica |
-| `nature` | `varchar` | `income` o `expense` |
-| `amount` | `int` | CLP, sin decimales |
+| `id` | `uuid` | PK, generated with `randomUUID()` in the use case |
+| `userId` | `varchar` | Logical reference |
+| `accountId` | `varchar` | Logical reference |
+| `categoryId` | `varchar` | Logical reference |
+| `nature` | `varchar` | `income` or `expense` |
+| `amount` | `int` | CLP, no decimals |
 | `description` | `varchar` | Nullable |
-| `transactionDate` | `timestamp` | Fecha real del movimiento (puede diferir de `createdAt`) |
-| `createdAt` | `timestamp` | Fecha de ingreso al sistema |
+| `transactionDate` | `timestamp` | Actual date of the movement (may differ from `createdAt`) |
+| `createdAt` | `timestamp` | Date it entered the system |
 
-Índices compuestos:
+Composite indexes:
 ```
 @Index('idx_tx_user_date',            ['userId', 'transactionDate'])
 @Index('idx_tx_account_date',         ['accountId', 'transactionDate'])
 @Index('idx_tx_user_cat_nature_date', ['userId', 'categoryId', 'nature', 'transactionDate'])
 ```
-El tercero cubre el `sumExpenseAmountByUserCategoryAndPeriod` que se ejecuta en cada create de expense.
+The third one covers the `sumExpenseAmountByUserCategoryAndPeriod` that runs on every expense create.
 
 ### `TypeOrmUnitOfWorkImpl`
 
-**Archivo:** `infrastructure/persistence/unit-of-work.impl.ts`
+**File:** `infrastructure/persistence/unit-of-work.impl.ts`
 
-> El **patrón** (por qué una sola impl satisface varios puertos, por qué los puertos son `abstract class`, por qué se cuentan por *operación atómica* y no por módulo) vive en [shared/domain/uow-decision.md](../../shared/domain/uow-decision.md) y en CLAUDE.md. Esta sección documenta solo la **mecánica concreta** de esta clase — para no duplicar el "por qué" y que vuelva a derivar.
+> The **pattern** (why a single impl satisfies several ports, why the ports are `abstract class`, why they are counted per *atomic operation* and not per module) lives in [shared/domain/uow-decision.md](../../shared/domain/uow-decision.md) and in CLAUDE.md. This section documents only the **concrete mechanics** of this class — to avoid duplicating the "why" and having it drift again.
 
-Una sola clase concreta que satisface **tres** puertos de módulo: `ITransactionUnitOfWork` (lo extiende), `IBudgetUnitOfWork` e `IAccountUnitOfWork` (los implementa). Los tres tokens resuelven a la **misma** instancia vía `useExisting` en el wiring — un alias, no copias. Scope: `REQUEST` — NestJS crea una instancia nueva por request, así que cada request tiene su propio `QueryRunner` aislado.
+A single concrete class that satisfies **three** module ports: `ITransactionUnitOfWork` (extends it), `IBudgetUnitOfWork` and `IAccountUnitOfWork` (implements them). The three tokens resolve to the **same** instance via `useExisting` in the wiring — an alias, not copies. Scope: `REQUEST` — NestJS creates a new instance per request, so each request has its own isolated `QueryRunner`.
 
-#### Estado y ciclo de vida
+#### State and lifecycle
 
-La clase mantiene un solo campo mutable: `queryRunner: QueryRunner | null` (arranca en `null`). Los cinco métodos heredados de `IUnitOfWork` operan sobre él:
+The class keeps a single mutable field: `queryRunner: QueryRunner | null` (starts at `null`). The five methods inherited from `IUnitOfWork` operate on it:
 
-| Método | Qué hace |
+| Method | What it does |
 |--------|----------|
-| `begin()` | `dataSource.createQueryRunner()` → `connect()` → `startTransaction()`. A partir de aquí hay una conexión dedicada con una transacción de PG abierta. |
-| `commit()` | `queryRunner?.commitTransaction()` — confirma todo lo escrito en la tx. |
-| `rollback()` | `queryRunner?.rollbackTransaction()` — descarta todo. |
-| `release()` | `queryRunner?.release()` y vuelve `queryRunner` a `null` — **devuelve la conexión al pool**. Va siempre en el `finally` del use case; omitirlo filtra conexiones. |
-| `isActive()` | `queryRunner !== null` — true entre `begin()` y `release()`. |
+| `begin()` | `dataSource.createQueryRunner()` → `connect()` → `startTransaction()`. From here on there is a dedicated connection with an open PG transaction. |
+| `commit()` | `queryRunner?.commitTransaction()` — confirms everything written in the tx. |
+| `rollback()` | `queryRunner?.rollbackTransaction()` — discards everything. |
+| `release()` | `queryRunner?.release()` and sets `queryRunner` back to `null` — **returns the connection to the pool**. Always goes in the use case's `finally`; omitting it leaks connections. |
+| `isActive()` | `queryRunner !== null` — true between `begin()` and `release()`. |
 
-El optional-chaining (`?.`) en commit/rollback/release hace que llamarlos sin una tx abierta sea no-op en vez de un crash.
+The optional chaining (`?.`) in commit/rollback/release makes calling them without an open tx a no-op instead of a crash.
 
-#### Los cuatro recursos escopados
+#### The four scoped resources
 
-Cuatro getters construyen los repos escopados, todos sobre `this.queryRunner!.manager` (el `EntityManager` del runner activo):
+Four getters build the scoped repos, all on `this.queryRunner!.manager` (the active runner's `EntityManager`):
 
 - `getTransactionRepository()` → `ScopedTransactionRepository`
 - `getAccountRepository()` → `ScopedAccountRepository`
 - `getBudgetRepository()` → `ScopedBudgetRepository`
-- `getScopedExpenseChecker()` → `ScopedExpenseChecker` (satisface el puerto `IExpenseChecker` de `budgets`, patrón *port owned by consumer*)
+- `getScopedExpenseChecker()` → `ScopedExpenseChecker` (satisfies the `IExpenseChecker` port of `budgets`, *port owned by consumer* pattern)
 
-Las cuatro clases son **privadas al archivo** (no exportadas). La única forma de obtenerlas es a través del UoW, y eso solo tiene sentido después de `begin()`. Esa garantía es la que justifica el `!` (non-null assertion) sobre `queryRunner` en los getters: por contrato nunca se llaman con el runner en `null`. Como todas comparten el mismo `manager`, toda lectura y escritura cae en la misma transacción de PostgreSQL.
+The four classes are **private to the file** (not exported). The only way to obtain them is through the UoW, and that only makes sense after `begin()`. That guarantee is what justifies the `!` (non-null assertion) on `queryRunner` in the getters: by contract they are never called with the runner at `null`. Since they all share the same `manager`, every read and write lands in the same PostgreSQL transaction.
 
-#### Locks por construcción
+#### Locks by construction
 
-Por vivir siempre dentro de una tx abierta, los `findById` de los repos escopados toman `FOR UPDATE` (`lock: { mode: 'pessimistic_write' }`) sin parámetro: leer una fila por id aquí implica intención de mutar. Los métodos agregados (`SUM`/`COUNT`) **no** toman lock — Postgres lo prohíbe sobre agregados, y la serialización se la da el `FOR UPDATE` que el caller toma antes sobre la fila del budget. Ver el mapa completo en [CLAUDE.md → Locking & serialization map](../../../CLAUDE.md) y la justificación en *Decisión arquitectónica — locks en repos escopados* más abajo.
+Because they always live inside an open tx, the scoped repos' `findById` methods take `FOR UPDATE` (`lock: { mode: 'pessimistic_write' }`) without a parameter: reading a row by id here implies intent to mutate. The aggregate methods (`SUM`/`COUNT`) take **no** lock — Postgres forbids it on aggregates, and serialization comes from the `FOR UPDATE` the caller takes beforehand on the budget row. See the full map in [CLAUDE.md → Locking & serialization map](../../../CLAUDE.md) and the rationale in *Architectural decision — locks in scoped repos* below.
 
 ### `TransactionMapper`
 
-`toDomain(orm)` — usa `TransactionNature.reconstitute()` y `Amount.reconstitute()` (no re-valida datos ya persistidos). `Transaction.reconstitute()` para preservar timestamps.
+`toDomain(orm)` — uses `TransactionNature.reconstitute()` and `Amount.reconstitute()` (doesn't re-validate already-persisted data). `Transaction.reconstitute()` to preserve timestamps.
 
-### Rutas
+### Routes
 
-| Método | Ruta | Use case | HTTP |
+| Method | Route | Use case | HTTP |
 |--------|------|----------|------|
 | POST | `/transactions` | `CreateTransactionUseCase` | 201 |
 | GET | `/transactions` | `GetTransactionsByUserIdUseCase` | 200 |
@@ -163,9 +163,9 @@ Por vivir siempre dentro de una tx abierta, los `findById` de los repos escopado
 | GET | `/transactions/:id` | `GetTransactionByIdUseCase` | 200 |
 | DELETE | `/transactions/:id` | `DeleteTransactionUseCase` | 204 |
 
-Mapeo de excepciones:
+Exception mapping:
 
-| Excepción | HTTP |
+| Exception | HTTP |
 |-----------|------|
 | `TransactionNotFoundException` | 404 |
 | `AccountNotFoundException` | 404 |
@@ -181,44 +181,44 @@ Mapeo de excepciones:
 
 ## Wiring — `TransactionsModule`
 
-Imports: `AccountsModule`, `BudgetsModule` (con `forwardRef` por el ciclo), `CategoriesModule`.  
-Exports: `IExpenseChecker` (implementación usada por `BudgetsModule` para validar delete de budget).
+Imports: `AccountsModule`, `BudgetsModule` (with `forwardRef` because of the cycle), `CategoriesModule`.
+Exports: `IExpenseChecker` (implementation used by `BudgetsModule` to validate budget deletion).
 
 ---
 
-## Race conditions resueltas (histórico)
+## Resolved race conditions (historical)
 
-Los bugs de concurrencia ya cerrados **propios de este módulo** (Bug A, Bug A.2, Bug B) y su análisis completo se movieron a [notes-history.md](./notes-history.md).
+The already-closed concurrency bugs **specific to this module** (Bug A, Bug A.2, Bug B) and their full analysis were moved to [notes-history.md](./notes-history.md).
 
-Los races que **cruzan módulos** — Race 1 (`DELETE /budgets/:id` vs `POST /transactions`) y Race 2 (mutaciones de cuenta vs `POST /transactions`) — están documentados centralmente en [docs/history/race-conditions-fix-2026-05.md](../../../docs/history/race-conditions-fix-2026-05.md).
-
----
-
-## Decisión arquitectónica — locks en repos escopados
-
-**Decisión:** los locks pesimistas viven hardcodeados en los métodos de los `ScopedXRepository` dentro de `unit-of-work.impl.ts`. **No** se exponen como parámetro opcional ni como método declarativo (`findByIdForUpdate`) en las interfaces de dominio.
-
-**Razones:**
-1. Las clases `ScopedXRepository` son privadas al archivo. Solo el UoW las construye y solo se usan dentro de un `QueryRunner` activo. En ese contexto, leer por id implica intención de mutar — no existe caso legítimo de leer sin lock.
-2. Las interfaces de dominio (`IAccountRepository`, `IBudgetRepository`) no se contaminan con conceptos SQL. Quedan limpias para el resto del sistema.
-3. No requiere crear interfaces escopadas paralelas (`IScopedAccountRepository extends IAccountRepository`) ni modificar `IUnitOfWork` para retornar tipos especializados. Cambio mínimo, máxima cobertura.
-
-**Trade-off aceptado:** se pierde la flexibilidad de hacer una lectura sin lock dentro de una transacción. En este dominio no hay caso de uso para eso — las lecturas no-mutantes (validación, listado) usan los repos globales fuera del UoW.
+The races that **cross modules** — Race 1 (`DELETE /budgets/:id` vs `POST /transactions`) and Race 2 (account mutations vs `POST /transactions`) — are documented centrally in [docs/history/race-conditions-fix-2026-05.md](../../../docs/history/race-conditions-fix-2026-05.md).
 
 ---
 
-## Conceptos de aislamiento relevantes
+## Architectural decision — locks in scoped repos
 
-**Regla operativa:** el budget row es el **gate de serialización** del invariante "Σ expenses + nuevo expense ≤ budget.limit". Toda la decisión debe construirse con datos leídos **después** de adquirir `SELECT budget FOR UPDATE` y antes del `COMMIT` del UoW — ese es el período crítico. El gate funciona porque la fila del budget siempre existe (unique constraint sobre `(user, category, month, year)` + fail-fast pre-UoW) y todos los flujos que mutan el período (`CreateTransaction`, `UpdateBudgetLimit`, `DeleteBudget`) pasan por él.
+**Decision:** the pessimistic locks live hardcoded in the `ScopedXRepository` methods inside `unit-of-work.impl.ts`. They are **not** exposed as an optional parameter or as a declarative method (`findByIdForUpdate`) on the domain interfaces.
 
-`sumExpenseAmountByUserCategoryAndPeriod` (versión scoped en el UoW) **no** toma `FOR UPDATE`. No haría falta: un `FOR UPDATE` sobre `WHERE` por rango solo bloquea las filas existentes que matchean, no previene inserts concurrentes en el rango (phantoms). El único lock confiable es el del budget. Las versiones equivalentes en `ScopedExpenseChecker` (`hasExpensesInPeriod`, `sumExpenseAmountInPeriod`) **tampoco** toman `FOR UPDATE` — por la misma razón, y además Postgres prohíbe el lock pesimista sobre agregados (`COUNT`/`SUM`). Su consistencia la garantiza el lock sobre la fila del budget que `UpdateBudgetLimitUseCase` y `DeleteBudgetUseCase` adquieren **antes** de invocarlas.
+**Reasons:**
+1. The `ScopedXRepository` classes are private to the file. Only the UoW builds them and they are only used inside an active `QueryRunner`. In that context, reading by id implies intent to mutate — there is no legitimate case of reading without a lock.
+2. The domain interfaces (`IAccountRepository`, `IBudgetRepository`) are not polluted with SQL concepts. They stay clean for the rest of the system.
+3. It doesn't require creating parallel scoped interfaces (`IScopedAccountRepository extends IAccountRepository`) or modifying `IUnitOfWork` to return specialized types. Minimal change, maximum coverage.
 
-El default de Postgres es `READ COMMITTED`. Dentro de la misma transacción, dos lecturas del mismo row pueden ver valores distintos si otro commit ocurrió entre medio ("non-repeatable reads"). `SERIALIZABLE` detectaría el conflicto en el commit y abortaría con `40001` — requeriría retry en la aplicación.
+**Accepted trade-off:** the flexibility of doing a lock-free read inside a transaction is lost. In this domain there is no use case for that — non-mutating reads (validation, listing) use the global repos outside the UoW.
 
 ---
 
-## Recursos
+## Relevant isolation concepts
 
-- 📚 **DDIA** cap. 7 "Transactions" — lost update (§7.1), write skew (§7.2)
-- 📄 postgresql.org/docs → "Explicit Locking"
-- 📄 Use-The-Index-Luke.com — para entender los índices compuestos
+**Operational rule:** the budget row is the **serialization gate** of the invariant "Σ expenses + new expense ≤ budget.limit". The whole decision must be built with data read **after** acquiring `SELECT budget FOR UPDATE` and before the UoW's `COMMIT` — that is the critical period. The gate works because the budget row always exists (unique constraint on `(user, category, month, year)` + fail-fast pre-UoW) and every flow that mutates the period (`CreateTransaction`, `UpdateBudgetLimit`, `DeleteBudget`) goes through it.
+
+`sumExpenseAmountByUserCategoryAndPeriod` (the scoped version in the UoW) takes **no** `FOR UPDATE`. It wouldn't help: a `FOR UPDATE` on a range `WHERE` only locks the existing matching rows; it doesn't prevent concurrent inserts in the range (phantoms). The only reliable lock is the budget's. The equivalent versions in `ScopedExpenseChecker` (`hasExpensesInPeriod`, `sumExpenseAmountInPeriod`) take **no** `FOR UPDATE` either — for the same reason, and additionally Postgres forbids pessimistic locks on aggregates (`COUNT`/`SUM`). Their consistency is guaranteed by the budget-row lock that `UpdateBudgetLimitUseCase` and `DeleteBudgetUseCase` acquire **before** invoking them.
+
+Postgres's default is `READ COMMITTED`. Within the same transaction, two reads of the same row can see different values if another commit happened in between ("non-repeatable reads"). `SERIALIZABLE` would detect the conflict at commit time and abort with `40001` — it would require retries in the application.
+
+---
+
+## Resources
+
+- Book: **DDIA** ch. 7 "Transactions" — lost update (§7.1), write skew (§7.2)
+- Article: postgresql.org/docs → "Explicit Locking"
+- Article: Use-The-Index-Luke.com — to understand the composite indexes

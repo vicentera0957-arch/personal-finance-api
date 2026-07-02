@@ -1,14 +1,14 @@
-# Módulo `users` — Histórico y post-mortems
+# `users` module — History and post-mortems
 
-> Estado **actual** en [notes.md](./notes.md).
+> **Current** state in [notes.md](./notes.md).
 
 ---
 
-## Bug E — Concurrent register → 500 (RESUELTO)
+## Bug E — Concurrent register → 500 (RESOLVED)
 
-**Estado previo:** `CreateUserUseCase` hace un `GetUserByEmailUseCase` antes de insertar (check-then-insert). En condiciones normales detecta el duplicado y lanza `UserAlreadyExistsException` → 409. Pero si dos requests llegaban simultáneamente, ambas pasaban el check y la segunda fallaba con `23505` en el `ormRepository.save()`. Como `UserRepositoryImpl.save()` no tenía `try/catch`, el `QueryFailedError` subía sin mapear → NestJS devolvía 500.
+**Previous state:** `CreateUserUseCase` does a `GetUserByEmailUseCase` before inserting (check-then-insert). Under normal conditions it detects the duplicate and throws `UserAlreadyExistsException` → 409. But if two requests arrived simultaneously, both passed the check and the second one failed with `23505` in the `ormRepository.save()`. Since `UserRepositoryImpl.save()` had no `try/catch`, the `QueryFailedError` bubbled up unmapped → NestJS returned a 500.
 
-**Fix aplicado:** `UserRepositoryImpl.save()` atrapa el error:
+**Applied fix:** `UserRepositoryImpl.save()` catches the error:
 
 ```typescript
 async save(user: User): Promise<User> {
@@ -25,4 +25,4 @@ async save(user: User): Promise<User> {
 }
 ```
 
-**Patrón defense-in-depth:** índice único `uq_users_email` en la DB (garantía real) + `catch 23505` en el repo (mapea a 409) + pre-check en `CreateUserUseCase` (fail-fast, ahorra el round-trip en el caso normal). El pre-check no es la garantía; el catch sí.
+**Defense-in-depth pattern:** unique index `uq_users_email` in the DB (the real guarantee) + `catch 23505` in the repo (maps to 409) + pre-check in `CreateUserUseCase` (fail-fast, saves the round-trip in the normal case). The pre-check is not the guarantee; the catch is.

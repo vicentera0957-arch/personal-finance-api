@@ -1,275 +1,275 @@
-# Modelo de concurrencia
+# Concurrency model
 
-> Documento de referencia y estudio. Reúne en un solo lugar lo que está fragmentado entre
-> [CLAUDE.md](../CLAUDE.md) (mapa de locks autoritativo), [uow-decision.md](../src/shared/domain/uow-decision.md)
-> (el patrón), [race-conditions-fix-2026-05.md](./history/race-conditions-fix-2026-05.md) (post-mortems
-> cross-módulo) y los `notes.md` de cada módulo. Cuando el código y este doc discrepen, gana el
-> código — pero abre un PR para corregir el doc.
-
----
-
-## El modelo en una frase
-
-**Consistencia fuerte en las escrituras (locks pesimistas puntuales), consistencia relajada en las
-lecturas (stale reads benignas).** Se paga el costo de coordinación solo donde un error cuesta dinero;
-lo que solo se muestra queda barato.
+> Reference and study document. Gathers in one place what is fragmented across
+> [CLAUDE.md](../CLAUDE.md) (the authoritative lock map), [uow-decision.md](../src/shared/domain/uow-decision.md)
+> (the pattern), [race-conditions-fix-2026-05.md](./history/race-conditions-fix-2026-05.md) (cross-module
+> post-mortems) and each module's `notes.md`. When the code and this doc disagree, the code
+> wins — but open a PR to fix the doc.
 
 ---
 
-## 1. Nivel de aislamiento
+## The model in one sentence
 
-**`READ COMMITTED`** — el default de PostgreSQL. El sistema **no** sube a `REPEATABLE READ` ni
-`SERIALIZABLE`. Es una decisión, no un descuido:
-
-- `SERIALIZABLE` detectaría los conflictos en el commit y abortaría con `40001` — pero obligaría a
-  implementar **retry** en la aplicación.
-- En su lugar, el sistema **fabrica la serialización donde la necesita** con locks pesimistas
-  explícitos sobre filas concretas. No le pide aislamiento global a Postgres; lo construye puntualmente.
-
-Consecuencia esperada de `READ COMMITTED`: dentro de una misma tx, dos lecturas del mismo row pueden
-ver valores distintos (*non-repeatable reads*) y aparecen *phantoms* (filas nuevas en un rango). El
-diseño neutraliza esto canalizando todo escritor por una fila-guardián, no subiendo el aislamiento.
+**Strong consistency on writes (targeted pessimistic locks), relaxed consistency on
+reads (benign stale reads).** The coordination cost is paid only where a mistake costs money;
+whatever is merely displayed stays cheap.
 
 ---
 
-## 2. Los dos mecanismos
+## 1. Isolation level
 
-| Problema de concurrencia | Mecanismo | Dónde vive |
+**`READ COMMITTED`** — PostgreSQL's default. The system does **not** raise it to `REPEATABLE READ` or
+`SERIALIZABLE`. This is a decision, not an oversight:
+
+- `SERIALIZABLE` would detect conflicts at commit time and abort with `40001` — but it would force
+  the application to implement **retries**.
+- Instead, the system **manufactures serialization where it needs it** with explicit pessimistic
+  locks on specific rows. It doesn't ask Postgres for global isolation; it builds it point by point.
+
+Expected consequence of `READ COMMITTED`: within the same tx, two reads of the same row can
+see different values (*non-repeatable reads*) and *phantoms* appear (new rows in a range). The
+design neutralizes this by funneling every writer through a guardian row, not by raising the isolation level.
+
+---
+
+## 2. The two mechanisms
+
+| Concurrency problem | Mechanism | Where it lives |
 | --- | --- | --- |
-| **read-modify-write** (lost update, write skew) | `SELECT … FOR UPDATE` (lock pesimista de fila) | scoped repos, dentro del UoW |
-| **check-then-insert** (duplicados) | unique constraint + `catch 23505` → excepción de dominio | repos globales (`save()`) |
+| **read-modify-write** (lost update, write skew) | `SELECT … FOR UPDATE` (pessimistic row lock) | scoped repos, inside the UoW |
+| **check-then-insert** (duplicates) | unique constraint + `catch 23505` → domain exception | global repos (`save()`) |
 
-Regla mental: **read-modify-write → lock. check-then-insert → constraint.** Nunca al revés — no se
-puede lockear una fila que todavía no existe, así que la unicidad la garantiza la DB, no un lock.
+Mental rule: **read-modify-write → lock. check-then-insert → constraint.** Never the other way
+around — you cannot lock a row that doesn't exist yet, so uniqueness is guaranteed by the DB, not by a lock.
 
-El lock pesimista se toma al **leer** la fila y **se mantiene hasta el `COMMIT`/`ROLLBACK`**
-(two-phase locking) — no hasta que la query retorna. Esto es lo que cubre la escritura posterior:
-entre el `findById` y el `commit`, la fila está bloqueada para todos los demás.
+The pessimistic lock is taken when the row is **read** and is **held until `COMMIT`/`ROLLBACK`**
+(two-phase locking) — not until the query returns. That is what covers the subsequent write:
+between the `findById` and the `commit`, the row is locked for everyone else.
 
-> Por eso los scoped repos corren sobre el `manager` del `QueryRunner` (tx abierta) y **no** sobre el
-> `DataSource` global (autocommit). En autocommit el `FOR UPDATE` se soltaría apenas termina el SELECT
-> y sería inútil. Ver anti-patrón en CLAUDE.md: *"Do not read inside an open UoW with the global repository."*
+> That is why the scoped repos run on the `QueryRunner`'s `manager` (open tx) and **not** on the
+> global `DataSource` (autocommit). In autocommit the `FOR UPDATE` would be released as soon as the SELECT
+> finishes and would be useless. See the anti-pattern in CLAUDE.md: *"Do not read inside an open UoW with the global repository."*
 
 ---
 
-## 3. La frontera transaccional — Unit of Work
+## 3. The transactional boundary — Unit of Work
 
-Dos implementaciones concretas, separadas por **operación atómica**, no por módulo:
+Two concrete implementations, separated by **atomic operation**, not by module:
 
 - **`TypeOrmUnitOfWorkImpl`** (`transactions/infrastructure/persistence/unit-of-work.impl.ts`) —
-  satisface 3 puertos (`ITransactionUnitOfWork`, `IBudgetUnitOfWork`, `IAccountUnitOfWork`) vía
-  `useExisting`. Una instancia `Scope.REQUEST` → un `QueryRunner` → una transacción de PG compartida
-  por los tres módulos financieros.
-- **`AuthUnitOfWorkImpl`** (`auth/infrastructure/`) — separada: la rotación de refresh tokens no
-  comparte invariante con los aggregates financieros.
+  satisfies 3 ports (`ITransactionUnitOfWork`, `IBudgetUnitOfWork`, `IAccountUnitOfWork`) via
+  `useExisting`. One `Scope.REQUEST` instance → one `QueryRunner` → one PG transaction shared
+  by the three financial modules.
+- **`AuthUnitOfWorkImpl`** (`auth/infrastructure/`) — separate: refresh-token rotation shares no
+  invariant with the financial aggregates.
 
-Una sola impl financiera porque **todo invariante multi-aggregate del dominio está anclado a una
-mutación de `Transaction`** (balance, límite, suma de período). Los tres puertos son tres *roles* del
-mismo motor transaccional; `useExisting` expresa "mismo objeto, tres contratos angostos". Detalle del
-patrón en [uow-decision.md](../src/shared/domain/uow-decision.md).
+A single financial impl because **every multi-aggregate invariant in the domain is anchored to a
+`Transaction` mutation** (balance, limit, period sum). The three ports are three *roles* of the
+same transactional engine; `useExisting` expresses "same object, three narrow contracts". Pattern
+details in [uow-decision.md](../src/shared/domain/uow-decision.md).
 
 ---
 
-## 4. Mapa de locks
+## 4. Lock map
 
-| Lectura (scoped) | Lock | Serializa |
+| Read (scoped) | Lock | Serializes |
 | --- | --- | --- |
-| `ScopedAccountRepository.findById` | **FOR UPDATE** | Mutaciones de balance: Create/DeleteTransaction + Archive/Unarchive/Rename (Race 2, Bug B) |
-| `ScopedBudgetRepository.findById` | **FOR UPDATE** | UpdateBudgetLimit, DeleteBudget vs creates concurrentes |
-| `ScopedBudgetRepository.findByUserIdAndCategoryIdAndPeriod` | **FOR UPDATE** | El gate del invariante de período en CreateTransaction (Bug A) |
-| `ScopedTransactionRepository.findById` | **FOR UPDATE** | Doble DELETE de la misma tx (Race 3) |
-| `ScopedRefreshTokenRepository.findByTokenHashWithLock` | **FOR UPDATE** | Dos `/refresh` con el mismo token → replay detection |
-| `sumExpenseAmountByUserCategoryAndPeriod` | **sin lock** (agregado) | Serializado por el lock del budget tomado antes |
-| `ScopedExpenseChecker.hasExpensesInPeriod` / `sumExpenseAmountInPeriod` | **sin lock** (agregado) | Serializado por el lock del budget de Delete/Update |
+| `ScopedAccountRepository.findById` | **FOR UPDATE** | Balance mutations: Create/DeleteTransaction + Archive/Unarchive/Rename (Race 2, Bug B) |
+| `ScopedBudgetRepository.findById` | **FOR UPDATE** | UpdateBudgetLimit, DeleteBudget vs concurrent creates |
+| `ScopedBudgetRepository.findByUserIdAndCategoryIdAndPeriod` | **FOR UPDATE** | The period-invariant gate in CreateTransaction (Bug A) |
+| `ScopedTransactionRepository.findById` | **FOR UPDATE** | Double DELETE of the same tx (Race 3) |
+| `ScopedRefreshTokenRepository.findByTokenHashWithLock` | **FOR UPDATE** | Two `/refresh` with the same token → replay detection |
+| `sumExpenseAmountByUserCategoryAndPeriod` | **no lock** (aggregate) | Serialized by the budget lock taken beforehand |
+| `ScopedExpenseChecker.hasExpensesInPeriod` / `sumExpenseAmountInPeriod` | **no lock** (aggregate) | Serialized by the budget lock of Delete/Update |
 
-Los agregados (`SUM`/`COUNT`) **no pueden** tomar `FOR UPDATE` (Postgres lo prohíbe) y tampoco
-serviría: un lock sobre filas existentes no frena *phantom inserts* en el rango. Su consistencia la
-da el lock de la fila-guardián que el caller toma **primero**.
+Aggregates (`SUM`/`COUNT`) **cannot** take `FOR UPDATE` (Postgres forbids it) and it wouldn't
+help anyway: a lock on existing rows does not stop *phantom inserts* in the range. Their consistency
+comes from the guardian-row lock that the caller takes **first**.
 
 ---
 
-## 5. Un mutex por invariante (no un mutex global)
+## 5. One mutex per invariant (not a global mutex)
 
-No existe "el mutex". **Cada invariante tiene su propia fila-guardián**, y un flujo toma un lock por
-cada invariante que muta:
+There is no single "the mutex". **Each invariant has its own guardian row**, and a flow takes one lock per
+invariant it mutates:
 
-| Invariante | Fila-guardián | La lockea |
+| Invariant | Guardian row | Locked by |
 | --- | --- | --- |
-| Σ gastos del período ≤ límite | fila `budgets` del período | CreateTransaction, UpdateBudgetLimit, DeleteBudget |
-| Balance de cuenta correcto | fila `accounts` | CreateTransaction, DeleteTransaction, Archive/Unarchive/Rename |
-| No doble-reversa de una tx | fila `transactions` | DeleteTransaction |
-| No replay de refresh token | fila `refresh_tokens` | RefreshToken |
+| Σ period expenses ≤ limit | `budgets` row for the period | CreateTransaction, UpdateBudgetLimit, DeleteBudget |
+| Correct account balance | `accounts` row | CreateTransaction, DeleteTransaction, Archive/Unarchive/Rename |
+| No double-reverse of a tx | `transactions` row | DeleteTransaction |
+| No refresh-token replay | `refresh_tokens` row | RefreshToken |
 
-Por eso `CreateTransaction` toma **dos** locks (budget + account): cruza dos invariantes. El lock del
-budget **no** protege el balance — otros flujos (`Archive`, `DeleteTransaction`) mutan la cuenta sin
-tocar el budget, así que si no tomaras el lock de la cuenta, un `Archive` concurrente haría lost update
-del balance. Cada fila protege contra un conjunto distinto de competidores.
+That is why `CreateTransaction` takes **two** locks (budget + account): it crosses two invariants. The
+budget lock does **not** protect the balance — other flows (`Archive`, `DeleteTransaction`) mutate the
+account without touching the budget, so if you didn't take the account lock, a concurrent `Archive`
+would cause a lost update on the balance. Each row protects against a different set of competitors.
 
 ---
 
-## 6. El esqueleto de todo flujo transaccional
+## 6. The skeleton of every transactional flow
 
 ```
-1. Fail-fast FUERA del UoW (repo global, sin lock): 404/403/400 baratos, no agarra conexión
-2. begin()                          — abre QueryRunner + tx
-3. findById con FOR UPDATE          — toma el lock de la fila-guardián
-4. lecturas dependientes            — agregados; heredan la exclusión del lock de (3)
-5. decisión de invariante           — con datos leídos DESPUÉS del lock
-6. save() / delete()                — escribe, todavía bajo el lock
-7. commit() / rollback() en finally — recién aquí se sueltan TODOS los locks
+1. Fail-fast OUTSIDE the UoW (global repo, no lock): cheap 404/403/400, grabs no connection
+2. begin()                          — opens QueryRunner + tx
+3. findById with FOR UPDATE         — takes the guardian-row lock
+4. dependent reads                  — aggregates; inherit the exclusion from the lock in (3)
+5. invariant decision               — with data read AFTER the lock
+6. save() / delete()                — writes, still under the lock
+7. commit() / rollback() in finally — only here are ALL the locks released
 ```
 
-El orden 3→6 **es** la corrección. Lockear la fila-guardián *antes* de leer los datos que entran en la
-decisión es lo que cierra la ventana de race.
+The 3→6 ordering **is** the correctness. Locking the guardian row *before* reading the data that
+feeds the decision is what closes the race window.
 
 ---
 
-## 7. Los flujos críticos
+## 7. The critical flows
 
-### `CreateTransaction` (toma DOS locks)
+### `CreateTransaction` (takes TWO locks)
 
-1. **Fuera del UoW:** crea VOs `Amount`/`Nature`; valida cuenta existe+owned; valida categoría
-   existe+owned y `nature` coincide (R7); si es expense, valida que existe budget del período (global,
-   sin lock). Fail-fast: 404/403/400 sin abrir conexión.
+1. **Outside the UoW:** creates `Amount`/`Nature` VOs; validates account exists+owned; validates category
+   exists+owned and `nature` matches (R7); if expense, validates a budget exists for the period (global,
+   no lock). Fail-fast: 404/403/400 without opening a connection.
 2. `begin()`.
-3. **LOCK budget** (solo expense): `budgetRepo.findByUserIdAndCategoryIdAndPeriod` → `FOR UPDATE`.
-4. **Lectura dependiente:** `txRepo.sumExpenseAmountByUserCategoryAndPeriod` (sin lock, post-gate).
-5. **Decisión:** `spent + amount ≤ limit`? si no → `BudgetLimitExceededException` (422).
-6. **LOCK account** + write: `updateBalance` → `acctRepo.findById FOR UPDATE` → recalcula → `save`.
-   Luego `txRepo.save(transaction)`.
-7. `commit` / `rollback` en finally.
+3. **LOCK budget** (expense only): `budgetRepo.findByUserIdAndCategoryIdAndPeriod` → `FOR UPDATE`.
+4. **Dependent read:** `txRepo.sumExpenseAmountByUserCategoryAndPeriod` (no lock, post-gate).
+5. **Decision:** `spent + amount ≤ limit`? if not → `BudgetLimitExceededException` (422).
+6. **LOCK account** + write: `updateBalance` → `acctRepo.findById FOR UPDATE` → recomputes → `save`.
+   Then `txRepo.save(transaction)`.
+7. `commit` / `rollback` in finally.
 
 ### `DeleteTransaction`
 
-1. **Fuera del UoW:** `GetTransactionByIdUseCase` (global) → 404/403 barato.
+1. **Outside the UoW:** `GetTransactionByIdUseCase` (global) → cheap 404/403.
 2. `begin()`.
-3. **LOCK transaction:** `txRepo.findById(id)` → `FOR UPDATE`. Si null (otro la borró y commiteó) →
+3. **LOCK transaction:** `txRepo.findById(id)` → `FOR UPDATE`. If null (someone else deleted it and committed) →
    `TransactionNotFoundException`.
 4. —
-5. **Decisión:** revertir un income dejaría balance negativo → `CannotDeleteTransactionException` (409).
+5. **Decision:** reversing an income would leave a negative balance → `CannotDeleteTransactionException` (409).
 6. **LOCK account** + write: `updateBalance` (reverse) → `acctRepo.findById FOR UPDATE`; `txRepo.delete`.
 7. `commit` / `rollback`.
 
 ### `UpdateBudgetLimit`
 
-1. — (ownership inline).
+1. — (inline ownership).
 2. `begin()`.
-3. **LOCK budget:** `budgetRepo.findById FOR UPDATE`; ownership inline.
-4. **Lectura dependiente:** `expenseChecker.sumExpenseAmountInPeriod` (sin lock, bajo el lock del budget).
-5. **Decisión:** `nuevo límite < gastado` → `BudgetLimitBelowSpentException` (409) [B4].
+3. **LOCK budget:** `budgetRepo.findById FOR UPDATE`; inline ownership.
+4. **Dependent read:** `expenseChecker.sumExpenseAmountInPeriod` (no lock, under the budget lock).
+5. **Decision:** `new limit < spent` → `BudgetLimitBelowSpentException` (409) [B4].
 6. `budgetRepo.save`.
 7. `commit` / `rollback`.
 
 ### `DeleteBudget`
 
-1. — (ownership inline).
+1. — (inline ownership).
 2. `begin()`.
-3. **LOCK budget:** `budgetRepo.findById FOR UPDATE`; ownership inline.
-4. **Lectura dependiente:** `expenseChecker.hasExpensesInPeriod` (sin lock, bajo el lock del budget).
-5. **Decisión:** hay gastos en el período → `BudgetHasTransactionsInPeriodException` (409) [Race 1].
+3. **LOCK budget:** `budgetRepo.findById FOR UPDATE`; inline ownership.
+4. **Dependent read:** `expenseChecker.hasExpensesInPeriod` (no lock, under the budget lock).
+5. **Decision:** there are expenses in the period → `BudgetHasTransactionsInPeriodException` (409) [Race 1].
 6. `budgetRepo.delete`.
 7. `commit` / `rollback`.
 
-### `Archive` / `Unarchive` / `Rename` account (los tres, idéntico esqueleto)
+### `Archive` / `Unarchive` / `Rename` account (all three, identical skeleton)
 
-1. — (ownership inline).
+1. — (inline ownership).
 2. `begin()`.
-3. **LOCK account:** `accountRepo.findById FOR UPDATE`; ownership inline. Compite por la misma fila que
+3. **LOCK account:** `accountRepo.findById FOR UPDATE`; inline ownership. Competes for the same row as
    Create/DeleteTransaction [Race 2].
 4. —
-5. **Decisión:** método de dominio (`archive()` lanza si ya archivada, etc.).
+5. **Decision:** domain method (`archive()` throws if already archived, etc.).
 6. `accountRepo.save`.
 7. `commit` / `rollback`.
 
-### `RefreshToken` (auth — UoW separado)
+### `RefreshToken` (auth — separate UoW)
 
-1. **Fuera del UoW:** verifica firma del token (`ITokenProvider`) — fail-fast sin tocar DB.
+1. **Outside the UoW:** verifies the token signature (`ITokenProvider`) — fail-fast without touching the DB.
 2. `begin()`.
 3. **LOCK refresh-token:** `findByTokenHashWithLock FOR UPDATE`.
 4. —
-5. **Decisión:** null → `InvalidRefreshToken`; revocada → replay → `revokeFamily` + **commit** +
-   `RefreshTokenReplayDetected`; expirada → `RefreshTokenExpired`.
-6. Inserta el nuevo (misma `familyId`), revoca el viejo (`replacedById = nuevo jti`). Inserta **antes**
-   de revocar, por la FK auto-referencial.
+5. **Decision:** null → `InvalidRefreshToken`; revoked → replay → `revokeFamily` + **commit** +
+   `RefreshTokenReplayDetected`; expired → `RefreshTokenExpired`.
+6. Inserts the new one (same `familyId`), revokes the old one (`replacedById = new jti`). Inserts **before**
+   revoking, because of the self-referential FK.
 7. `commit` / `rollback`.
 
-> **Bug latente (anotado, no activo):** el impl **global** `RefreshTokenRepositoryImpl.findByTokenHashWithLock`
-> también pide `pessimistic_write`. Fuera de un `QueryRunner` (conexión en autocommit) eso lanzaría
-> `PessimisticLockTransactionRequiredError`. No explota porque está muerto: solo el scoped
-> (`ScopedRefreshTokenRepository`, dentro del UoW) lo invoca. Regla: no llamar `findByTokenHashWithLock`
-> sobre el repo global.
+> **Latent bug (noted, not active):** the **global** impl `RefreshTokenRepositoryImpl.findByTokenHashWithLock`
+> also requests `pessimistic_write`. Outside a `QueryRunner` (autocommit connection) that would throw
+> `PessimisticLockTransactionRequiredError`. It doesn't blow up because it is dead code: only the scoped
+> one (`ScopedRefreshTokenRepository`, inside the UoW) calls it. Rule: never call `findByTokenHashWithLock`
+> on the global repo.
 
 ---
 
-## 8. Orden de locks y deadlocks
+## 8. Lock ordering and deadlocks
 
-Cuando un flujo toma **más de un** lock, el orden importa: dos flujos que tomen los mismos dos locks en
-orden inverso pueden hacer deadlock (A espera a B, B espera a A).
+When a flow takes **more than one** lock, the order matters: two flows taking the same two locks in
+opposite order can deadlock (A waits for B, B waits for A).
 
-Orden de adquisición en el sistema:
+Acquisition order in the system:
 
 - `CreateTransaction`: **budget → account**
 - `DeleteTransaction`: **transaction → account**
-- el resto: un solo lock
+- everything else: a single lock
 
-No hay ningún flujo que tome `account → budget` ni `account → transaction`. Es decir, **no hay inversión
-de orden** sobre ningún par de filas, así que no hay deadlock por construcción. Si en el futuro se agrega
-un flujo multi-lock, debe respetar el mismo orden (la fila de la cuenta se lockea **última**).
+No flow takes `account → budget` or `account → transaction`. In other words, **there is no order
+inversion** on any pair of rows, so there is no deadlock by construction. If a multi-lock flow is added
+in the future, it must respect the same order (the account row is locked **last**).
 
 ---
 
-## 9. Modelo de consistencia: escrituras vs lecturas
+## 9. Consistency model: writes vs reads
 
-### Escrituras → consistencia fuerte
+### Writes → strong consistency
 
-Toda mutación de un invariante pasa por el esqueleto de §6: re-lee bajo `FOR UPDATE` dentro del UoW y
-decide sobre datos frescos. No existe path que escriba un balance/límite "puro y bruto" sin antes
-lockear y releer. Por eso los read-modify-write son atómicos por construcción.
+Every invariant mutation goes through the skeleton in §6: it re-reads under `FOR UPDATE` inside the UoW and
+decides on fresh data. There is no path that writes a balance/limit "raw" without first
+locking and re-reading. That is why the read-modify-writes are atomic by construction.
 
-### Lecturas → stale reads benignas (y es lo correcto)
+### Reads → benign stale reads (and that is the right call)
 
-Los repos **globales** corren en autocommit, `READ COMMITTED`, **sin locks**. Pueden devolver datos
-desactualizados — y está bien, por tres razones:
+The **global** repos run in autocommit, `READ COMMITTED`, **without locks**. They can return stale
+data — and that is fine, for three reasons:
 
-1. **No rompen invariante.** El invariante se hace cumplir al *escribir*, bajo lock, releyendo dentro
-   del UoW. Una lectura stale **nunca alimenta una decisión de escritura** → solo puede terminar en una
-   pantalla. Si no puede tocar un invariante, no hay nada que arreglar.
-2. **Serializar lecturas sería un desastre de rendimiento.** Las lecturas superan a las escrituras por
-   órdenes de magnitud. `FOR SHARE` en cada read (o `SERIALIZABLE` global) haría que lectores se
-   bloqueen contra escritores y entre sí: cambias milisegundos de staleness benigna por contención
-   generalizada.
-3. **La ventana es mínima y se autocura.** Dura lo que dura la tx (ms) y la siguiente lectura ve el
-   valor committeado.
+1. **They can't break an invariant.** The invariant is enforced at *write* time, under lock, re-reading inside
+   the UoW. A stale read **never feeds a write decision** → it can only end up on a
+   screen. If it can't touch an invariant, there is nothing to fix.
+2. **Serializing reads would be a performance disaster.** Reads outnumber writes by
+   orders of magnitude. `FOR SHARE` on every read (or global `SERIALIZABLE`) would make readers
+   block against writers and each other: you'd trade milliseconds of benign staleness for widespread
+   contention.
+3. **The window is tiny and self-healing.** It lasts as long as the tx (ms) and the next read sees the
+   committed value.
 
-**Detalle de mecanismo:** un `SELECT` plano **no se bloquea** contra una fila lockeada por `FOR UPDATE`.
-En `READ COMMITTED`, lectores no bloquean a escritores ni viceversa. La staleness no es "el read espera y
-da datos viejos"; es "el read **no espera** y da el último valor committeado, ignorando el cambio en
-vuelo".
+**Mechanism detail:** a plain `SELECT` does **not** block against a row locked with `FOR UPDATE`.
+In `READ COMMITTED`, readers don't block writers and vice versa. The staleness is not "the read waits and
+returns old data"; it is "the read **does not wait** and returns the last committed value, ignoring the change in
+flight".
 
-**Read-your-own-writes:** la staleness solo aparece entre operaciones **concurrentes** de actores
-distintos. Tus propias acciones secuenciales no la ven: la mutación **commitea antes** de responder el
-HTTP, así que tu `GET` siguiente ya ve el valor nuevo.
+**Read-your-own-writes:** staleness only appears between **concurrent** operations by different
+actors. Your own sequential actions never see it: the mutation **commits before** the HTTP response
+is sent, so your next `GET` already sees the new value.
 
-### Dónde se manifiesta la stale read
+### Where the stale read shows up
 
-| Escenario | Qué ves |
+| Scenario | What you see |
 | --- | --- |
-| `GET /accounts/:id` mientras una transacción se crea (mid-flight) | El balance anterior al inflow/outflow en vuelo |
-| `GET /budgets` mientras se crea un expense | El `spent` más bajo de lo que será |
-| `GET /transactions` tras un create no committeado de otra request | La nueva tx aún no aparece |
-| Pre-checks fail-fast (repo global) | Pueden leer stale — pero se re-verifican bajo lock dentro del UoW |
+| `GET /accounts/:id` while a transaction is being created (mid-flight) | The balance prior to the in-flight inflow/outflow |
+| `GET /budgets` while an expense is being created | A `spent` lower than what it will be |
+| `GET /transactions` after an uncommitted create from another request | The new tx doesn't show up yet |
+| Fail-fast pre-checks (global repo) | May read stale — but they are re-verified under lock inside the UoW |
 
-### Si algún día necesitaras lectura consistente
+### If you ever need a consistent read
 
-No subas el aislamiento global. Hazlo **quirúrgico**: esa lectura puntual dentro de una tx
-`REPEATABLE READ`, o `FOR SHARE` en ese query, o léela dentro del mismo UoW. Regla: **relajado por
-defecto, estricto solo donde se demuestre que importa, y siempre local.**
+Don't raise the global isolation level. Do it **surgically**: that specific read inside a
+`REPEATABLE READ` tx, or `FOR SHARE` on that query, or read it inside the same UoW. Rule: **relaxed by
+default, strict only where it is proven to matter, and always local.**
 
 ---
 
-## 10. Diagramas
+## 10. Diagrams
 
-### Happy path — `CreateTransaction` de un expense
+### Happy path — `CreateTransaction` of an expense
 
 ```mermaid
 sequenceDiagram
@@ -277,22 +277,22 @@ sequenceDiagram
     participant UoW
     participant DB as Postgres
 
-    Note over UC: Fail-fast (repos globales, sin lock): cuenta, categoría, budget existe
+    Note over UC: Fail-fast (global repos, no lock): account, category, budget exists
     UC->>UoW: begin()
     UoW->>DB: createQueryRunner + START TRANSACTION
     UC->>UoW: budgetRepo.findByUserIdAndCategoryIdAndPeriod()
-    UoW->>DB: SELECT budget ... FOR UPDATE  🔒
+    UoW->>DB: SELECT budget ... FOR UPDATE (lock)
     UC->>UoW: txRepo.sumExpenseAmountByUserCategoryAndPeriod()
-    UoW->>DB: SELECT COALESCE(SUM(amount),0)   (sin lock)
-    Note over UC: decisión: spent + amount ≤ limit ?
+    UoW->>DB: SELECT COALESCE(SUM(amount),0)   (no lock)
+    Note over UC: decision: spent + amount <= limit ?
     UC->>UoW: acctRepo.findById()
-    UoW->>DB: SELECT account ... FOR UPDATE  🔒
+    UoW->>DB: SELECT account ... FOR UPDATE (lock)
     UC->>UoW: acctRepo.save(account) + txRepo.save(tx)
     UC->>UoW: commit()
-    UoW->>DB: COMMIT  (suelta budget 🔓 y account 🔓)
+    UoW->>DB: COMMIT  (releases budget and account locks)
 ```
 
-### Dos expenses concurrentes en el mismo período (el lock serializa)
+### Two concurrent expenses in the same period (the lock serializes)
 
 ```mermaid
 sequenceDiagram
@@ -300,102 +300,102 @@ sequenceDiagram
     participant B as Request B
     participant DB as Postgres
 
-    A->>DB: SELECT budget FOR UPDATE  🔒 (A obtiene el lock)
-    B->>DB: SELECT budget FOR UPDATE  ⏳ (B BLOQUEA, espera a A)
-    A->>DB: SUM expenses = 90 → 90+5 ≤ 100 ✓
-    A->>DB: INSERT expense (5) + COMMIT  🔓
-    Note over B: B se desbloquea y lee estado FRESCO
-    B->>DB: SUM expenses = 95 → 95+5 = 100 ≤ 100 ✓
-    B->>DB: INSERT expense (5) + COMMIT  🔓
-    Note over A,B: Σ = 100 ≤ 100. Sin el lock, ambas leían 90 y Σ habría sido 100... o más con N requests.
+    A->>DB: SELECT budget FOR UPDATE (A acquires the lock)
+    B->>DB: SELECT budget FOR UPDATE (B BLOCKS, waits for A)
+    A->>DB: SUM expenses = 90 -> 90+5 <= 100 OK
+    A->>DB: INSERT expense (5) + COMMIT (lock released)
+    Note over B: B unblocks and reads FRESH state
+    B->>DB: SUM expenses = 95 -> 95+5 = 100 <= 100 OK
+    B->>DB: INSERT expense (5) + COMMIT (lock released)
+    Note over A,B: Sum = 100 <= 100. Without the lock, both would read 90 and the sum would have been 100... or more with N requests.
 ```
 
 ---
 
-## 11. Races históricas (todas cerradas)
+## 11. Historical races (all closed)
 
-| ID | Escenario | Cierre |
+| ID | Scenario | Closure |
 | --- | --- | --- |
-| Bug A | `PATCH /budgets/:id/limit` vs `POST /transactions` (write skew del límite) | `FOR UPDATE` sobre la fila del budget; create lee por el scoped repo |
-| Bug B | Dos `POST /transactions` en la misma cuenta (lost update de balance) | `FOR UPDATE` sobre la fila de la cuenta |
-| Bug E | Dos `POST /auth/register` con el mismo email → 500 | `catch 23505` → `UserAlreadyExistsException` (409) |
-| Race 1 | `DELETE /budgets/:id` vs `POST /transactions` (TOCTOU) | DeleteBudget bajo UoW; checker bajo el lock del budget |
-| Race 2 | `PATCH /accounts/:id/{archive,unarchive,name}` vs mutaciones de tx | los tres bajo `IAccountUnitOfWork`; `findById FOR UPDATE` |
-| Race 3 | Dos `DELETE /transactions/:id` (doble-reversa) | `FOR UPDATE` sobre la fila de la tx; fail-fast fuera + re-fetch dentro |
-| B4 | `PATCH /budgets/:id/limit` bajaba el límite por debajo de lo gastado | suma bajo el lock del budget → `BudgetLimitBelowSpentException` (409) |
+| Bug A | `PATCH /budgets/:id/limit` vs `POST /transactions` (limit write skew) | `FOR UPDATE` on the budget row; create reads through the scoped repo |
+| Bug B | Two `POST /transactions` on the same account (balance lost update) | `FOR UPDATE` on the account row |
+| Bug E | Two `POST /auth/register` with the same email → 500 | `catch 23505` → `UserAlreadyExistsException` (409) |
+| Race 1 | `DELETE /budgets/:id` vs `POST /transactions` (TOCTOU) | DeleteBudget under UoW; checker under the budget lock |
+| Race 2 | `PATCH /accounts/:id/{archive,unarchive,name}` vs tx mutations | all three under `IAccountUnitOfWork`; `findById FOR UPDATE` |
+| Race 3 | Two `DELETE /transactions/:id` (double-reverse) | `FOR UPDATE` on the tx row; fail-fast outside + re-fetch inside |
+| B4 | `PATCH /budgets/:id/limit` could lower the limit below what was spent | sum under the budget lock → `BudgetLimitBelowSpentException` (409) |
 
-Post-mortems detallados: [race-conditions-fix-2026-05.md](./history/race-conditions-fix-2026-05.md) (Race 1/2)
-y los `notes-history.md` de cada módulo (Bug A/A.2/B, Bug E).
-
----
-
-## 12. Tests de concurrencia
-
-`test/integration/concurrency/concurrency.integration.spec.ts` contra un Postgres real. La técnica:
-disparar N requests con `Promise.all` y afirmar sobre el **estado final**, no sobre cada request.
-
-- **Lost update:** N inflows concurrentes → `currentBalance` debe ser la suma exacta (si se pierde un
-  update, sale menor).
-- **Invariante:** N expenses que rozan el límite → solo los que caben deben pasar (201), el resto 422.
-- **Regresión período vacío:** prueba que la serialización viene del lock del *budget* y no de lockear
-  filas de gasto preexistentes.
-- **Dos operaciones distintas:** `PATCH limit` vs `POST transaction` → exactamente una gana; ninguna 500.
-
-Un `500` bajo carga casi siempre = deadlock o constraint reventada → la serialización falló.
-
-Validado el 2026-06-15: quitando cada lock temporalmente, los tests **se ponen rojos** (account lock →
-lost update de balance; budget lock → límite excedido + período vacío; transaction lock → doble reversa
-en Race 3). Es decir, los tests **muerden** — no pasan por casualidad.
+Detailed post-mortems: [race-conditions-fix-2026-05.md](./history/race-conditions-fix-2026-05.md) (Race 1/2)
+and each module's `notes-history.md` (Bug A/A.2/B, Bug E).
 
 ---
 
-## 13. Fragilidad del diseño (deuda conocida — pendiente de abordar)
+## 12. Concurrency tests
 
-El modelo es **correcto pero frágil-por-convención**: su corrección depende de disciplina humana, no de
-garantías que el compilador o los tests impongan. Tres grietas documentadas para abordarlas más adelante:
+`test/integration/concurrency/concurrency.integration.spec.ts` against a real Postgres. The technique:
+fire N requests with `Promise.all` and assert on the **final state**, not on each request.
 
-### 13.1 Locks implícitos ("spooky action at a distance")
+- **Lost update:** N concurrent inflows → `currentBalance` must be the exact sum (if an update is
+  lost, it comes out lower).
+- **Invariant:** N expenses brushing the limit → only those that fit must pass (201), the rest 422.
+- **Empty-period regression:** proves the serialization comes from the *budget* lock and not from locking
+  pre-existing expense rows.
+- **Two different operations:** `PATCH limit` vs `POST transaction` → exactly one wins; neither 500s.
 
-El `FOR UPDATE` vive *dentro* del `findById` del scoped repo. Desde el call site (`budgetRepo.findById(id)`)
-no hay nada que indique que esa línea toma un lock exclusivo. Quien lea el use case no ve el lock — tiene
-que saberlo o abrir el impl.
+A `500` under load almost always = deadlock or blown constraint → the serialization failed.
 
-**Riesgo:** un contribuidor que agregue un nuevo flujo de escritura y lea con el repo **global** (en vez
-del scoped), o que escriba el balance/budget por un camino que no pase por `findById`, **reabre las races
-sin que nada lo detecte**. La regla "no leas dentro del UoW con el repo global" (CLAUDE.md) es la única
-barrera, y es prosa, no código.
+Validated on 2026-06-15: temporarily removing each lock makes the tests **go red** (account lock →
+balance lost update; budget lock → limit exceeded + empty period; transaction lock → double reverse
+in Race 3). In other words, the tests **bite** — they don't pass by accident.
 
-**Fix robusto (futuro):** exponer el lock en el nombre — `findByIdForUpdate()` en una interfaz escopada
-(`IScopedAccountRepository extends IAccountRepository`) devuelta por el UoW. El lock se vuelve visible en
-el call site y auto-documentado. Costo: una interfaz escopada por agregado.
+---
 
-### 13.2 Orden de locks no enforced (riesgo de deadlock)
+## 13. Design fragility (known debt — to be addressed later)
 
-Hoy no hay deadlock porque todos los flujos toman los locks en el mismo orden (**budget → account**, la
-cuenta siempre última — ver §8). Pero ese orden es una **convención en la cabeza** del que escribió los
-flujos; nada lo impone.
+The model is **correct but fragile-by-convention**: its correctness relies on human discipline, not on
+guarantees enforced by the compiler or the tests. Three documented cracks to address later:
 
-**Riesgo:** un flujo futuro que tome `account → budget` introduce un ciclo AB-BA. Postgres lo detectaría
-(`deadlock_timeout` ~1s → aborta una tx con `40P01` → 500), pero recién en producción y bajo carga. El
-compilador no dice nada.
+### 13.1 Implicit locks ("spooky action at a distance")
 
-**Fix robusto (futuro):** documentar el orden canónico como regla de revisión + idealmente un test de
-concurrencia que ejercite el par de flujos en orden inverso para detectar la regresión.
+The `FOR UPDATE` lives *inside* the scoped repo's `findById`. From the call site (`budgetRepo.findById(id)`)
+nothing indicates that the line takes an exclusive lock. Whoever reads the use case doesn't see the lock — they
+have to know it or open the impl.
 
-### 13.3 El gate depende de que *todos* los escritores lo respeten
+**Risk:** a contributor who adds a new write flow and reads with the **global** repo (instead
+of the scoped one), or writes the balance/budget through a path that doesn't go through `findById`, **reopens the races
+without anything detecting it**. The rule "don't read inside the UoW with the global repo" (CLAUDE.md) is the only
+barrier, and it is prose, not code.
 
-El budget row serializa el SUM del período **solo porque todo escritor de gastos del período toma su
-`FOR UPDATE` primero** (§ "bastón de la palabra"). Es un acuerdo, no una imposición física: el lock del
-budget no cubre las filas de `transactions`.
+**Robust fix (future):** expose the lock in the name — `findByIdForUpdate()` on a scoped interface
+(`IScopedAccountRepository extends IAccountRepository`) returned by the UoW. The lock becomes visible at
+the call site and self-documenting. Cost: one scoped interface per aggregate.
 
-**Riesgo:** un flujo que inserte un gasto **sin** pasar por el lock del budget evade el gate y el
-invariante "Σ ≤ límite" se rompe silenciosamente.
+### 13.2 Lock ordering not enforced (deadlock risk)
 
-**Fix robusto (futuro):** canalizar toda creación de gasto por el mismo use case/UoW (hoy se cumple), y
-dejar un test que falle si aparece un segundo camino de inserción de gastos.
+Today there is no deadlock because all flows take the locks in the same order (**budget → account**, the
+account always last — see §8). But that order is a **convention in the head** of whoever wrote the
+flows; nothing enforces it.
 
-### Por qué se deja para después
+**Risk:** a future flow that takes `account → budget` introduces an AB-BA cycle. Postgres would detect it
+(`deadlock_timeout` ~1s → aborts one tx with `40P01` → 500), but only in production and under load. The
+compiler says nothing.
 
-Las tres son correctas **hoy** y el costo de blindarlas (interfaces escopadas, más tests, convenciones
-enforced) no se justifica a la escala actual de aprendizaje/portafolio. Se documentan aquí para que la
-decisión sea **consciente** y para que el próximo cambio que las toque sepa que está pisando hielo fino.
+**Robust fix (future):** document the canonical order as a review rule + ideally a concurrency
+test that exercises the pair of flows in reverse order to catch the regression.
+
+### 13.3 The gate depends on *every* writer honoring it
+
+The budget row serializes the period SUM **only because every writer of period expenses takes its
+`FOR UPDATE` first** (the "talking stick" pattern). It is an agreement, not a physical enforcement: the budget
+lock does not cover the `transactions` rows.
+
+**Risk:** a flow that inserts an expense **without** going through the budget lock bypasses the gate and the
+"Σ ≤ limit" invariant breaks silently.
+
+**Robust fix (future):** funnel all expense creation through the same use case/UoW (true today), and
+leave a test that fails if a second expense-insertion path appears.
+
+### Why this is deferred
+
+All three are correct **today** and the cost of hardening them (scoped interfaces, more tests, enforced
+conventions) is not justified at the current learning/portfolio scale. They are documented here so the
+decision is **conscious** and so the next change that touches them knows it is walking on thin ice.

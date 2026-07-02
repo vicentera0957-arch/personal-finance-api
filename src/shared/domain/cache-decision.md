@@ -1,84 +1,84 @@
-# Cache — decisiones de diseño
+# Cache — design decisions
 
-Documento de referencia sobre cómo está construido el sistema de cache en esta API, por qué se eligió **composición** en vez de **herencia** para conectar los caches semánticos con el transporte, y por qué se aisló cada abstracción en la capa que la aloja. Si tocas el módulo de cache, lee esto antes.
+Reference document on how the cache system in this API is built, why **composition** was chosen over **inheritance** to connect the semantic caches to the transport, and why each abstraction is isolated in the layer that hosts it. If you touch the cache module, read this first.
 
-> Convención: cuando el código y este doc disagree, gana el código — pero abre un PR para corregir el doc en el mismo cambio.
+> Convention: when the code and this doc disagree, the code wins — but open a PR to fix the doc in the same change.
 
 ---
 
-## 1. Mapa general
+## 1. Overall map
 
-El sistema tiene **dos capas** apiladas, separadas por un puerto en cada nivel:
+The system has **two** stacked layers, separated by a port at each level:
 
 ```
                           ┌─────────────────────────────────────────┐
-   Capa semántica         │  IBudgetsCache                          │
-   (qué se cachea)        │  ICategoriesCache                       │  puertos en
-                          │  IUsersCache                            │  <modulo>/domain/ports/cache/
+   Semantic layer         │  IBudgetsCache                          │
+   (what gets cached)     │  ICategoriesCache                       │  ports in
+                          │  IUsersCache                            │  <module>/domain/ports/cache/
                           └────────────────────┬────────────────────┘
                                                │  has-a (constructor)
                                                ▼
                           ┌─────────────────────────────────────────┐
-   Capa de transporte     │  ICacheStore                            │  puerto en
-   (cómo se cachea)       │  get / set / del / delByPrefix          │  shared/domain/cache/
+   Transport layer        │  ICacheStore                            │  port in
+   (how it gets cached)   │  get / set / del / delByPrefix          │  shared/domain/cache/
                           └────────────────────┬────────────────────┘
-                                               │  implementa
+                                               │  implements
                                                ▼
                           ┌─────────────────────────────────────────┐
                           │  RedisCacheStore (ioredis)              │  shared/infrastructure/cache/
                           └─────────────────────────────────────────┘
 ```
 
-### Archivos
+### Files
 
-| Capa                  | Archivo                                                                              | Rol                                                  |
-|-----------------------|--------------------------------------------------------------------------------------|------------------------------------------------------|
-| Transporte (port)     | `src/shared/domain/cache/cache-store.port.ts`                                        | Contrato genérico key-value con TTL                  |
-| Transporte (impl)     | `src/shared/infrastructure/cache/redis-cache-store.ts`                               | Único punto que conoce ioredis                       |
-| Transporte (módulo)   | `src/shared/infrastructure/cache/cache.module.ts`                                    | `@Global()`. Bindea `ICacheStore` → `RedisCacheStore`|
-| Semántico (port)      | `src/modules/<m>/domain/ports/cache/<m>-cache.port.ts`                               | Contrato de cache de ese agregado                    |
-| Semántico (impl)      | `src/modules/<m>/infrastructure/cache/<m>-cache.impl.ts`                             | Mapea entidad ↔ shape y construye claves             |
-| Test double           | `src/modules/<m>/infrastructure/cache/__fakes__/null-<m>-cache.ts`                   | Null Object (no-ops) para tests/feature flags        |
+| Layer                 | File                                                                                   | Role                                                 |
+|-----------------------|----------------------------------------------------------------------------------------|------------------------------------------------------|
+| Transport (port)      | `src/shared/domain/cache/cache-store.port.ts`                                          | Generic key-value contract with TTL                  |
+| Transport (impl)      | `src/shared/infrastructure/cache/redis-cache-store.ts`                                 | The only place that knows ioredis                    |
+| Transport (module)    | `src/shared/infrastructure/cache/cache.module.ts`                                      | `@Global()`. Binds `ICacheStore` → `RedisCacheStore` |
+| Semantic (port)       | `src/modules/<m>/domain/ports/cache/<m>-cache.port.ts`                                 | That aggregate's cache contract                      |
+| Semantic (impl)       | `src/modules/<m>/infrastructure/cache/<m>-cache.impl.ts`                               | Maps entity ↔ shape and builds keys                  |
+| Test double           | `src/modules/<m>/infrastructure/cache/__fakes__/null-<m>-cache.ts`                     | Null Object (no-ops) for tests/feature flags         |
 
-`<m>` ∈ { budgets, categories, users } al momento de escribir esto.
+`<m>` ∈ { budgets, categories, users } at the time of writing.
 
-### Convenciones
+### Conventions
 
-- **Claves:** `<modulo>:<scope>:<id>` (`budgets:item:<uuid>`, `categories:user:<uuid>:list`, `budgets:user:<uuid>:list:<year>-<month>`).
-- **Prefijo global:** `pf:` (configurable vía `REDIS_KEY_PREFIX`). Lo aplica `RedisCacheStore`; los caches de módulo NO ven el prefijo.
-- **TTL:** 600 s (10 min) por defecto en cada impl. Constante local a cada archivo, no compartida — la duración es decisión semántica.
-- **Serialización:** cada impl declara un `interface XxxCacheShape` y dos funciones `toShape` / `fromShape`. `fromShape` reconstruye usando `Entity.reconstitute(...)` y `VO.reconstitute(...)`, **nunca** `create(...)` — preserva timestamps y evita re-validación de datos persistidos (regla del `CLAUDE.md` §"Patrones que no cambian").
-- **Invalidación:** dos modos:
-  - `del(itemKey)` puntual cuando solo hay una clave que limpiar.
-  - `delByPrefix(...)` cuando hay N listas por usuario (caso `budgets`, donde existe una lista por periodo `year-month`).
+- **Keys:** `<module>:<scope>:<id>` (`budgets:item:<uuid>`, `categories:user:<uuid>:list`, `budgets:user:<uuid>:list:<year>-<month>`).
+- **Global prefix:** `pf:` (configurable via `REDIS_KEY_PREFIX`). Applied by `RedisCacheStore`; module caches do NOT see the prefix.
+- **TTL:** 600 s (10 min) by default in each impl. A constant local to each file, not shared — the duration is a semantic decision.
+- **Serialization:** each impl declares an `interface XxxCacheShape` and two functions `toShape` / `fromShape`. `fromShape` rebuilds using `Entity.reconstitute(...)` and `VO.reconstitute(...)`, **never** `create(...)` — preserves timestamps and avoids re-validating persisted data (rule from `CLAUDE.md` §"Patterns that don't change").
+- **Invalidation:** two modes:
+  - Pinpoint `del(itemKey)` when there is only one key to clear.
+  - `delByPrefix(...)` when there are N lists per user (the `budgets` case, where there is one list per `year-month` period).
 
 ---
 
-## 2. Por qué hay dos capas (qué se abstrajo y por qué)
+## 2. Why there are two layers (what was abstracted and why)
 
-El **único** lugar del código que `import`a `ioredis` es `redis-cache-store.ts`. Esa restricción no es estética — paga tres deudas concretas a la vez:
+The **only** place in the code that `import`s `ioredis` is `redis-cache-store.ts`. That restriction is not aesthetic — it pays off three concrete debts at once:
 
-### 2.1. Regla de dependencia: el dominio no conoce vendors
+### 2.1. Dependency rule: the domain knows no vendors
 
-Los archivos `*-cache.impl.ts` viven en `infrastructure/`, pero sus imports son todos a abstracciones de dominio (`ICacheStore`, la entidad, sus VOs). Si cada impl importara `ioredis`, el día que se cambie Redis por KeyDB / Dragonfly / Memcached / un cache in-process habría que tocar **N archivos** (uno por módulo). Hoy se toca **uno**: `redis-cache-store.ts`. El número de puntos de cambio es la métrica honesta de si una abstracción se gana su sitio.
+The `*-cache.impl.ts` files live in `infrastructure/`, but their imports are all to domain abstractions (`ICacheStore`, the entity, its VOs). If each impl imported `ioredis`, the day Redis is swapped for KeyDB / Dragonfly / Memcached / an in-process cache you would have to touch **N files** (one per module). Today you touch **one**: `redis-cache-store.ts`. The number of change points is the honest metric of whether an abstraction earns its place.
 
-### 2.2. La conexión a Redis es un recurso, no un valor
+### 2.2. The Redis connection is a resource, not a value
 
-Redis no es "una librería más". Es un recurso con estado que debe ser **único en el proceso**:
+Redis is not "just another library". It is a stateful resource that must be **unique in the process**:
 
-| Recurso                          | Por qué debe ser único                                              |
-|----------------------------------|---------------------------------------------------------------------|
-| Pool de conexiones TCP           | Un pool por proceso, no uno por módulo                              |
-| `keyPrefix` global               | Una fuente de verdad para namespacing                               |
-| Política de reintentos           | `maxRetriesPerRequest: 3` homogénea para SLO predecible             |
-| Lifecycle (`onModuleInit/Destroy`) | `ping` al arrancar, `disconnect` graceful al cerrar — una vez       |
-| Métricas / tracing (futuro)      | Instrumentas el store una vez, todos los caches heredan observabilidad |
+| Resource                           | Why it must be unique                                                |
+|------------------------------------|-----------------------------------------------------------------------|
+| TCP connection pool                | One pool per process, not one per module                              |
+| Global `keyPrefix`                 | One source of truth for namespacing                                   |
+| Retry policy                       | Homogeneous `maxRetriesPerRequest: 3` for a predictable SLO           |
+| Lifecycle (`onModuleInit/Destroy`) | `ping` at startup, graceful `disconnect` at shutdown — once           |
+| Metrics / tracing (future)         | Instrument the store once, every cache inherits observability         |
 
-NestJS hace providers *singleton* por defecto, así que `RedisCacheStore` se instancia una sola vez y los caches de módulo comparten esa conexión. Sin el puerto intermedio, cada `XxxCacheImpl` haría su propio `new Redis(...)` y se perdería esa garantía.
+NestJS makes providers *singletons* by default, so `RedisCacheStore` is instantiated once and the module caches share that connection. Without the intermediate port, each `XxxCacheImpl` would do its own `new Redis(...)` and that guarantee would be lost.
 
-### 2.3. Tests sin Redis, sin Docker, sin red
+### 2.3. Tests without Redis, without Docker, without a network
 
-Cualquier test unitario de `BudgetsCacheImpl` mockea cuatro métodos:
+Any unit test of `BudgetsCacheImpl` mocks four methods:
 
 ```ts
 const fakeStore: ICacheStore = {
@@ -90,9 +90,9 @@ const fakeStore: ICacheStore = {
 const cache = new BudgetsCacheImpl(fakeStore);
 ```
 
-Sin Redis levantado, sin contenedor, sin sorpresas. Y el `NullCategoriesCache` (`__fakes__/`) es trivial precisamente porque la **semántica** está desacoplada del **transporte**: implementa el puerto del módulo con no-ops y listo. Útil para flags "cache off" o tests que no quieren caché en absoluto.
+No Redis running, no container, no surprises. And the `NullCategoriesCache` (`__fakes__/`) is trivial precisely because the **semantics** are decoupled from the **transport**: it implements the module's port with no-ops and that's it. Useful for "cache off" flags or tests that don't want any cache at all.
 
-### 2.4. La superficie del puerto es mínima y estable
+### 2.4. The port's surface is minimal and stable
 
 ```ts
 // shared/domain/cache/cache-store.port.ts
@@ -104,30 +104,30 @@ export abstract class ICacheStore {
 }
 ```
 
-Cuatro métodos. Es el contrato mínimo que **cualquier** cache key-value soporta: Redis, Memcached, un `Map` con expiración en memoria, un decorador de métricas, un two-tier (L1 in-process + L2 distribuido). No filtra primitivas Redis-only (`MULTI`, `EVAL`, `SUBSCRIBE`, `XADD`) — y eso es intencional: ningún cache semántico de módulo debe necesitarlas. Si algún día una sí, ese caso es un puerto distinto, no este.
+Four methods. It is the minimal contract that **any** key-value cache supports: Redis, Memcached, a `Map` with in-memory expiration, a metrics decorator, a two-tier (in-process L1 + distributed L2). It leaks no Redis-only primitives (`MULTI`, `EVAL`, `SUBSCRIBE`, `XADD`) — and that is intentional: no module's semantic cache should need them. If one day one does, that case is a different port, not this one.
 
-> **Regla heurística para evaluar puertos:** se justifica cuando la superficie de la abstracción es **más pequeña y más estable** que la superficie del concreto. `ICacheStore` tiene 4 métodos; `ioredis` exporta cientos. La diferencia es la promesa de estabilidad.
+> **Heuristic rule for evaluating ports:** a port is justified when the abstraction's surface is **smaller and more stable** than the concrete's surface. `ICacheStore` has 4 methods; `ioredis` exports hundreds. The difference is the stability promise.
 
 ---
 
-## 3. Por qué composición, no herencia
+## 3. Why composition, not inheritance
 
-> La pregunta natural al leer el código es: *si ya existe `ICacheStore` en `shared/domain/`, ¿por qué `IBudgetsCache` no `extends ICacheStore`, como sí lo hace `IBudgetUnitOfWork extends IUnitOfWork`?*
+> The natural question when reading the code is: *if `ICacheStore` already exists in `shared/domain/`, why doesn't `IBudgetsCache` `extends ICacheStore`, the way `IBudgetUnitOfWork extends IUnitOfWork` does?*
 
-La respuesta corta: porque la **relación semántica es distinta**. UoW es especialización ("is-a"); cache es colaboración ("has-a"). Lo que sigue es la versión rigurosa.
+The short answer: because the **semantic relationship is different**. UoW is specialization ("is-a"); cache is collaboration ("has-a"). What follows is the rigorous version.
 
-### 3.1. La prueba decisiva — ¿quién llama los métodos del puerto compartido?
+### 3.1. The decisive test — who calls the shared port's methods?
 
-| Puerto compartido | ¿Quién lo invoca?                                          | Resultado |
-|-------------------|------------------------------------------------------------|-----------|
-| `IUnitOfWork`     | El **caso de uso** (`uow.begin()`, `uow.commit()`, ...)    | Herencia  |
-| `ICacheStore`     | **Solo la impl del cache** (`this.store.get(...)`). El caso de uso nunca lo ve. | Composición |
+| Shared port       | Who invokes it?                                              | Result      |
+|-------------------|--------------------------------------------------------------|-------------|
+| `IUnitOfWork`     | The **use case** (`uow.begin()`, `uow.commit()`, ...)        | Inheritance |
+| `ICacheStore`     | **Only the cache impl** (`this.store.get(...)`). The use case never sees it. | Composition |
 
-El use case que recibe `IBudgetUnitOfWork` **necesita** llamar `begin/commit/rollback`. El use case que recibe `IBudgetsCache` **no debe** llamar `get('algun-key-crudo')` — debe llamar `getListByUser(userId, options)`. La API de bajo nivel es propiedad privada de la impl.
+The use case that receives `IBudgetUnitOfWork` **needs** to call `begin/commit/rollback`. The use case that receives `IBudgetsCache` must **not** call `get('some-raw-key')` — it must call `getListByUser(userId, options)`. The low-level API is the impl's private property.
 
-Herencia **expone**; composición **oculta**. Para UoW queremos exponer. Para cache queremos ocultar.
+Inheritance **exposes**; composition **hides**. For UoW we want to expose. For cache we want to hide.
 
-### 3.2. UoW — el lifecycle sí es parte de la API pública
+### 3.2. UoW — the lifecycle IS part of the public API
 
 ```ts
 // shared/domain/IUnitOfWork.ts
@@ -146,12 +146,12 @@ export abstract class IBudgetUnitOfWork extends IUnitOfWork {
 }
 ```
 
-El use case orquesta literalmente el ciclo de vida:
+The use case literally orchestrates the lifecycle:
 
 ```ts
 await uow.begin();
 try {
-  const repo = uow.getBudgetRepository();   // aporte específico del módulo
+  const repo = uow.getBudgetRepository();   // module-specific contribution
   // ...
   await uow.commit();
 } catch (e) {
@@ -162,9 +162,9 @@ try {
 }
 ```
 
-`begin/commit/rollback` **no cambian entre módulos**. Son universales. Lo único que el módulo agrega son getters tipados a sus repos. La subclase **especializa sin reemplazar**. Eso es exactamente lo que la herencia modela bien.
+`begin/commit/rollback` **don't change across modules**. They are universal. The only thing the module adds is typed getters to its repos. The subclass **specializes without replacing**. That is exactly what inheritance models well.
 
-### 3.3. Cache — el transporte NO es parte de la API pública
+### 3.3. Cache — the transport is NOT part of the public API
 
 ```ts
 // modules/budgets/domain/ports/cache/budgets-cache.port.ts
@@ -178,34 +178,34 @@ export abstract class IBudgetsCache {
 }
 ```
 
-Estos métodos hablan de `Budget`, de `userId`, de "invalidar el usuario". El use case nunca debería construir una clave Redis a mano. Si hiciéramos `IBudgetsCache extends ICacheStore`:
+These methods speak of `Budget`, of `userId`, of "invalidating the user". The use case should never build a Redis key by hand. If we made `IBudgetsCache extends ICacheStore`:
 
 ```ts
 class GetBudgetsByUserUseCase {
   constructor(private cache: IBudgetsCache) {}
   async execute(userId: string) {
-    return this.cache.getListByUser(userId);     // ✓ semántico
+    return this.cache.getListByUser(userId);     // semantic — correct
 
-    // pero TAMBIÉN compilaría:
-    return this.cache.get('cualquier-cosa');     // ❌
-    await this.cache.delByPrefix('budgets:');    // ❌ rompe invariantes
-    await this.cache.set('mi-clave', x, 5);      // ❌ TTL fuera de control
+    // but this would ALSO compile:
+    return this.cache.get('anything');           // wrong
+    await this.cache.delByPrefix('budgets:');    // wrong — breaks invariants
+    await this.cache.set('my-key', x, 5);        // wrong — TTL out of control
   }
 }
 ```
 
-Eso es una **leaky abstraction** asegurada por construcción. La composición lo cierra: las únicas referencias a `ICacheStore` viven dentro de `BudgetsCacheImpl`. El use case no puede ni mencionar `get('...')` — el tipo no lo expone. Esto es **Interface Segregation Principle** aplicado de manera estricta.
+That is a **leaky abstraction** guaranteed by construction. Composition closes it: the only references to `ICacheStore` live inside `BudgetsCacheImpl`. The use case cannot even mention `get('...')` — the type doesn't expose it. This is the **Interface Segregation Principle** applied strictly.
 
-### 3.4. Liskov — ambos lo cumplen formalmente, pero solo uno semánticamente
+### 3.4. Liskov — both satisfy it formally, but only one semantically
 
-- **`IBudgetUnitOfWork` "is-a" `IUnitOfWork`**: verdadero. Un middleware genérico de tracing que mida tiempo entre `begin` y `commit` funcionaría con cualquiera de las dos. La especialización agrega capacidades sin alterar las existentes.
-- **`IBudgetsCache` "is-a" `ICacheStore`**: falso. Un `IBudgetsCache` con `get('foo')` ¿retorna `Budget`? ¿Cualquier cosa? Las firmas son incompatibles a nivel de intención (`get<T>(key)` vs cosas tipadas a `Budget`). El cache de budgets *usa* un store; no *es* uno.
+- **`IBudgetUnitOfWork` "is-a" `IUnitOfWork`**: true. A generic tracing middleware measuring time between `begin` and `commit` would work with either. The specialization adds capabilities without altering the existing ones.
+- **`IBudgetsCache` "is-a" `ICacheStore`**: false. Does an `IBudgetsCache` with `get('foo')` return a `Budget`? Anything at all? The signatures are incompatible at the level of intent (`get<T>(key)` vs things typed to `Budget`). The budgets cache *uses* a store; it *is not* one.
 
-Esta es la versión rigurosa del "is-a vs has-a" coloquial.
+This is the rigorous version of the colloquial "is-a vs has-a".
 
-### 3.5. Cardinalidad — UoW es 1:1, cache es N:1
+### 3.5. Cardinality — UoW is 1:1, cache is N:1
 
-**UoW.** Una clase concreta implementa varios puertos de módulo vía `useExisting` porque comparten el mismo `QueryRunner` request-scoped:
+**UoW.** One concrete class implements several module ports via `useExisting` because they share the same request-scoped `QueryRunner`:
 
 ```ts
 { provide: TypeOrmUnitOfWorkImpl,  useClass: TypeOrmUnitOfWorkImpl, scope: Scope.REQUEST }
@@ -214,64 +214,64 @@ Esta es la versión rigurosa del "is-a vs has-a" coloquial.
 { provide: IAccountUnitOfWork,     useExisting: TypeOrmUnitOfWorkImpl }
 ```
 
-La herencia múltiple de contratos modela exactamente esto: **distintas vistas tipadas sobre el mismo recurso transaccional**.
+Multiple contract inheritance models exactly this: **different typed views over the same transactional resource**.
 
-**Cache.** Un único recurso (`RedisCacheStore`) sirve a N caches semánticos:
+**Cache.** A single resource (`RedisCacheStore`) serves N semantic caches:
 
 ```ts
-{ provide: ICacheStore,      useExisting: RedisCacheStore }      // 1 cliente Redis
+{ provide: ICacheStore,      useExisting: RedisCacheStore }      // 1 Redis client
 { provide: IBudgetsCache,    useClass: BudgetsCacheImpl }
 { provide: ICategoriesCache, useClass: CategoriesCacheImpl }
 { provide: IUsersCache,      useClass: UsersCacheImpl }
 ```
 
-Si `IBudgetsCache extends ICacheStore`, cada `XxxCacheImpl` pasaría a *ser-un* `ICacheStore` y el grafo de DI se volvería ambiguo (¿cuál se resuelve cuando se pide `ICacheStore`?). Composición elimina la ambigüedad: hay exactamente **un** `ICacheStore` en el container, y los caches semánticos lo consumen sin participar de su contrato.
+If `IBudgetsCache extends ICacheStore`, each `XxxCacheImpl` would become *an* `ICacheStore` and the DI graph would turn ambiguous (which one resolves when `ICacheStore` is requested?). Composition removes the ambiguity: there is exactly **one** `ICacheStore` in the container, and the semantic caches consume it without taking part in its contract.
 
-### 3.6. Qué habilita cada elección hacia el futuro
+### 3.6. What each choice enables going forward
 
-**Herencia (UoW)** permite añadir un nuevo módulo transaccional creando un nuevo puerto que extiende `IUnitOfWork` con sus getters, y haciendo que `TypeOrmUnitOfWorkImpl` (o un nuevo impl) lo satisfaga. El use case del módulo nuevo recibe exactamente la superficie que necesita.
+**Inheritance (UoW)** lets you add a new transactional module by creating a new port that extends `IUnitOfWork` with its getters, and having `TypeOrmUnitOfWorkImpl` (or a new impl) satisfy it. The new module's use case receives exactly the surface it needs.
 
-**Composición (cache)** permite **decoradores** (métricas, logs, two-tier L1+L2, circuit-breaker) sin tocar ningún cache de módulo:
+**Composition (cache)** enables **decorators** (metrics, logs, two-tier L1+L2, circuit breaker) without touching any module cache:
 
 ```ts
 { provide: ICacheStore, useFactory: (redis, metrics) =>
     new MetricsCacheStore(new TwoTierCacheStore(new InMemoryStore(), redis), metrics) }
 ```
 
-Cero cambios en `BudgetsCacheImpl`, `CategoriesCacheImpl`, `UsersCacheImpl`. Si hubieran heredado, decorar requeriría tocar cada cache de módulo individualmente.
+Zero changes in `BudgetsCacheImpl`, `CategoriesCacheImpl`, `UsersCacheImpl`. Had they inherited, decorating would require touching each module cache individually.
 
 ---
 
-## 4. Tabla de decisión — cuándo extender un puerto compartido y cuándo componerlo
+## 4. Decision table — when to extend a shared port and when to compose it
 
-Cuando dudes entre `extends SharedPort` y `constructor(private dep: SharedPort)`:
+When in doubt between `extends SharedPort` and `constructor(private dep: SharedPort)`:
 
-| Pregunta                                                                                | "Sí" implica       |
-|-----------------------------------------------------------------------------------------|--------------------|
-| ¿El consumidor del puerto de módulo necesita llamar los métodos del puerto compartido?  | **extends**        |
-| ¿Los métodos del compartido son universales y se llaman *igual* en todos los módulos?   | **extends**        |
-| ¿Los métodos del compartido son primitivas de bajo nivel que el módulo encapsula?       | **composición**    |
-| ¿Hay N puertos de módulo compartiendo *una* instancia del recurso compartido?           | **composición**    |
+| Question                                                                                  | "Yes" implies       |
+|--------------------------------------------------------------------------------------------|--------------------|
+| Does the consumer of the module port need to call the shared port's methods?               | **extends**        |
+| Are the shared port's methods universal and called *the same way* in every module?         | **extends**        |
+| Are the shared port's methods low-level primitives the module encapsulates?                | **composition**    |
+| Are there N module ports sharing *one* instance of the shared resource?                    | **composition**    |
 
-- **UoW:** sí, sí, no, no → **herencia**.
-- **Cache:** no, no, sí, sí → **composición**.
-
----
-
-## 5. Reglas para quien toque el módulo
-
-- **No** importes `ioredis` fuera de `redis-cache-store.ts`. Si necesitas una primitiva nueva, agrégala a `ICacheStore` (y a la impl), no la llames desde un cache de módulo.
-- **No** uses `ICacheStore` directamente desde un use case. Pasa por el puerto semántico (`IBudgetsCache`, etc.) o crea uno nuevo si el caso lo amerita.
-- **No** llames `Entity.create()` ni `VO.create()` dentro de `fromShape`. Usa `reconstitute(...)` siempre — el dato persistido ya fue validado en su momento.
-- **No** mezcles claves entre módulos. El prefijo de cada módulo (`budgets:`, `categories:`, `users:`) es propiedad de ese módulo; no las construyas desde otro lado.
-- **No** dependas del prefijo global `pf:` dentro de los caches semánticos. Lo aplica `RedisCacheStore`; trabajar contra él rompe la invariante de que solo un archivo conoce el namespacing.
-- **No** subas el TTL sin razón documentada. Hoy es 600 s en los tres impls; si cambias uno, escribe el porqué en el commit y considera si los demás también deben moverse.
-- **Sí** añade un puerto de cache para un módulo nuevo replicando la plantilla: puerto en `<modulo>/domain/ports/cache/`, impl en `<modulo>/infrastructure/cache/`, null-object en `__fakes__/`. Bindeo en el `Module` del módulo.
+- **UoW:** yes, yes, no, no → **inheritance**.
+- **Cache:** no, no, yes, yes → **composition**.
 
 ---
 
-## 6. Resumen en una frase
+## 5. Rules for anyone touching the module
 
-> **Hereda para especializar contratos (`IBudgetUnitOfWork extends IUnitOfWork`); compón para reutilizar comportamiento (`BudgetsCacheImpl` recibe `ICacheStore`).**
+- Do **not** import `ioredis` outside `redis-cache-store.ts`. If you need a new primitive, add it to `ICacheStore` (and the impl), don't call it from a module cache.
+- Do **not** use `ICacheStore` directly from a use case. Go through the semantic port (`IBudgetsCache`, etc.) or create a new one if the case warrants it.
+- Do **not** call `Entity.create()` or `VO.create()` inside `fromShape`. Always use `reconstitute(...)` — the persisted data was already validated in its day.
+- Do **not** mix keys across modules. Each module's prefix (`budgets:`, `categories:`, `users:`) is that module's property; don't build them from elsewhere.
+- Do **not** depend on the global `pf:` prefix inside the semantic caches. `RedisCacheStore` applies it; working against it breaks the invariant that only one file knows the namespacing.
+- Do **not** raise the TTL without a documented reason. Today it is 600 s in all three impls; if you change one, write the why in the commit and consider whether the others should move too.
+- **Do** add a cache port for a new module by replicating the template: port in `<module>/domain/ports/cache/`, impl in `<module>/infrastructure/cache/`, null object in `__fakes__/`. Binding in the module's `Module`.
 
-En este repo, la herencia se reserva a contratos cuya superficie completa **debe ser visible** al consumidor del puerto de módulo. La composición se aplica cuando lo que se reutiliza es un recurso o primitiva que **debe permanecer oculto** detrás de una API semántica de más alto nivel. Esa distinción es lo que mantiene las capas del proyecto habitables a largo plazo.
+---
+
+## 6. One-sentence summary
+
+> **Inherit to specialize contracts (`IBudgetUnitOfWork extends IUnitOfWork`); compose to reuse behavior (`BudgetsCacheImpl` receives `ICacheStore`).**
+
+In this repo, inheritance is reserved for contracts whose full surface **must be visible** to the consumer of the module port. Composition is applied when what is being reused is a resource or primitive that **must remain hidden** behind a higher-level semantic API. That distinction is what keeps the project's layers livable in the long run.

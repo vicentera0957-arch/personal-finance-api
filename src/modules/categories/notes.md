@@ -1,32 +1,32 @@
-# Módulo `categories` — Referencia actual
+# `categories` module — Current reference
 
-## Dominio
+## Domain
 
-### Value object `CategoryNature`
+### `CategoryNature` value object
 
-**Archivo:** `domain/value-objects/category-nature.vo.ts`
+**File:** `domain/value-objects/category-nature.vo.ts`
 
-Lista cerrada normalizada a minúsculas: `income` | `expense`. No incluye `transfer` — las transferencias son una entidad separada.
+Closed list normalized to lowercase: `income` | `expense`. It doesn't include `transfer` — transfers are a separate entity.
 
-Tiene método `reconstitute()` separado de `create()`. El mapper siempre usa `reconstitute()` al leer desde DB para no re-validar datos ya persistidos.
+It has a `reconstitute()` method separate from `create()`. The mapper always uses `reconstitute()` when reading from the DB so as not to re-validate already-persisted data.
 
-Por qué un VO y no un string: la regla R7 ("categoría de gasto solo clasifica gastos") necesita una representación centralizada. Con un string arbitrario, cualquier parte del sistema podría crear una categoría con `nature = "foo"`. Con el VO es imposible.
+Why a VO and not a string: rule R7 ("an expense category only classifies expenses") needs a centralized representation. With an arbitrary string, any part of the system could create a category with `nature = "foo"`. With the VO it is impossible.
 
-### Entidad `Category`
+### `Category` entity
 
-**Archivo:** `domain/entities/category.entity.ts`
+**File:** `domain/entities/category.entity.ts`
 
-Constructor privado. Dos factory methods (`create`, `reconstitute`).
+Private constructor. Two factory methods (`create`, `reconstitute`).
 
-Propiedades: `id`, `userId`, `name`, `nature` (`CategoryNature`), `color?`, `icon?`, `createdAt`, `updatedAt`.
+Properties: `id`, `userId`, `name`, `nature` (`CategoryNature`), `color?`, `icon?`, `createdAt`, `updatedAt`.
 
-Métodos: `rename(name)`, `changeColor(color)`, `changeIcon(icon)`. **No existe `setBudgetable`** — la budgetabilidad se deriva de `nature === 'expense'`, no de un flag.
+Methods: `rename(name)`, `changeColor(color)`, `changeIcon(icon)`. **There is no `setBudgetable`** — budgetability is derived from `nature === 'expense'`, not from a flag.
 
-**No existe `changeNature()`** — la naturaleza es inmutable después de la creación. Cambiarla rompería la invariante R7 para todas las transacciones existentes de esa categoría.
+**There is no `changeNature()`** — the nature is immutable after creation. Changing it would break invariant R7 for all of that category's existing transactions.
 
-### Excepciones de dominio
+### Domain exceptions
 
-| Excepción | HTTP |
+| Exception | HTTP |
 |-----------|------|
 | `CategoryNotFoundException` | 404 |
 | `DuplicateCategoryException` | 409 |
@@ -36,66 +36,66 @@ Métodos: `rename(name)`, `changeColor(color)`, `changeIcon(icon)`. **No existe 
 | `InvalidCategoryIconException` | 400 |
 | `InvalidCategoryNatureException` | 400 |
 
-### Puerto `ICategoryRepository`
+### `ICategoryRepository` port
 
-Clase abstracta. Métodos: `findById`, `findByUserId`, `save`, `delete`.
+Abstract class. Methods: `findById`, `findByUserId`, `save`, `delete`.
 
-No tiene método `findByUserIdAndNameAndNature` — la validación de duplicados ocurre a nivel DB (ver abajo).
+It has no `findByUserIdAndNameAndNature` method — duplicate validation happens at the DB level (see below).
 
 ---
 
-## Capa application
+## Application layer
 
-| Use case | Flujo |
+| Use case | Flow |
 |----------|-------|
-| `CreateCategoryUseCase` | Crea VO `CategoryNature` → crea entidad → persiste → el repositorio atrapa `23505` → `DuplicateCategoryException` |
-| `GetCategoryByIdUseCase` | Busca → valida ownership → lanza `CategoryNotFoundException` |
-| `GetCategoriesByUserIdUseCase` | Retorna array (vacío es válido) |
-| `UpdateCategoryUseCase` | Delega a `GetCategoryByIdUseCase` → aplica campos opcionales → persiste |
-| `DeleteCategoryUseCase` | Verifica existencia y ownership → `repo.delete()` → repo atrapa FK violation `23503` → `CategoryInUseException` |
+| `CreateCategoryUseCase` | Creates the `CategoryNature` VO → creates entity → persists → the repository catches `23505` → `DuplicateCategoryException` |
+| `GetCategoryByIdUseCase` | Finds → validates ownership → throws `CategoryNotFoundException` |
+| `GetCategoriesByUserIdUseCase` | Returns an array (empty is valid) |
+| `UpdateCategoryUseCase` | Delegates to `GetCategoryByIdUseCase` → applies optional fields → persists |
+| `DeleteCategoryUseCase` | Verifies existence and ownership → `repo.delete()` → the repo catches FK violation `23503` → `CategoryInUseException` |
 
-**Sobre `CreateCategoryUseCase`:** no hace un `findByUserId...` previo para detectar duplicados. El check es 100% a nivel DB — `CategoryRepositoryImpl.save()` atrapa `QueryFailedError` con `code === '23505'` y lanza `DuplicateCategoryException`. Esto cierra la race condition de "check-then-insert" sin necesidad de un query previo.
+**About `CreateCategoryUseCase`:** it doesn't do a prior `findByUserId...` to detect duplicates. The check is 100% at the DB level — `CategoryRepositoryImpl.save()` catches `QueryFailedError` with `code === '23505'` and throws `DuplicateCategoryException`. This closes the "check-then-insert" race condition without needing a prior query.
 
-**Sobre `UpdateCategoryUseCase`:** un solo use case para todos los campos editables (`name`, `color`, `icon`). Todos opcionales. Sin efectos secundarios complejos — solo "editar metadatos". A diferencia de `accounts`, no hay separación en use cases granulares porque no hay operaciones con consecuencias de estado (como archivar).
+**About `UpdateCategoryUseCase`:** a single use case for all editable fields (`name`, `color`, `icon`). All optional. No complex side effects — just "edit metadata". Unlike `accounts`, there is no split into granular use cases because there are no operations with state consequences (like archiving).
 
-> **`isBudgetable` fue eliminado.** La budgetabilidad de una categoría se deriva de `nature === 'expense'` — no hay flag de dominio ni columna en la DB, y no existe `CategoryBudgetableImmutableException`. Reintroducir el flag está prohibido (ver anti-patrones en CLAUDE.md): creaba dos fuentes de verdad que derivaban.
+> **`isBudgetable` was removed.** A category's budgetability is derived from `nature === 'expense'` — there is no domain flag or DB column, and there is no `CategoryBudgetableImmutableException`. Reintroducing the flag is forbidden (see the anti-patterns in CLAUDE.md): it created two sources of truth that drifted.
 
 ---
 
-## Capa infrastructure
+## Infrastructure layer
 
 ### `CategoryOrmEntity`
 
-**Archivo:** `infrastructure/persistence/category.orm.entity.ts`
+**File:** `infrastructure/persistence/category.orm.entity.ts`
 
-| Columna | Tipo | Notas |
+| Column | Type | Notes |
 |---------|------|-------|
-| `id` | `uuid` | PK, generado con `randomUUID()` |
-| `userId` | `varchar` | Referencia lógica |
-| `name` | `varchar` | Máximo 80 caracteres |
-| `nature` | `varchar` | `income` o `expense` |
+| `id` | `uuid` | PK, generated with `randomUUID()` |
+| `userId` | `varchar` | Logical reference |
+| `name` | `varchar` | Maximum 80 characters |
+| `nature` | `varchar` | `income` or `expense` |
 | `color` | `varchar` | Nullable |
 | `icon` | `varchar` | Nullable |
-| `createdAt` | `timestamp` | `@Column` simple |
-| `updatedAt` | `timestamp` | `@Column` simple |
+| `createdAt` | `timestamp` | Plain `@Column` |
+| `updatedAt` | `timestamp` | Plain `@Column` |
 
-`@Unique(['userId', 'name', 'nature'])` — constraint a nivel DB.
+`@Unique(['userId', 'name', 'nature'])` — DB-level constraint.
 
 ### `CategoryRepositoryImpl`
 
-**Archivo:** `infrastructure/persistence/category.repo.implement.ts`
+**File:** `infrastructure/persistence/category.repo.implement.ts`
 
-`save()` atrapa `QueryFailedError`:
+`save()` catches `QueryFailedError`:
 - `code === '23505'` → `DuplicateCategoryException` (409)
-- `code === '23503'` → `CategoryInUseException` (409) (en `delete()`)
+- `code === '23503'` → `CategoryInUseException` (409) (in `delete()`)
 
 ### `CategoryMapper`
 
-`toDomain(orm)` — usa `CategoryNature.reconstitute()` (no `create()`). `Category.reconstitute()` para preservar timestamps.
+`toDomain(orm)` — uses `CategoryNature.reconstitute()` (not `create()`). `Category.reconstitute()` to preserve timestamps.
 
-### Rutas
+### Routes
 
-| Método | Ruta | Use case | HTTP |
+| Method | Route | Use case | HTTP |
 |--------|------|----------|------|
 | POST | `/categories` | `CreateCategoryUseCase` | 201 |
 | GET | `/categories` | `GetCategoriesByUserIdUseCase` | 200 |
@@ -107,34 +107,34 @@ No tiene método `findByUserIdAndNameAndNature` — la validación de duplicados
 
 ## Wiring — `CategoriesModule`
 
-Exports: `GetCategoryByIdUseCase` — consumido por `budgets` (valida la categoría al crear un budget) y por `transactions` (valida R7 + ownership cross-module).
+Exports: `GetCategoryByIdUseCase` — consumed by `budgets` (validates the category when creating a budget) and by `transactions` (validates R7 + cross-module ownership).
 
 ---
 
-## Defense in depth para el delete
+## Defense in depth for the delete
 
-La regla "no eliminar categoría en uso" tiene dos capas:
+The rule "don't delete a category in use" has two layers:
 
-1. **Repositorio:** `delete()` atrapa `23503` → `CategoryInUseException`
-2. **Base de datos:** FK con `onDelete: 'RESTRICT'` en las tablas `transactions` y `budgets`
+1. **Repository:** `delete()` catches `23503` → `CategoryInUseException`
+2. **Database:** FK with `onDelete: 'RESTRICT'` on the `transactions` and `budgets` tables
 
-Si la capa de aplicación fallara por cualquier razón, Postgres rechaza el DELETE de todos modos. Es el patrón defense-in-depth aplicado a integridad referencial.
-
----
-
-## Sub-categorías (extensión futura)
-
-Para "Comida → Restaurantes, Supermercado", tres patrones clásicos:
-- **Adjacency list** (`parentId` self-FK) — fácil INSERT, costoso leer jerarquía completa
-- **Materialized path** (`path = '1/4/17'`) — fácil lectura, caro mover ramas
-- **Nested sets** (`lft`, `rgt`) — lectura O(1), INSERT costoso
-
-Para una app de finanzas personales, adjacency list + `WITH RECURSIVE` es suficiente.
+If the application layer failed for any reason, Postgres rejects the DELETE anyway. It is the defense-in-depth pattern applied to referential integrity.
 
 ---
 
-## Recursos
+## Sub-categories (future extension)
 
-- 📄 "Trees and Hierarchies in SQL" — Joe Celko
-- 🎥 Ben Awad — "Recursive CTEs in PostgreSQL"
-- 📄 postgresql.org/docs → "WITH Queries (Common Table Expressions)"
+For "Food → Restaurants, Supermarket", three classic patterns:
+- **Adjacency list** (`parentId` self-FK) — easy INSERT, expensive to read the full hierarchy
+- **Materialized path** (`path = '1/4/17'`) — easy reads, expensive to move branches
+- **Nested sets** (`lft`, `rgt`) — O(1) reads, expensive INSERT
+
+For a personal finance app, adjacency list + `WITH RECURSIVE` is enough.
+
+---
+
+## Resources
+
+- Article: "Trees and Hierarchies in SQL" — Joe Celko
+- Video: Ben Awad — "Recursive CTEs in PostgreSQL"
+- Article: postgresql.org/docs → "WITH Queries (Common Table Expressions)"

@@ -1,42 +1,42 @@
-# Módulo `budgets` — Referencia actual
+# `budgets` module — Current reference
 
-## Concepto
+## Concept
 
-Un **budget** es un límite de gasto mensual: "Comida, abril 2026, máximo $200.000". La app previene que el usuario supere el límite al crear transacciones de gasto.
+A **budget** is a monthly spending limit: "Food, April 2026, at most $200,000". The app prevents the user from exceeding the limit when creating expense transactions.
 
-Campos clave:
+Key fields:
 
-- `(userId, categoryId, month, year)` — 4-tupla única enforced a nivel DB
-- `limit` — VO `AmountLimit`, entero positivo
+- `(userId, categoryId, month, year)` — unique 4-tuple enforced at the DB level
+- `limit` — `AmountLimit` VO, positive integer
 
 ---
 
-## Dominio
+## Domain
 
-### Value object `AmountLimit`
+### `AmountLimit` value object
 
-**Archivo:** `domain/amountlimit.vo.ts`
+**File:** `domain/amountlimit.vo.ts`
 
-Entero positivo que representa el límite de gasto. Validaciones: finito, entero, mayor que cero.
+Positive integer representing the spending limit. Validations: finite, integer, greater than zero.
 
-### Entidad `Budget`
+### `Budget` entity
 
-Constructor privado. Dos factory methods (`create`, `reconstitute`).
+Private constructor. Two factory methods (`create`, `reconstitute`).
 
-Propiedades: `id`, `userId`, `categoryId`, `month`, `year`, `limit` (`AmountLimit`), `createdAt`, `updatedAt`.
+Properties: `id`, `userId`, `categoryId`, `month`, `year`, `limit` (`AmountLimit`), `createdAt`, `updatedAt`.
 
-Método de negocio: `updateLimit(newLimit: AmountLimit)` — reemplaza el límite.
+Business method: `updateLimit(newLimit: AmountLimit)` — replaces the limit.
 
-### Invariantes
+### Invariants
 
-- **R3** — un budget es único por `(userId, categoryId, month, year)`. Enforced con `@Unique` en `BudgetOrmEntity` + migración `1745366400000-AddBudgetUniqueConstraint.ts`.
-- **R4** — la categoría del budget debe tener `nature === 'expense'`. La budgetabilidad se **deriva de `nature`** (no existe flag `isBudgetable`). Validado en `CreateBudgetUseCase` → `BudgetCategoryMustBeExpenseException`.
-- **R8** (cruzada con transactions) — una transaction de expense requiere un budget para el período y no puede exceder su `limit`. Validado en `CreateTransactionUseCase`.
-- Un budget no puede eliminarse si existen transactions de gasto en su período. Enforced vía `IExpenseChecker` port.
+- **R3** — a budget is unique per `(userId, categoryId, month, year)`. Enforced with `@Unique` on `BudgetOrmEntity` + migration `1745366400000-AddBudgetUniqueConstraint.ts`.
+- **R4** — the budget's category must have `nature === 'expense'`. Budgetability is **derived from `nature`** (there is no `isBudgetable` flag). Validated in `CreateBudgetUseCase` → `BudgetCategoryMustBeExpenseException`.
+- **R8** (crossed with transactions) — an expense transaction requires a budget for the period and cannot exceed its `limit`. Validated in `CreateTransactionUseCase`.
+- A budget cannot be deleted if expense transactions exist in its period. Enforced via the `IExpenseChecker` port.
 
-### Excepciones de dominio
+### Domain exceptions
 
-| Excepción                                      | HTTP |
+| Exception                                      | HTTP |
 | ---------------------------------------------- | ---- |
 | `BudgetNotFoundException`                      | 404  |
 | `ResourceOwnershipException` (shared)          | 403  |
@@ -47,34 +47,34 @@ Método de negocio: `updateLimit(newLimit: AmountLimit)` — reemplaza el límit
 | `BudgetCategoryMustBeExpenseException`         | 409  |
 | `BudgetHasTransactionsInPeriodException`       | 409  |
 
-### Puerto `IExpenseChecker`
+### `IExpenseChecker` port
 
-**Archivo:** `domain/repository/expense-checker.port.ts`
+**File:** `domain/repository/expense-checker.port.ts`
 
-Definido aquí (consumer owns the port). Implementado en `transactions/infrastructure/persistence/expense-checker.implement.ts`. Exportado por `TransactionsModule`.
+Defined here (consumer owns the port). Implemented in `transactions/infrastructure/persistence/expense-checker.implement.ts`. Exported by `TransactionsModule`.
 
-Métodos: `hasExpensesInPeriod(userId, categoryId, month, year): Promise<boolean>` y `sumExpenseAmountInPeriod(...): Promise<number>`. **Ninguno toma `FOR UPDATE`** (Postgres prohíbe lock pesimista sobre agregados `COUNT`/`SUM`); la serialización la da el lock sobre la fila del budget que el consumidor (`DeleteBudget` / `UpdateBudgetLimit`) adquiere antes.
+Methods: `hasExpensesInPeriod(userId, categoryId, month, year): Promise<boolean>` and `sumExpenseAmountInPeriod(...): Promise<number>`. **Neither takes `FOR UPDATE`** (Postgres forbids pessimistic locks on `COUNT`/`SUM` aggregates); serialization comes from the lock on the budget row that the consumer (`DeleteBudget` / `UpdateBudgetLimit`) acquires first.
 
 ---
 
-## Capa application
+## Application layer
 
-| Use case                               | Flujo                                                                                               |
+| Use case                               | Flow                                                                                               |
 | -------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `CreateBudgetUseCase`                  | Valida categoría (`nature === 'expense'`) → persiste → `catch 23505` → `BudgetAlreadyExistsException` |
-| `GetBudgetByIdUseCase`                 | Busca → valida ownership → lanza `BudgetNotFoundException`                                          |
-| `GetBudgetsByUserIdUseCase`            | Filtra por userId (y opcionalmente month/year)                                                      |
-| `GetBudgetByUserCategoryPeriodUseCase` | Búsqueda interna para `CreateTransactionUseCase`                                                    |
-| `UpdateBudgetLimitUseCase`             | Abre UoW → `findById` budget (FOR UPDATE) → valida ownership → suma expenses del periodo (sin lock propio; serializa el lock del budget) → si `nuevo limit < spent` lanza `BudgetLimitBelowSpentException` (409) → commit |
-| `DeleteBudgetUseCase`                  | Abre UoW → `findById` budget (FOR UPDATE) → valida ownership → `hasExpensesInPeriod` (sin lock propio; serializa el lock del budget) → elimina si no hay expenses |
+| `CreateBudgetUseCase`                  | Validates category (`nature === 'expense'`) → persists → `catch 23505` → `BudgetAlreadyExistsException` |
+| `GetBudgetByIdUseCase`                 | Finds → validates ownership → throws `BudgetNotFoundException`                                          |
+| `GetBudgetsByUserIdUseCase`            | Filters by userId (and optionally month/year)                                                      |
+| `GetBudgetByUserCategoryPeriodUseCase` | Internal lookup for `CreateTransactionUseCase`                                                    |
+| `UpdateBudgetLimitUseCase`             | Opens UoW → `findById` budget (FOR UPDATE) → validates ownership → sums the period's expenses (no own lock; serialized by the budget lock) → if `new limit < spent` throws `BudgetLimitBelowSpentException` (409) → commit |
+| `DeleteBudgetUseCase`                  | Opens UoW → `findById` budget (FOR UPDATE) → validates ownership → `hasExpensesInPeriod` (no own lock; serialized by the budget lock) → deletes if there are no expenses |
 
 ---
 
-## Capa infrastructure
+## Infrastructure layer
 
 ### `BudgetOrmEntity`
 
-| Columna                   | Tipo        | Notas             |
+| Column                    | Type        | Notes             |
 | ------------------------- | ----------- | ----------------- |
 | `id`                      | `uuid`      | PK                |
 | `userId`                  | `varchar`   |                   |
@@ -82,17 +82,17 @@ Métodos: `hasExpensesInPeriod(userId, categoryId, month, year): Promise<boolean
 | `month`                   | `int`       | 1-12              |
 | `year`                    | `int`       |                   |
 | `limit`                   | `int`       | CLP               |
-| `createdAt` / `updatedAt` | `timestamp` | `@Column` simples |
+| `createdAt` / `updatedAt` | `timestamp` | Plain `@Column`s  |
 
-`@Unique(['userId', 'categoryId', 'month', 'year'])` — constraint en la entidad.
+`@Unique(['userId', 'categoryId', 'month', 'year'])` — constraint on the entity.
 
 ### `BudgetRepositoryImpl`
 
-`save()` atrapa `QueryFailedError` con `code === '23505'` → lanza `BudgetAlreadyExistsException`. Esto cierra la race condition de "check-then-insert" a nivel DB.
+`save()` catches `QueryFailedError` with `code === '23505'` → throws `BudgetAlreadyExistsException`. This closes the "check-then-insert" race condition at the DB level.
 
-### Rutas
+### Routes
 
-| Método | Ruta                 | Use case                    | HTTP |
+| Method | Route                | Use case                    | HTTP |
 | ------ | -------------------- | --------------------------- | ---- |
 | POST   | `/budgets`           | `CreateBudgetUseCase`       | 201  |
 | GET    | `/budgets`           | `GetBudgetsByUserIdUseCase` | 200  |
@@ -104,36 +104,36 @@ Métodos: `hasExpensesInPeriod(userId, categoryId, month, year): Promise<boolean
 
 ## Wiring — `BudgetsModule`
 
-Imports `TransactionsModule` (con `forwardRef`) para obtener `IExpenseChecker`.  
-Exports: `GetBudgetByUserCategoryPeriodUseCase` — consumido por `CreateTransactionUseCase`.
+Imports `TransactionsModule` (with `forwardRef`) to obtain `IExpenseChecker`.
+Exports: `GetBudgetByUserCategoryPeriodUseCase` — consumed by `CreateTransactionUseCase`.
 
 ---
 
-## Dependency inversion: ciclo `budgets ↔ transactions`
+## Dependency inversion: the `budgets ↔ transactions` cycle
 
-Problema: `transactions` necesita `budgets` para validar R8. `budgets` necesita saber si hay transactions para validar el delete. Sin cuidado, ciclo `budgets → transactions → budgets`.
+Problem: `transactions` needs `budgets` to validate R8. `budgets` needs to know whether transactions exist to validate the delete. Without care, a `budgets → transactions → budgets` cycle.
 
-Solución "port owned by consumer":
+"Port owned by consumer" solution:
 
 ```
-budgets/domain/repository/expense-checker.port.ts   ← define el puerto
-transactions/infrastructure/persistence/expense-checker.implement.ts  ← implementa
+budgets/domain/repository/expense-checker.port.ts   ← defines the port
+transactions/infrastructure/persistence/expense-checker.implement.ts  ← implements
 transactions.module.ts: exports IExpenseChecker
 budgets.module.ts:      imports forwardRef(() => TransactionsModule)
 ```
 
-El `forwardRef()` es un artefacto del DI graph de NestJS. La dirección de dependencia en el DOMINIO es limpia: `transactions` depende de `budgets` (para el budget lookup); `budgets` define el port que `transactions` implementa.
+The `forwardRef()` is an artifact of NestJS's DI graph. The dependency direction in the DOMAIN is clean: `transactions` depends on `budgets` (for the budget lookup); `budgets` defines the port that `transactions` implements.
 
 ---
 
-## Estado de los races (histórico)
+## Race status (historical)
 
-Movido a [notes-history.md](./notes-history.md): la race de "check-then-insert" en `CreateBudget` (cerrada con `@Unique` + `catch 23505`) y el write-skew **Bug A**. Los races que cruzan módulos (Race 1: `DELETE /budgets/:id` vs `POST /transactions`) están en [docs/history/race-conditions-fix-2026-05.md](../../../docs/history/race-conditions-fix-2026-05.md).
+Moved to [notes-history.md](./notes-history.md): the "check-then-insert" race in `CreateBudget` (closed with `@Unique` + `catch 23505`) and the **Bug A** write skew. The races that cross modules (Race 1: `DELETE /budgets/:id` vs `POST /transactions`) are in [docs/history/race-conditions-fix-2026-05.md](../../../docs/history/race-conditions-fix-2026-05.md).
 
 ---
 
-## Recursos
+## Resources
 
-- 📚 DDIA §7.2 "Write Skew and Phantoms"
-- 📄 postgresql.org/docs → "Transaction Isolation"
-- 📄 SOLID "D" — Dependency Inversion Principle
+- Book: DDIA §7.2 "Write Skew and Phantoms"
+- Article: postgresql.org/docs → "Transaction Isolation"
+- Article: SOLID "D" — Dependency Inversion Principle

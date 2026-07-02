@@ -1,92 +1,92 @@
 # Race Conditions Fix — 2026-05
 
-> Cierre de dos races activas identificadas tras el hardening audit de abril 2026.
-> **Estado final:** 588/588 tests pasando, cero errores TypeScript nuevos introducidos.
+> Closure of two active races identified after the April 2026 hardening audit.
+> **Final status:** 588/588 tests passing, zero new TypeScript errors introduced.
 
 ---
 
-## Resumen ejecutivo
+## Executive summary
 
-Se identificaron y cerraron dos condiciones de carrera en la API de finanzas personales. Ambas comprometían la integridad de datos bajo concurrencia:
+Two race conditions were identified and closed in the personal finance API. Both compromised data integrity under concurrency:
 
-| ID | Ruta afectada | Riesgo | Estado |
+| ID | Affected route | Risk | Status |
 |----|--------------|--------|--------|
-| Race 1 | `DELETE /budgets/:id` vs `POST /transactions` | Gasto huérfano sin budget / 500 en CreateTransaction | ✅ Cerrado |
-| Race 2 | `PATCH /accounts/:id/{archive,unarchive,name}` vs `POST /transactions` | Balance sobreescrito (lost update) | ✅ Cerrado |
+| Race 1 | `DELETE /budgets/:id` vs `POST /transactions` | Orphan expense without a budget / 500 in CreateTransaction | Closed |
+| Race 2 | `PATCH /accounts/:id/{archive,unarchive,name}` vs `POST /transactions` | Overwritten balance (lost update) | Closed |
 
 ---
 
 ## Race 1 — `DELETE /budgets/:id` vs `POST /transactions`
 
-### Qué pasaba
+### What was happening
 
-`DeleteBudgetUseCase` corría completamente fuera de cualquier transacción de base de datos:
+`DeleteBudgetUseCase` ran entirely outside any database transaction:
 
 ```
-// ANTES (pseudocódigo del flujo)
-1. hasExpensesInPeriod(userId, categoryId, month, year)  ← consulta sin lock
-2. // ← ventana de tiempo: CreateTransaction puede insertar aquí
-3. budgetRepository.delete(id)                           ← fuera de transacción
+// BEFORE (flow pseudocode)
+1. hasExpensesInPeriod(userId, categoryId, month, year)  ← query without a lock
+2. // ← time window: CreateTransaction can insert here
+3. budgetRepository.delete(id)                           ← outside a transaction
 ```
 
-**Escenario de fallo (TOCTOU — Time Of Check, Time Of Use):**
+**Failure scenario (TOCTOU — Time Of Check, Time Of Use):**
 
 ```
 T1 (DeleteBudget)                    T2 (CreateTransaction)
 ─────────────────────────────────    ────────────────────────────────────
-hasExpenses = false ← 0 gastos       BEGIN
-                                     SELECT budget FOR UPDATE (ok, no lock en T1)
-                                     suma_gastos = 0 ≤ límite → ok
+hasExpenses = false ← 0 expenses     BEGIN
+                                     SELECT budget FOR UPDATE (ok, no lock in T1)
+                                     expense_sum = 0 ≤ limit → ok
                                      INSERT transaction
                                      UPDATE account balance
-                                     COMMIT (gasto insertado)
-DELETE budget ← borra el budget
+                                     COMMIT (expense inserted)
+DELETE budget ← deletes the budget
 ```
 
-Resultado: existe una transacción de gasto en el periodo pero ya no existe el budget. Invariante violada. Además, si `CreateTransaction` hace su re-lectura del budget bajo `FOR UPDATE` y `DeleteBudget` borró el budget entretanto → `budget!.getLimit()` revienta con 500.
+Result: an expense transaction exists in the period but the budget no longer exists. Invariant violated. Moreover, if `CreateTransaction` does its budget re-read under `FOR UPDATE` and `DeleteBudget` deleted the budget in the meantime → `budget!.getLimit()` blows up with a 500.
 
-### Cómo se cerró
+### How it was closed
 
-`DeleteBudgetUseCase` ahora corre **dentro de `IBudgetUnitOfWork`**. El `ScopedBudgetRepository.findById` toma `FOR UPDATE`, y el nuevo `getScopedExpenseChecker()` usa el mismo `QueryRunner` (mismo `EntityManager`) con `pessimistic_write` también sobre la consulta de gastos.
+`DeleteBudgetUseCase` now runs **inside `IBudgetUnitOfWork`**. `ScopedBudgetRepository.findById` takes `FOR UPDATE`, and the new `getScopedExpenseChecker()` uses the same `QueryRunner` (same `EntityManager`) with `pessimistic_write` on the expense query as well.
 
-**Secuencia serializada post-fix:**
+**Serialized sequence post-fix:**
 
 ```
 T1 (DeleteBudget)                    T2 (CreateTransaction)
 ─────────────────────────────────    ────────────────────────────────────
 BEGIN
-SELECT budget FOR UPDATE             ← T2 se bloquea aquí si toca el mismo budget
-hasExpenses = false (bajo lock)
+SELECT budget FOR UPDATE             ← T2 blocks here if it touches the same budget
+hasExpenses = false (under lock)
 DELETE budget
 COMMIT
-                                     ← T2 desbloquea, lee budget → no existe → falla
-                                       (lanza BudgetNotFoundException, 422)
+                                     ← T2 unblocks, reads budget → doesn't exist → fails
+                                       (throws BudgetNotFoundException, 422)
 ```
 
-O en el orden inverso: T2 entra primero, toma `FOR UPDATE` sobre el budget, T1 espera. T2 commitea. T1 lee, `hasExpenses = true` → lanza `BudgetHasTransactionsInPeriodException` (409).
+Or in the reverse order: T2 enters first, takes `FOR UPDATE` on the budget, T1 waits. T2 commits. T1 reads, `hasExpenses = true` → throws `BudgetHasTransactionsInPeriodException` (409).
 
 ---
 
-## Race 2 — Mutaciones de cuenta vs `POST /transactions`
+## Race 2 — Account mutations vs `POST /transactions`
 
-### Qué pasaba
+### What was happening
 
-`ArchiveAccountUseCase`, `UnarchiveAccountUseCase` y `RenameAccountUseCase` inyectaban el repositorio global `IAccountRepository` directamente — sin transacción, sin `FOR UPDATE`:
+`ArchiveAccountUseCase`, `UnarchiveAccountUseCase` and `RenameAccountUseCase` injected the global `IAccountRepository` directly — no transaction, no `FOR UPDATE`:
 
 ```ts
-// ANTES
+// BEFORE
 constructor(private readonly accountRepository: IAccountRepository) {}
 
 async execute(dto) {
-  const account = await this.accountRepository.findById(dto.id); // sin lock
+  const account = await this.accountRepository.findById(dto.id); // no lock
   account.archive();
-  await this.accountRepository.save(account); // UPDATE completo de la fila
+  await this.accountRepository.save(account); // full UPDATE of the row
 }
 ```
 
-`CreateTransactionUseCase` y `DeleteTransactionUseCase` **sí** usaban `ScopedAccountRepository.findById` que toma `FOR UPDATE`. Pero los use cases de mutación de cuenta no competían por ese lock → podían pisar el balance que `CreateTransaction` acababa de escribir.
+`CreateTransactionUseCase` and `DeleteTransactionUseCase` **did** use `ScopedAccountRepository.findById`, which takes `FOR UPDATE`. But the account-mutation use cases didn't compete for that lock → they could stomp on the balance `CreateTransaction` had just written.
 
-**Escenario de lost update:**
+**Lost-update scenario:**
 
 ```
 T1 (CreateTransaction)              T2 (ArchiveAccount)
@@ -94,26 +94,26 @@ T1 (CreateTransaction)              T2 (ArchiveAccount)
 BEGIN
 SELECT account FOR UPDATE
   balance = 1000
-  [procesa transacción de gasto]
-  balance_nuevo = 800
-                                    SELECT account (SIN lock, SIN transacción)
-                                      lee balance = 1000  ← valor viejo
+  [processes expense transaction]
+  new_balance = 800
+                                    SELECT account (NO lock, NO transaction)
+                                      reads balance = 1000  ← old value
 UPDATE account SET balance = 800
 COMMIT
                                     account.archive()
                                     UPDATE account SET
-                                      balance = 1000,     ← PISA el 800
+                                      balance = 1000,     ← STOMPS the 800
                                       isArchived = true
 ```
 
-La cuenta termina archivada con balance incorrecto. La transacción financiera existe en DB pero el balance no la refleja. **Integridad de datos comprometida silenciosamente.**
+The account ends up archived with an incorrect balance. The financial transaction exists in the DB but the balance doesn't reflect it. **Data integrity silently compromised.**
 
-### Cómo se cerró
+### How it was closed
 
-Los tres use cases ahora inyectan `IAccountUnitOfWork` en lugar del repositorio global. El `ScopedAccountRepository.findById` dentro del UoW toma `FOR UPDATE`, compitiendo por el mismo lock que usa `CreateTransaction`:
+The three use cases now inject `IAccountUnitOfWork` instead of the global repository. `ScopedAccountRepository.findById` inside the UoW takes `FOR UPDATE`, competing for the same lock `CreateTransaction` uses:
 
 ```ts
-// DESPUÉS
+// AFTER
 constructor(private readonly uow: IAccountUnitOfWork) {}
 
 async execute(dto) {
@@ -124,7 +124,7 @@ async execute(dto) {
     if (!account) throw new AccountNotFoundException(dto.id);
     if (account.userId !== dto.requestUserId) throw new ResourceOwnershipException(dto.id);
     account.archive();
-    const saved = await accountRepo.save(account);       // mismo QueryRunner
+    const saved = await accountRepo.save(account);       // same QueryRunner
     await this.uow.commit();
     return saved;
   } catch (error) {
@@ -138,56 +138,56 @@ async execute(dto) {
 
 ---
 
-## Cambios por archivo
+## Changes per file
 
-### Nuevos archivos
+### New files
 
-| Archivo | Qué hace |
+| File | What it does |
 |---------|----------|
-| [src/modules/accounts/domain/IAccountUnitOfWork.ts](../../src/modules/accounts/domain/IAccountUnitOfWork.ts) | Puerto del UoW para el bounded context de cuentas. Extiende `IUnitOfWork` y agrega `getAccountRepository()`. Vive en `accounts/domain` siguiendo el patrón "port owned by consumer". |
+| [src/modules/accounts/domain/IAccountUnitOfWork.ts](../../src/modules/accounts/domain/IAccountUnitOfWork.ts) | UoW port for the accounts bounded context. Extends `IUnitOfWork` and adds `getAccountRepository()`. Lives in `accounts/domain` following the "port owned by consumer" pattern. |
 
-### Archivos modificados
+### Modified files
 
-| Archivo | Cambio |
+| File | Change |
 |---------|--------|
-| [src/modules/budgets/domain/IBudgetUnitOfWork.ts](../../src/modules/budgets/domain/IBudgetUnitOfWork.ts) | Agrega método abstracto `getScopedExpenseChecker(): IExpenseChecker`. |
-| [src/modules/transactions/infrastructure/persistence/unit-of-work.impl.ts](../../src/modules/transactions/infrastructure/persistence/unit-of-work.impl.ts) | 1) Nueva clase privada `ScopedExpenseChecker` con `hasExpensesInPeriod` + `pessimistic_write`. 2) Implementa `IAccountUnitOfWork` (el método `getAccountRepository()` ya existía). 3) Implementa `getScopedExpenseChecker()`. |
-| [src/modules/transactions/transactions.module.ts](../../src/modules/transactions/transactions.module.ts) | Agrega provider `{ provide: IAccountUnitOfWork, useExisting: TypeOrmUnitOfWorkImpl }`, exporta `IAccountUnitOfWork`, cambia `AccountsModule` por `forwardRef(() => AccountsModule)`. |
-| [src/modules/accounts/accounts.module.ts](../../src/modules/accounts/accounts.module.ts) | Agrega `forwardRef(() => TransactionsModule)` en imports (para que NestJS resuelva `IAccountUnitOfWork` en los use cases). |
-| [src/modules/budgets/application/use-cases/delete-budget.use-case.ts](../../src/modules/budgets/application/use-cases/delete-budget.use-case.ts) | Reescrito. Elimina `IBudgetRepository`, `GetBudgetByIdUseCase`, `IExpenseChecker` directo. Ahora solo inyecta `IBudgetUnitOfWork`. Toda la lógica dentro de `begin/try/catch(rollback)/finally(release)`. |
-| [src/modules/accounts/application/use-cases/archive-account.use-case.ts](../../src/modules/accounts/application/use-cases/archive-account.use-case.ts) | Reescrito. Elimina `IAccountRepository` + `GetAccountByIdUseCase`. Inyecta `IAccountUnitOfWork`. Ownership check inline. |
-| [src/modules/accounts/application/use-cases/unarchive-account.use-case.ts](../../src/modules/accounts/application/use-cases/unarchive-account.use-case.ts) | Mismo patrón que archive. |
-| [src/modules/accounts/application/use-cases/rename-account.use-case.ts](../../src/modules/accounts/application/use-cases/rename-account.use-case.ts) | Mismo patrón que archive. |
+| [src/modules/budgets/domain/IBudgetUnitOfWork.ts](../../src/modules/budgets/domain/IBudgetUnitOfWork.ts) | Adds the abstract method `getScopedExpenseChecker(): IExpenseChecker`. |
+| [src/modules/transactions/infrastructure/persistence/unit-of-work.impl.ts](../../src/modules/transactions/infrastructure/persistence/unit-of-work.impl.ts) | 1) New private class `ScopedExpenseChecker` with `hasExpensesInPeriod` + `pessimistic_write`. 2) Implements `IAccountUnitOfWork` (the `getAccountRepository()` method already existed). 3) Implements `getScopedExpenseChecker()`. |
+| [src/modules/transactions/transactions.module.ts](../../src/modules/transactions/transactions.module.ts) | Adds the provider `{ provide: IAccountUnitOfWork, useExisting: TypeOrmUnitOfWorkImpl }`, exports `IAccountUnitOfWork`, changes `AccountsModule` to `forwardRef(() => AccountsModule)`. |
+| [src/modules/accounts/accounts.module.ts](../../src/modules/accounts/accounts.module.ts) | Adds `forwardRef(() => TransactionsModule)` to imports (so NestJS resolves `IAccountUnitOfWork` in the use cases). |
+| [src/modules/budgets/application/use-cases/delete-budget.use-case.ts](../../src/modules/budgets/application/use-cases/delete-budget.use-case.ts) | Rewritten. Removes `IBudgetRepository`, `GetBudgetByIdUseCase`, direct `IExpenseChecker`. Now injects only `IBudgetUnitOfWork`. All logic inside `begin/try/catch(rollback)/finally(release)`. |
+| [src/modules/accounts/application/use-cases/archive-account.use-case.ts](../../src/modules/accounts/application/use-cases/archive-account.use-case.ts) | Rewritten. Removes `IAccountRepository` + `GetAccountByIdUseCase`. Injects `IAccountUnitOfWork`. Inline ownership check. |
+| [src/modules/accounts/application/use-cases/unarchive-account.use-case.ts](../../src/modules/accounts/application/use-cases/unarchive-account.use-case.ts) | Same pattern as archive. |
+| [src/modules/accounts/application/use-cases/rename-account.use-case.ts](../../src/modules/accounts/application/use-cases/rename-account.use-case.ts) | Same pattern as archive. |
 
-### Tests actualizados
+### Updated tests
 
-| Archivo | Cambio |
+| File | Change |
 |---------|--------|
-| [src/modules/budgets/application/use-cases/delete-budget.use-case.spec.ts](../../src/modules/budgets/application/use-cases/delete-budget.use-case.spec.ts) | Reescrito con `mockUow` que incluye `getScopedExpenseChecker`. 4 tests: delete exitoso, budget con gastos (409), no encontrado (404), acceso denegado (403). |
-| [src/modules/accounts/application/use-cases/archive-account.use-case.spec.ts](../../src/modules/accounts/application/use-cases/archive-account.use-case.spec.ts) | Reescrito con `makeMockUow`. 4 tests: archive exitoso, ya archivado, no encontrado, ownership denegado. |
-| [src/modules/accounts/application/use-cases/unarchive-account.use-case.spec.ts](../../src/modules/accounts/application/use-cases/unarchive-account.use-case.spec.ts) | Mismo patrón. |
-| [src/modules/accounts/application/use-cases/rename-account.use-case.spec.ts](../../src/modules/accounts/application/use-cases/rename-account.use-case.spec.ts) | Mismo patrón. |
-| [src/modules/transactions/infrastructure/persistence/\__fakes\__/in-memory-unit-of-work.ts](../../src/modules/transactions/infrastructure/persistence/__fakes__/in-memory-unit-of-work.ts) | Implementa `getScopedExpenseChecker()` requerido por el contrato actualizado de `IBudgetUnitOfWork`. Acepta `expenseChecker` opcional en constructor, lanza si no fue provisto. |
+| [src/modules/budgets/application/use-cases/delete-budget.use-case.spec.ts](../../src/modules/budgets/application/use-cases/delete-budget.use-case.spec.ts) | Rewritten with a `mockUow` that includes `getScopedExpenseChecker`. 4 tests: successful delete, budget with expenses (409), not found (404), access denied (403). |
+| [src/modules/accounts/application/use-cases/archive-account.use-case.spec.ts](../../src/modules/accounts/application/use-cases/archive-account.use-case.spec.ts) | Rewritten with `makeMockUow`. 4 tests: successful archive, already archived, not found, ownership denied. |
+| [src/modules/accounts/application/use-cases/unarchive-account.use-case.spec.ts](../../src/modules/accounts/application/use-cases/unarchive-account.use-case.spec.ts) | Same pattern. |
+| [src/modules/accounts/application/use-cases/rename-account.use-case.spec.ts](../../src/modules/accounts/application/use-cases/rename-account.use-case.spec.ts) | Same pattern. |
+| [src/modules/transactions/infrastructure/persistence/\__fakes\__/in-memory-unit-of-work.ts](../../src/modules/transactions/infrastructure/persistence/__fakes__/in-memory-unit-of-work.ts) | Implements `getScopedExpenseChecker()` required by the updated `IBudgetUnitOfWork` contract. Accepts an optional `expenseChecker` in the constructor, throws if not provided. |
 
 ---
 
-## Patrón arquitectónico aplicado
+## Architectural pattern applied
 
 ### "Port owned by consumer"
 
-El dominio de `accounts` no puede importar infraestructura de `transactions`. Para que `ArchiveAccountUseCase` use el UoW correcto sin violar la separación de capas:
+The `accounts` domain cannot import `transactions` infrastructure. For `ArchiveAccountUseCase` to use the right UoW without violating layer separation:
 
 ```
-accounts/domain/IAccountUnitOfWork.ts     ← define el contrato (no sabe de TypeORM)
-         ↑ implementa
-transactions/infrastructure/unit-of-work.impl.ts  ← satisface el contrato
-         ↓ provee vía useExisting
+accounts/domain/IAccountUnitOfWork.ts     ← defines the contract (knows nothing about TypeORM)
+         ↑ implements
+transactions/infrastructure/unit-of-work.impl.ts  ← satisfies the contract
+         ↓ provides via useExisting
 TransactionsModule → exports: [IAccountUnitOfWork]
-         ↓ importa
+         ↓ imports
 AccountsModule → forwardRef(() => TransactionsModule)
 ```
 
-### `useExisting` — instancia única por request
+### `useExisting` — a single instance per request
 
 ```ts
 // TransactionsModule providers
@@ -197,37 +197,37 @@ AccountsModule → forwardRef(() => TransactionsModule)
 { provide: IAccountUnitOfWork,     useExisting: TypeOrmUnitOfWorkImpl }
 ```
 
-`useExisting` garantiza que todos los tokens resuelven a **la misma instancia** de `TypeOrmUnitOfWorkImpl` dentro de un request HTTP. Un `QueryRunner` → una transacción PostgreSQL → atomicidad real.
+`useExisting` guarantees that all tokens resolve to **the same instance** of `TypeOrmUnitOfWorkImpl` within an HTTP request. One `QueryRunner` → one PostgreSQL transaction → real atomicity.
 
-### Árbol de locks post-fix
+### Lock tree post-fix
 
-| Método | Lock | Propósito |
+| Method | Lock | Purpose |
 |--------|------|-----------|
-| `ScopedAccountRepository.findById` | `pessimistic_write` | Serializa balance updates (CreateTransaction, DeleteTransaction, Archive, Unarchive, Rename) |
-| `ScopedBudgetRepository.findById` | `pessimistic_write` | Serializa UpdateBudgetLimit y DeleteBudget contra CreateTransaction |
-| `ScopedBudgetRepository.findByUserIdAndCategoryIdAndPeriod` | `pessimistic_write` | Serializa el check de límite en CreateTransaction |
-| `ScopedTransactionRepository.sumExpenseAmountByUserCategoryAndPeriod` | `pessimistic_write` | Belt-and-suspenders contra phantom inserts en la suma de gastos |
-| `ScopedExpenseChecker.hasExpensesInPeriod` | `pessimistic_write` | Serializa el check de gastos en DeleteBudget |
+| `ScopedAccountRepository.findById` | `pessimistic_write` | Serializes balance updates (CreateTransaction, DeleteTransaction, Archive, Unarchive, Rename) |
+| `ScopedBudgetRepository.findById` | `pessimistic_write` | Serializes UpdateBudgetLimit and DeleteBudget against CreateTransaction |
+| `ScopedBudgetRepository.findByUserIdAndCategoryIdAndPeriod` | `pessimistic_write` | Serializes the limit check in CreateTransaction |
+| `ScopedTransactionRepository.sumExpenseAmountByUserCategoryAndPeriod` | `pessimistic_write` | Belt-and-suspenders against phantom inserts in the expense sum |
+| `ScopedExpenseChecker.hasExpensesInPeriod` | `pessimistic_write` | Serializes the expense check in DeleteBudget |
 
 ---
 
-## Dependencia circular `accounts ↔ transactions`
+## Circular dependency `accounts ↔ transactions`
 
-Antes de este fix: `TransactionsModule` importaba `AccountsModule` (para `GetAccountByIdUseCase`). Ahora `AccountsModule` también importa `TransactionsModule` (para `IAccountUnitOfWork`). Solución estándar en NestJS: `forwardRef()` en ambos lados.
+Before this fix: `TransactionsModule` imported `AccountsModule` (for `GetAccountByIdUseCase`). Now `AccountsModule` also imports `TransactionsModule` (for `IAccountUnitOfWork`). Standard NestJS solution: `forwardRef()` on both sides.
 
 ```
 TransactionsModule: imports: [forwardRef(() => AccountsModule), ...]
 AccountsModule:     imports: [forwardRef(() => TransactionsModule), ...]
 ```
 
-Este patrón ya existía para `budgets ↔ transactions` — se replicó exactamente.
+This pattern already existed for `budgets ↔ transactions` — it was replicated exactly.
 
 ---
 
-## Stats finales
+## Final stats
 
 ```
 Test Suites: 68 passed, 68 total
 Tests:       588 passed, 588 total
-TypeScript:  0 errores nuevos introducidos
+TypeScript:  0 new errors introduced
 ```

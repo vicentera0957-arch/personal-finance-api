@@ -16,12 +16,12 @@ A module has a `notes-history.md` only when it has closed post-mortems of its ow
 
 | Module | Current | History |
 | --- | --- | --- |
-| [auth](./auth/notes.md) | ✅ | [post-mortems](./auth/notes-history.md) |
-| [users](./users/notes.md) | ✅ | [post-mortems](./users/notes-history.md) |
-| [accounts](./accounts/notes.md) | ✅ | — (Bug B post-mortem lives in [transactions](./transactions/notes-history.md)) |
-| [categories](./categories/notes.md) | ✅ | — (no closed post-mortems) |
-| [budgets](./budgets/notes.md) | ✅ | [post-mortems](./budgets/notes-history.md) |
-| [transactions](./transactions/notes.md) | ✅ | [post-mortems](./transactions/notes-history.md) |
+| [auth](./auth/notes.md) | yes | [post-mortems](./auth/notes-history.md) |
+| [users](./users/notes.md) | yes | [post-mortems](./users/notes-history.md) |
+| [accounts](./accounts/notes.md) | yes | — (Bug B post-mortem lives in [transactions](./transactions/notes-history.md)) |
+| [categories](./categories/notes.md) | yes | — (no closed post-mortems) |
+| [budgets](./budgets/notes.md) | yes | [post-mortems](./budgets/notes-history.md) |
+| [transactions](./transactions/notes.md) | yes | [post-mortems](./transactions/notes-history.md) |
 
 > Cross-module race post-mortems live centrally in
 > [`docs/history/race-conditions-fix-2026-05.md`](../../docs/history/race-conditions-fix-2026-05.md).
