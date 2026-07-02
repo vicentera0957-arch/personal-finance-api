@@ -6,6 +6,7 @@
 > pessimistic row locks.
 
 <p>
+  <img alt="CI" src="https://github.com/vicentera0957-arch/personal-finance-api/actions/workflows/ci.yml/badge.svg">
   <img alt="NestJS" src="https://img.shields.io/badge/NestJS-11-E0234E?logo=nestjs&logoColor=white">
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white">
   <img alt="PostgreSQL" src="https://img.shields.io/badge/PostgreSQL-15-4169E1?logo=postgresql&logoColor=white">
@@ -14,13 +15,14 @@
   <img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-green.svg">
 </p>
 
-<!-- TODO: once the repo is public, add the live CI badge:
-<img alt="CI" src="https://github.com/<your-username>/personal-finance-api/actions/workflows/ci.yml/badge.svg"> -->
-
 ## See it running
 
-- **Live API (Swagger / OpenAPI):** <!-- TODO: paste your deployed Swagger URL, e.g. https://your-app.onrender.com/api/docs -->
-- **Demo:** _GIF coming soon_ <!-- TODO: record docs/assets/demo.gif (register → login → create account → budget → transaction → 422 when over limit) and embed it here with ![demo](docs/assets/demo.gif) -->
+The API documents itself: every controller is decorated for **Swagger / OpenAPI**, so a
+browsable, executable contract lives at `/api/docs` on any running instance (see
+[Run it locally](#run-it-locally) — two commands and it's up).
+
+<!-- When a live deployment exists, link it here:
+- **Live API (Swagger):** https://<host>/api/docs -->
 
 ---
 
@@ -130,6 +132,27 @@ npm run start:dev
 
 - API → `http://localhost:3000/api/v1`
 - Swagger → `http://localhost:3000/api/docs`
+- Health / readiness → `http://localhost:3000/health` · `http://localhost:3000/ready`
+- Metrics (Prometheus) → `http://localhost:3000/metrics`
+
+## API overview
+
+All routes except `/auth/*`, `/health` and `/ready` require a Bearer access token. The
+acting user always comes from the JWT — never from the body or the URL.
+
+| Resource | Endpoints |
+| --- | --- |
+| Auth | `POST /auth/register` · `POST /auth/login` · `POST /auth/refresh` · `POST /auth/logout` |
+| Users | `GET /users/:id` · `PATCH /users/:id/profile` · `DELETE /users/:id` |
+| Accounts | `POST /accounts` · `GET /accounts` · `GET /accounts/:id` · `PATCH /accounts/:id/{name,archive,unarchive}` · `DELETE /accounts/:id` |
+| Categories | `POST /categories` · `GET /categories` · `GET /categories/:id` · `PATCH /categories/:id` · `DELETE /categories/:id` |
+| Budgets | `POST /budgets` · `GET /budgets?month=&year=` · `GET /budgets/:id` · `PATCH /budgets/:id/limit` · `DELETE /budgets/:id` |
+| Transactions | `POST /transactions` · `GET /transactions?page=&limit=&from=&to=` · `GET /transactions/:id` · `GET /transactions/account/:accountId` · `DELETE /transactions/:id` |
+
+Domain rules surface as precise HTTP errors: spending over the budget limit is a `422`,
+deleting a budget with expenses in its period is a `409`, operating on an archived
+account is a `409`, touching another user's resource is a `403`. The full
+exception-to-status table lives in [CLAUDE.md](CLAUDE.md).
 
 ## Testing
 
@@ -145,7 +168,25 @@ the domain layer is gated at **95% lines / 90% functions**.
 
 ## Roadmap
 
-<!-- TODO: fill in. Left intentionally empty for now. -->
+Ordered by intent, not by date. Items come from the documented gap analysis
+([deployment runbook](docs/deployment.md), [observability](docs/observability.md),
+module notes).
+
+- **CD pipeline** — CI already builds the Docker image; publish it to a registry and
+  deploy automatically on push to `main`.
+- **Distributed tracing (OpenTelemetry)** — spans per request and per query; for a
+  system built on pessimistic locks, seeing lock-wait time in production is the payoff.
+- **Error tracking (Sentry)** — group and alert on unexpected 5xx; metrics and
+  structured logs are already in place.
+- **OAuth login (Google / GitHub)** — Passport strategies plugging into the existing
+  auth architecture without touching the domain.
+- **Email verification & password reset** — token flows backed by a queue (BullMQ) so
+  sending mail never blocks the request.
+- **Account-to-account transfers** — two linked transactions sharing a
+  `transferGroupId`, atomic inside the existing Unit of Work.
+- **Monthly reports endpoint** — spending summaries with CTEs and window functions.
+- **User-deletion integration test** — verify the `CASCADE`/`RESTRICT` FK diamond
+  before exposing hard delete to real users; consider soft delete.
 
 ## Documentation
 
@@ -154,7 +195,13 @@ the domain layer is gated at **95% lines / 90% functions**.
 | The architecture & request flow | [docs/architecture.md](docs/architecture.md) |
 | Why decisions were made | [docs/adr/](docs/adr/) |
 | The concurrency model & lock map | [docs/concurrency-model.md](docs/concurrency-model.md) |
+| The testing strategy (unit + integration) | [docs/testing.md](docs/testing.md) |
+| Observability (logs, metrics, traces) | [docs/observability.md](docs/observability.md) |
 | How to deploy | [docs/deployment.md](docs/deployment.md) |
+| Per-module design notes | [src/modules/](src/modules/README.md) |
+| How the hard bugs were found and closed | [docs/history/](docs/history/) |
+| The exhaustive reference (patterns, rules, anti-patterns) | [CLAUDE.md](CLAUDE.md) |
+
 ## License
 
 [MIT](LICENSE) © 2026 Vicente Cristobal Rivas Avello
