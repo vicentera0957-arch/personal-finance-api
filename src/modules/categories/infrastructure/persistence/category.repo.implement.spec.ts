@@ -114,5 +114,14 @@ describe('CategoryRepositoryImpl', () => {
 
       await expect(repo.delete('c1')).rejects.toThrow(CategoryInUseException);
     });
+
+    // PG nuevos reportan restrict_violation (23001) para FKs ON DELETE
+    // RESTRICT — descubierto en prod: local PG 15 emitía 23503, el PG
+    // gestionado emitía 23001 y el delete devolvía 500.
+    it('should translate restrict violation (23001) into CategoryInUseException', async () => {
+      ormRepo.delete.mockRejectedValue({ code: '23001' });
+
+      await expect(repo.delete('c1')).rejects.toThrow(CategoryInUseException);
+    });
   });
 });

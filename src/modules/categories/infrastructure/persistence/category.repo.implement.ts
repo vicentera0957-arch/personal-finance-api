@@ -53,8 +53,11 @@ export class CategoryRepositoryImpl extends ICategoryRepository {
     try {
       await this.ormRepository.delete(id);
     } catch (error) {
-      // PostgreSQL FK violation — la categoría tiene transacciones asociadas
-      if (error?.code === '23503') {
+      // PostgreSQL FK violation — la categoría tiene transacciones/budgets.
+      // 23503 = foreign_key_violation (FKs NO ACTION, y RESTRICT en PG ≤15).
+      // 23001 = restrict_violation (FKs ON DELETE RESTRICT en PG nuevos —
+      // el PG gestionado de prod lo emite; local PG 15 emitía 23503).
+      if (error?.code === '23503' || error?.code === '23001') {
         throw new CategoryInUseException(id);
       }
       throw error;

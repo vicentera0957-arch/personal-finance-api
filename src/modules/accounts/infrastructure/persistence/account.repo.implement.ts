@@ -43,7 +43,16 @@ export class AccountRepositoryImpl extends IAccountRepository {
     try {
       await this.ormRepository.delete(id);
     } catch (err: unknown) {
-      if (err instanceof Object && 'code' in err && err.code === '23503') {
+      // FK violation — la cuenta tiene transacciones asociadas.
+      // Postgres reporta 23503 (foreign_key_violation) para FKs NO ACTION,
+      // pero las FKs declaradas ON DELETE RESTRICT reportan 23001
+      // (restrict_violation) en versiones nuevas de PG. Local (PG 15) emitía
+      // 23503; el PG gestionado de prod emite 23001 → hay que atrapar ambos.
+      if (
+        err instanceof Object &&
+        'code' in err &&
+        (err.code === '23503' || err.code === '23001')
+      ) {
         throw new AccountInUseException(id);
       }
       throw err;

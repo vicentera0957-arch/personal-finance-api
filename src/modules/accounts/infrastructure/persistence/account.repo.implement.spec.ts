@@ -100,6 +100,14 @@ describe('AccountRepositoryImpl', () => {
       await expect(repo.delete('a1')).rejects.toThrow(AccountInUseException);
     });
 
+    // PG nuevos reportan restrict_violation (23001) para FKs ON DELETE
+    // RESTRICT — descubierto en prod (mismo bug que categories).
+    it('should translate restrict violation (23001) into AccountInUseException', async () => {
+      ormRepo.delete.mockRejectedValue({ code: '23001' });
+
+      await expect(repo.delete('a1')).rejects.toThrow(AccountInUseException);
+    });
+
     it('should rethrow unrelated errors untouched', async () => {
       const err = new Error('boom');
       ormRepo.delete.mockRejectedValue(err);
