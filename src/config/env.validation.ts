@@ -93,7 +93,20 @@ export const envValidationSchema = Joi.object({
   // Nº de proxies de confianza delante de la app (LB / reverse proxy).
   // >0 hace que Express lea la IP real del cliente desde X-Forwarded-For,
   // crítico para que el rate-limit por IP del throttler funcione en prod.
-  TRUST_PROXY: Joi.number().default(0),
+  // Required en producción — mismo motivo que CORS_ORIGIN/DB_HOST: el default
+  // (0) no hace crashear la app, pero rompe el rate-limit por IP en silencio
+  // (todo el tráfico detrás del LB cae en un solo cubo — un usuario agota el
+  // límite de todos). Forzamos que el operador lo declare a propósito. Si tu
+  // prod de verdad no tiene proxy delante, seteá TRUST_PROXY=0 explícito.
+  TRUST_PROXY: Joi.number()
+    .default(0)
+    .when('NODE_ENV', {
+      is: 'production',
+      then: Joi.number().required().messages({
+        'any.required':
+          'TRUST_PROXY es required en producción. Si tenés un LB/proxy delante (Railway, K8s Ingress, nginx), poné el nº de proxies (usualmente 1). Si no tenés ninguno, seteá TRUST_PROXY=0 explícitamente.',
+      }),
+    }),
 
   // Rate limiting (Throttler)
   // TTL en ms. LIMIT = max requests por IP durante ese TTL.
