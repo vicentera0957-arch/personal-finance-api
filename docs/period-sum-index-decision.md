@@ -1,6 +1,8 @@
 # Index for the period SUM
 
-> **Status: PENDING APPROVAL.** Recommendation with evidence. No schema change was applied.
+> **Status: APPROVED (2026-07-02).** Recommendation accepted — no schema change; the
+> partial index is not added. The documentation drift listed at the bottom was fixed
+> in the same change.
 
 ## Context
 
@@ -90,14 +92,13 @@ CREATE INDEX idx_tx_expense_period
 DROP INDEX idx_tx_expense_period;
 ```
 
-## Pending documentation action (for approval)
+## Documentation actions (applied 2026-07-02)
 
-Fix the drift in three places that today say "the index is missing / full-table scans":
+The drift in three places that said "the index is missing / full-table scans":
 
-1. **CLAUDE.md** → *Known gaps* section: the composite index exists; rewrite as "the partial index
-   is an optional future optimization, not a gap".
-2. **`transaction.orm.entity.ts`** (comment around lines ~16-22): the comment says "this is the most
-   critical query ... ideally it would be a partial index ... Real fix: add it". Soften to "the composite
-   index already covers it; the partial one would be a large-scale optimization".
-3. **`transactions/notes.md`**: the composite-index text is correct; just verify it doesn't
-   repeat the "full-table scan" narrative.
+1. **CLAUDE.md** → *Known gaps* section: ✅ rewritten as a "Resolved (was a gap)" note —
+   the composite index exists; the partial one is an optional large-scale optimization.
+2. **`transaction.orm.entity.ts`** (index comment): ✅ rewritten — the composite index
+   covers the query; the partial one would only matter at millions of rows.
+3. **`transactions/notes.md`**: ✅ verified — it does not repeat the "full-table scan"
+   narrative; no change needed.

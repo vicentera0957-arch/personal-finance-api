@@ -17,10 +17,11 @@ Start here. This is the index for everything under `docs/`.
 ## Reference material
 
 - Diagrams are now **Mermaid, inline** in [`architecture.md`](./architecture.md) (renders on GitHub).
-- [`database/`](./database/) — data model (PDF).
-- [`domain/`](./domain/) — business rules (PDF).
+- The original March design PDFs (data model, business rules) were removed as superseded
+  by `architecture.md`, the ADRs and per-module `notes.md` — recoverable from git history.
 - [`assets/`](./assets/) — README media (demo GIF, screenshots).
-- [`revision/`](./revision/) — archived/superseded material (old diagram exports, legacy `PROJECT_GUIDE.md`).
+- [`blog/`](./blog/) — publishable write-ups (concurrency article + LinkedIn draft).
+- [`revision/`](./revision/) — archived/superseded material (legacy `PROJECT_GUIDE.md`).
 
 ## History (dated journals — point-in-time, not living reference)
 

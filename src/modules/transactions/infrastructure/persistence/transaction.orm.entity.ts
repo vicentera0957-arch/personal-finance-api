@@ -16,10 +16,12 @@ import { CategoryOrmEntity } from '../../../categories/infrastructure/persistenc
 // Índices:
 //   - (user_id, transaction_date DESC)  → hot-path del listado por usuario (pagina DESC).
 //   - (account_id, transaction_date DESC) → listado por cuenta.
-//   - (user_id, category_id, transaction_date) WHERE nature='expense'  → este es el
-//     query más crítico: sumExpenseAmountByUserCategoryAndPeriod. Idealmente sería un
-//     ÍNDICE PARCIAL en Postgres (más chico, más rápido), pero TypeORM no decora
-//     índices parciales directo. Fix real: agregarlo como índice condicional en migración.
+//   - (user_id, category_id, nature, transaction_date) → cubre el query más crítico
+//     (sumExpenseAmountByUserCategoryAndPeriod): igualdad en las 3 primeras columnas +
+//     rango en la fecha. Benchmarkeado: Bitmap Index Scan sub-milisegundo. Un índice
+//     PARCIAL (WHERE nature='expense') solo aportaría tamaño a escala de millones de
+//     filas y TypeORM 0.3 no lo modela (drift entity↔DB si se agrega a mano) —
+//     decisión: NO agregarlo. Ver docs/period-sum-index-decision.md.
 @Entity('transactions')
 @Index('idx_tx_user_date', ['userId', 'transactionDate'])
 @Index('idx_tx_account_date', ['accountId', 'transactionDate'])
