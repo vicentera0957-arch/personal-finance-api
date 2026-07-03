@@ -28,13 +28,18 @@ import {
   RefreshTokenReplayDetectedException,
 } from '../../../domain/exceptions/auth.exceptions';
 
-// Throttler 'auth' — override global: sólo N requests por IP en la ventana.
-// Impide fuerza bruta contra login, spam de registros y abuso de refresh.
+// Límite estricto SOLO para /auth/*: sobreescribe el bucket global 'default'
+// en este controller (5 req/min por IP por ruta). Impide fuerza bruta contra
+// login, spam de registros y abuso de refresh.
+// OJO: se sobreescribe 'default'; NO registrar un throttler 'auth' aparte en
+// app.module — ThrottlerGuard corre CADA throttler registrado sobre CADA ruta,
+// y un bucket con nombre de 5/min terminaba limitando toda la API (bug real:
+// 429 en POST /categories durante el seed de demo).
 // Límite/ttl configurables por env (THROTTLE_AUTH_LIMIT / THROTTLE_AUTH_TTL);
-// fallback a 5/60s. Antes estaba hardcodeado, lo que dejaba la env var muerta.
+// fallback a 5/60s.
 @ApiTags('auth')
 @Throttle({
-  auth: {
+  default: {
     limit: Number(process.env.THROTTLE_AUTH_LIMIT ?? 5),
     ttl: Number(process.env.THROTTLE_AUTH_TTL ?? 60_000),
   },

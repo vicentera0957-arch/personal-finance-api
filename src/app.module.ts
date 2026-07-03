@@ -80,17 +80,18 @@ import { MetricsModule } from './shared/infrastructure/metrics/metrics.module';
             maxRetriesPerRequest: 3,
           }),
         ),
+        // UN solo bucket global. El límite estricto de auth NO va como segundo
+        // throttler con nombre: ThrottlerGuard aplica TODOS los throttlers
+        // registrados a TODAS las rutas (salvo @SkipThrottle), así que un
+        // bucket 'auth' de 5/min acá limitaba también /categories, /budgets,
+        // etc. (bug real detectado en prod: 429 en el seed de demo — el header
+        // x-ratelimit-limit-auth:5 aparecía hasta en /health). AuthController
+        // sobreescribe este MISMO bucket vía @Throttle({ default: {...} }).
         throttlers: [
           {
             name: 'default',
             ttl: config.get<number>('THROTTLE_TTL', 60_000),
             limit: config.get<number>('THROTTLE_LIMIT', 100),
-          },
-          // Throttler específico 'auth' — usar @Throttle({ auth: { ... } }) en /auth/*
-          {
-            name: 'auth',
-            ttl: config.get<number>('THROTTLE_AUTH_TTL', 60_000),
-            limit: config.get<number>('THROTTLE_AUTH_LIMIT', 5),
           },
         ],
       }),

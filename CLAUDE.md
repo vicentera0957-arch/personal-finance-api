@@ -210,7 +210,9 @@ Refresh tokens are persisted in `refresh_tokens` (consolidated `InitialSchema` m
 
 ### Throttling
 
-`@Throttle({ auth: { limit: 5, ttl: 60_000 } })` on `AuthController` overrides the global throttle. Five requests per minute per IP for any auth endpoint.
+One global bucket (`default`: `THROTTLE_LIMIT` per minute, per IP, per route). `AuthController` overrides **that same bucket** with `@Throttle({ default: { limit: 5, ttl: 60_000 } })` — five requests per minute per IP for any auth endpoint (env-tunable via `THROTTLE_AUTH_LIMIT` / `THROTTLE_AUTH_TTL`).
+
+**Do not register a second named throttler in `app.module.ts` to achieve this.** `ThrottlerGuard` applies *every* registered throttler to *every* route unless the route opts out with `@SkipThrottle` — a named `auth` bucket of 5/min ends up rate-limiting the entire API at 5 req/min per route. This was a real production bug (429 on `POST /categories` during demo seeding; `x-ratelimit-limit-auth: 5` visible even on `/health`), fixed by collapsing to a single bucket + per-controller override of `default`.
 
 ---
 
