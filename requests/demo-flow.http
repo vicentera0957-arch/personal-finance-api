@@ -1,0 +1,244 @@
+# ============================================================================
+# Personal Finance API — Demo flow (VS Code REST Client / JetBrains HTTP Client)
+# ============================================================================
+#
+# Run the requests TOP TO BOTTOM. Responses are chained via named requests
+# (`# @name xxx` → `{{xxx.response.body.field}}`), so order matters.
+#
+# What this flow demonstrates (the interesting parts of the API):
+#   1.  Auth: register → login → JWT pair
+#   2.  Domain rules: budget as a hard gate (422 when an expense would exceed it)
+#   3.  Invariant protection: budget can't be deleted (409) nor lowered below
+#       what was already spent (409) while expenses exist in the period
+#   4.  Refresh token rotation + REPLAY DETECTION: reusing a rotated token
+#       kills the WHOLE token family (both old and new tokens die)
+#
+# Environment: switch @baseUrl between local and the live Railway deployment.
+# ============================================================================
+
+# -- Live (Railway)
+@baseUrl = https://personal-finance-api-production-cbfe.up.railway.app/api/v1
+@healthUrl = https://personal-finance-api-production-cbfe.up.railway.app
+
+# -- Local — comment the block above and uncomment this one
+# @baseUrl = http://localhost:3000/api/v1
+# @healthUrl = http://localhost:3000
+
+# Demo identity for THIS flow — intentionally different from the seeded
+# showcase user (demo-recruiter@finanzas.dev, see scripts/seed-demo.mjs), so
+# running the flow never pollutes the curated demo data.
+# Re-running the whole file? Bump @email (e.g. demo-flow-2@...) — categories
+# are unique per user, so a second run against the same user 409s at step 4.
+@email = demo-flow@finanzas.dev
+@password = DemoRecruiter2026!
+
+# Period used by budgets/transactions — keep both in the same month.
+# @month feeds the budget (integer); @monthPadded feeds ISO dates (2 digits).
+@month = 7
+@monthPadded = 07
+@year = 2026
+
+### 0. Liveness — no auth, excluded from the api/v1 prefix
+GET {{healthUrl}}/health
+
+### 1. Register (201 — or 409 on re-run, then just continue with login)
+# @name register
+POST {{baseUrl}}/auth/register
+Content-Type: application/json
+
+{
+  "name": "Demo Recruiter",
+  "email": "{{email}}",
+  "password": "{{password}}"
+}
+
+### 2. Login → access + refresh pair (200)
+# @name login
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{email}}",
+  "password": "{{password}}"
+}
+
+### 3. Create account (201)
+# @name account
+POST {{baseUrl}}/accounts
+Content-Type: application/json
+Authorization: Bearer {{login.response.body.accessToken}}
+
+{
+  "name": "Cuenta Corriente Demo",
+  "type": "corriente",
+  "initialBalance": 500000
+}
+
+### 4. Create income category (201)
+# @name catIncome
+POST {{baseUrl}}/categories
+Content-Type: application/json
+Authorization: Bearer {{login.response.body.accessToken}}
+
+{
+  "name": "Sueldo",
+  "nature": "income",
+  "color": "#2E7D32"
+}
+
+### 5. Create expense category (201)
+# @name catExpense
+POST {{baseUrl}}/categories
+Content-Type: application/json
+Authorization: Bearer {{login.response.body.accessToken}}
+
+{
+  "name": "Supermercado",
+  "nature": "expense",
+  "color": "#FF5733",
+  "icon": "shopping-cart"
+}
+
+### 6. Income: salary lands on the account (201) — no budget needed for income
+POST {{baseUrl}}/transactions
+Content-Type: application/json
+Authorization: Bearer {{login.response.body.accessToken}}
+
+{
+  "accountId": "{{account.response.body.id}}",
+  "categoryId": "{{catIncome.response.body.id}}",
+  "nature": "income",
+  "amount": 800000,
+  "description": "Sueldo del mes",
+  "transactionDate": "{{year}}-{{monthPadded}}-01"
+}
+
+### 7. Create budget for Supermercado: limit 100.000 (201)
+# @name budget
+POST {{baseUrl}}/budgets
+Content-Type: application/json
+Authorization: Bearer {{login.response.body.accessToken}}
+
+{
+  "categoryId": "{{catExpense.response.body.id}}",
+  "month": {{month}},
+  "year": {{year}},
+  "limit": 100000
+}
+
+### 8. Expense within the budget: 60.000 of 100.000 (201)
+POST {{baseUrl}}/transactions
+Content-Type: application/json
+Authorization: Bearer {{login.response.body.accessToken}}
+
+{
+  "accountId": "{{account.response.body.id}}",
+  "categoryId": "{{catExpense.response.body.id}}",
+  "nature": "expense",
+  "amount": 60000,
+  "description": "Compra semanal",
+  "transactionDate": "{{year}}-{{monthPadded}}-05"
+}
+
+### 9. ⛔ Expense that would EXCEED the budget: 60k + 50k > 100k → 422
+# The gate runs under a FOR UPDATE lock on the budget row, so even N
+# concurrent requests can never overspend the limit (see docs/concurrency-model.md)
+POST {{baseUrl}}/transactions
+Content-Type: application/json
+Authorization: Bearer {{login.response.body.accessToken}}
+
+{
+  "accountId": "{{account.response.body.id}}",
+  "categoryId": "{{catExpense.response.body.id}}",
+  "nature": "expense",
+  "amount": 50000,
+  "description": "Esto NO debe pasar el límite",
+  "transactionDate": "{{year}}-{{monthPadded}}-12"
+}
+
+### 10. ⛔ Delete the budget while it has expenses in the period → 409
+DELETE {{baseUrl}}/budgets/{{budget.response.body.id}}
+Authorization: Bearer {{login.response.body.accessToken}}
+
+### 11. ⛔ Lower the limit below what was already spent (60k) → 409
+# BudgetLimitBelowSpentException — the sum runs under the budget-row lock
+PATCH {{baseUrl}}/budgets/{{budget.response.body.id}}/limit
+Content-Type: application/json
+Authorization: Bearer {{login.response.body.accessToken}}
+
+{
+  "limit": 50000
+}
+
+### 12. Budget state for the period (200) — spent vs limit
+GET {{baseUrl}}/budgets?month={{month}}&year={{year}}
+Authorization: Bearer {{login.response.body.accessToken}}
+
+### 13. Account state (200) — balance = 500k + 800k − 60k = 1.240.000
+GET {{baseUrl}}/accounts/{{account.response.body.id}}
+Authorization: Bearer {{login.response.body.accessToken}}
+
+### 14. Rotate the refresh token (200) — the pair from login is now REVOKED
+# @name rotated
+POST {{baseUrl}}/auth/refresh
+Content-Type: application/json
+
+{
+  "refreshToken": "{{login.response.body.refreshToken}}"
+}
+
+### 15. 🔥 REPLAY ATTACK: reuse the ALREADY-ROTATED token → 401
+# Replay detection: presenting a revoked token proves the chain is compromised
+# (stolen token or client retry — indistinguishable, so we don't try).
+# Side effect: the WHOLE token family is revoked, including the new pair.
+POST {{baseUrl}}/auth/refresh
+Content-Type: application/json
+
+{
+  "refreshToken": "{{login.response.body.refreshToken}}"
+}
+
+### 16. 🔥 Proof of family revocation: even the NEW token (step 14) is dead → 401
+POST {{baseUrl}}/auth/refresh
+Content-Type: application/json
+
+{
+  "refreshToken": "{{rotated.response.body.refreshToken}}"
+}
+
+### 17. Recover: login again (200)
+# @name relogin
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{email}}",
+  "password": "{{password}}"
+}
+
+### 18. Logout: revoke the current refresh token (204)
+POST {{baseUrl}}/auth/logout
+Content-Type: application/json
+
+{
+  "refreshToken": "{{relogin.response.body.refreshToken}}"
+}
+
+# ============================================================================
+# 🎬 Storyboard for the 2-minute demo GIF/video
+# ============================================================================
+# Record VS Code with this file open, clicking "Send Request" per scene.
+#
+#  Scene 1 (0:00–0:20)  Requests 1–2. "Register + login: JWT access & refresh."
+#  Scene 2 (0:20–0:50)  Requests 3–8. "Account, categories, budget of 100k,
+#                        salary in, 60k expense — all 201."
+#  Scene 3 (0:50–1:20)  Requests 9–11. The three 4xx in a row: 422 (limit),
+#                        409 (delete gated), 409 (lower below spent).
+#                        Caption: "the budget row is a mutex — these rules
+#                        hold even under concurrent requests."
+#  Scene 4 (1:20–1:50)  Requests 14–16. Rotation, then replay → 401, then the
+#                        killer detail: the NEW token is also dead (family
+#                        revocation). Caption: "replay detection."
+#  Scene 5 (1:50–2:00)  Swagger UI at {{healthUrl}}/api/docs — scroll the
+#                        endpoint list. "Docs live at /api/docs."
+# ============================================================================

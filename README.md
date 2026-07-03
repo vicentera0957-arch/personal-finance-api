@@ -17,12 +17,22 @@
 
 ## See it running
 
-The API documents itself: every controller is decorated for **Swagger / OpenAPI**, so a
-browsable, executable contract lives at `/api/docs` on any running instance (see
-[Run it locally](#run-it-locally) — two commands and it's up).
+**Live demo (Railway):**
 
-<!-- When a live deployment exists, link it here:
-- **Live API (Swagger):** https://<host>/api/docs -->
+- **Swagger UI:** https://personal-finance-api-production-cbfe.up.railway.app/api/docs
+- **Demo login:** `demo-recruiter@finanzas.dev` / `DemoRecruiter2026!` — call
+  `POST /auth/login`, click *Authorize* with the `accessToken`, and browse a seeded
+  month of data: two accounts, four budgets (one exactly at 100% of its limit — one
+  more peso on it returns a 422) and a month of transactions.
+- **Guided tour:** [`requests/demo-flow.http`](requests/demo-flow.http) walks the whole
+  API in 18 chained requests — including the budget gate rejecting an over-limit
+  expense (422) and refresh-token **replay detection** revoking an entire token family.
+
+The API also documents itself locally: every controller is decorated for **Swagger /
+OpenAPI**, so the same browsable, executable contract lives at `/api/docs` on any
+running instance (see [Run it locally](#run-it-locally) — two commands and it's up).
+Demo data is reproducible: `npm run seed:demo` ([scripts/seed-demo.mjs](scripts/seed-demo.mjs))
+seeds through the public API, so it can never produce a state the domain wouldn't allow.
 
 ---
 
