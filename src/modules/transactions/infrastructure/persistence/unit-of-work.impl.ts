@@ -16,6 +16,7 @@ import { Account } from '../../../accounts/domain/entities/account.entity';
 import { BudgetOrmEntity } from '../../../budgets/infrastructure/persistence/budget.orm.entity';
 import { BudgetMapper } from '../../../budgets/infrastructure/persistence/budget.mapper';
 import { Budget } from '../../../budgets/domain/budget.entity';
+import { monthPeriod } from '../../../../shared/domain/month-period';
 
 // ── Scoped repositories — private to this file; only the UoW constructs them ──
 //
@@ -59,27 +60,30 @@ class ScopedTransactionRepository extends IScopedTransactionRepository {
     month: number,
     year: number,
   ): Promise<number> {
-    const periodStart = new Date(year, month - 1, 1);
-    const periodEnd = new Date(year, month, 1);
+    const { start, end } = monthPeriod(year, month);
 
     // NO LOCK: aggregate read. Serialization is guaranteed by the pessimistic
     // lock on the budget row taken in findByUserIdAndCategoryIdAndPeriod, which
     // CreateTransactionUseCase acquires BEFORE calling this sum.
     // No one can commit a new expense for THIS budget/period while we hold its row
     // lock, so this aggregate stays consistent through commit — no lock needed here.
-
-    //A FOR UPDATE
-    // here would add no correctness (locking existing rows can't block phantom
-    // inserts into the range) and would only contend with unrelated reads.
+    // A FOR UPDATE here would add no correctness (locking existing rows can't block
+    // phantom inserts into the range) and would only contend with unrelated reads.
+    //
+    // Reads FROM v_period_expenses — the single definition of "expense", shared
+    // with reports (GET /reports/summary). Runs on the SAME this.manager (same
+    // QueryRunner → same transaction), so the budget-row lock the caller holds
+    // still serializes it; the view inlines into the plan, leaving both the
+    // execution plan and the lock model unchanged. Columns are raw snake_case:
+    // the view carries no entity metadata to map camelCase.
     const raw = await this.manager
-      .getRepository(TransactionOrmEntity)
-      .createQueryBuilder('transaction')
-      .select('COALESCE(SUM(transaction.amount), 0)', 'total')
-      .where('transaction.userId = :userId', { userId })
-      .andWhere('transaction.categoryId = :categoryId', { categoryId })
-      .andWhere('transaction.nature = :nature', { nature: 'expense' })
-      .andWhere('transaction.transactionDate >= :periodStart', { periodStart })
-      .andWhere('transaction.transactionDate < :periodEnd', { periodEnd })
+      .createQueryBuilder()
+      .select('COALESCE(SUM(e.amount), 0)', 'total')
+      .from('v_period_expenses', 'e')
+      .where('e.user_id = :userId', { userId })
+      .andWhere('e.category_id = :categoryId', { categoryId })
+      .andWhere('e.transaction_date >= :start', { start })
+      .andWhere('e.transaction_date < :end', { end })
       .getRawOne<{ total: string }>();
 
     return Number(raw?.total ?? 0);
@@ -192,22 +196,25 @@ class ScopedExpenseChecker extends IExpenseChecker {
     month: number,
     year: number,
   ): Promise<boolean> {
-    const periodStart = new Date(year, month - 1, 1);
-    const periodEnd = new Date(year, month, 1);
-    const count = await this.manager
-      .getRepository(TransactionOrmEntity)
-      .createQueryBuilder('t')
-      .where('t.userId = :userId', { userId })
-      .andWhere('t.categoryId = :categoryId', { categoryId })
-      .andWhere('t.nature = :nature', { nature: 'expense' })
-      .andWhere('t.transactionDate >= :periodStart', { periodStart })
-      .andWhere('t.transactionDate < :periodEnd', { periodEnd })
-      // NO LOCK: Postgres forbids pessimistic locks on aggregates (getCount).
+    const { start, end } = monthPeriod(year, month);
+    const raw = await this.manager
+      .createQueryBuilder()
+      .select('COUNT(*)', 'cnt')
+      .from('v_period_expenses', 'e')
+      .where('e.user_id = :userId', { userId })
+      .andWhere('e.category_id = :categoryId', { categoryId })
+      .andWhere('e.transaction_date >= :start', { start })
+      .andWhere('e.transaction_date < :end', { end })
+      // NO LOCK: Postgres forbids pessimistic locks on aggregates (COUNT).
       // Serialization against CreateTransaction is guaranteed by the budget-row
       // lock that DeleteBudgetUseCase takes BEFORE calling this checker. Locking
       // existing rows wouldn't stop phantom inserts anyway.
-      .getCount();
-    return count > 0;
+      // Reads FROM v_period_expenses (shared expense definition) on the same
+      // this.manager → same transaction; the view inlines, lock model unchanged.
+      // COUNT(*) replaces getCount() because a raw-table query builder has no
+      // entity metadata; the semantics are identical.
+      .getRawOne<{ cnt: string }>();
+    return Number(raw?.cnt ?? 0) > 0;
   }
 
   async sumExpenseAmountInPeriod(
@@ -216,20 +223,20 @@ class ScopedExpenseChecker extends IExpenseChecker {
     month: number,
     year: number,
   ): Promise<number> {
-    const periodStart = new Date(year, month - 1, 1);
-    const periodEnd = new Date(year, month, 1);
+    const { start, end } = monthPeriod(year, month);
     const raw = await this.manager
-      .getRepository(TransactionOrmEntity)
-      .createQueryBuilder('t')
-      .select('COALESCE(SUM(t.amount), 0)', 'total')
-      .where('t.userId = :userId', { userId })
-      .andWhere('t.categoryId = :categoryId', { categoryId })
-      .andWhere('t.nature = :nature', { nature: 'expense' })
-      .andWhere('t.transactionDate >= :periodStart', { periodStart })
-      .andWhere('t.transactionDate < :periodEnd', { periodEnd })
+      .createQueryBuilder()
+      .select('COALESCE(SUM(e.amount), 0)', 'total')
+      .from('v_period_expenses', 'e')
+      .where('e.user_id = :userId', { userId })
+      .andWhere('e.category_id = :categoryId', { categoryId })
+      .andWhere('e.transaction_date >= :start', { start })
+      .andWhere('e.transaction_date < :end', { end })
       // NO LOCK: Postgres forbids pessimistic locks on aggregates (SUM).
       // Serialization against CreateTransaction is guaranteed by the budget-row
       // lock that UpdateBudgetLimitUseCase takes BEFORE calling this checker.
+      // Reads FROM v_period_expenses (shared expense definition) on the same
+      // this.manager → same transaction; the view inlines, lock model unchanged.
       .getRawOne<{ total: string }>();
     return Number(raw?.total ?? 0);
   }
