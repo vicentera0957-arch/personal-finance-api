@@ -16,6 +16,7 @@ import { AccountsModule } from './modules/accounts/accounts.module';
 import { CategoriesModule } from './modules/categories/categories.module';
 import { TransactionsModule } from './modules/transactions/transactions.module';
 import { BudgetsModule } from './modules/budgets/budgets.module';
+import { ReportsModule } from './modules/reports/reports.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { JwtAuthGuard } from './modules/auth/infrastructure/guards/jwt-auth.guard';
 import { envValidationSchema } from './config/env.validation';
@@ -143,6 +144,7 @@ import { MetricsModule } from './shared/infrastructure/metrics/metrics.module';
     CategoriesModule,
     BudgetsModule,
     TransactionsModule,
+    ReportsModule,
   ],
   controllers: [AppController],
   providers: [
