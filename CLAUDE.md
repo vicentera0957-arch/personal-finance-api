@@ -11,7 +11,7 @@ Source of truth for collaborators (humans and AI). Mixes **reference** (tables, 
 - **Scheduling:** `@nestjs/schedule` (refresh-token cleanup cron).
 - **Validation:** `class-validator` DTOs at the HTTP boundary, `joi` for env vars.
 - **Local DB:** `docker-compose` exposes Postgres on port **5433** (not 5432) and pgAdmin on 5051. Use `DB_PORT=5433` in `.env`.
-- **Schema in dev:** `synchronize` is opt-in via `DB_SYNCHRONIZE=true` AND `NODE_ENV !== 'production'`. Default is `false` — migrations are the path.
+- **Schema in dev:** `synchronize` is opt-in via `DB_SYNCHRONIZE=true` AND `NODE_ENV !== 'production'`. Default is `false` — migrations are the path. Note: `synchronize` only creates tables from entities, **not** the `v_period_expenses` view (it has no entity), so a dev DB built with `DB_SYNCHRONIZE=true` will lack the view and break any query that reads it. Run `migration:run` — the view lives in a hand-written migration, never in `migration:generate` output.
 
 Scripts you'll actually use:
 
@@ -59,10 +59,12 @@ This is non-negotiable: switching ports to `interface` breaks the DI graph.
 
 ```
 auth → users → (accounts, categories, budgets, transactions)
+reports → (schema-only dependency on transactions, via the v_period_expenses view)
 ```
 
 - `auth` sits above `users` because login/register call `GetUserByEmailUseCase` and `CreateUserUseCase`.
 - Domain modules (accounts, categories, budgets, transactions) are peers but with one direction of dependency: **transactions → budgets → categories → accounts**, plus the cycle resolved via the "port owned by consumer" pattern (see below).
+- `reports` imports **no** other module. Its only link to `transactions` is at the **schema** level (the view reads the `transactions` table); there is zero compile-time coupling. See the reports read-model section under "Patterns".
 
 ---
 
@@ -98,6 +100,19 @@ This is a security rule, not a style preference. A request body that says `userI
 When module A needs to ask module B about something but module B already imports from A, define the port in **A's** domain and the implementation in **B's** infrastructure.
 
 Example: `IExpenseChecker` lives in `budgets/domain/repository/expense-checker.port.ts`. It is implemented by `ScopedExpenseChecker` inside `transactions/infrastructure/persistence/unit-of-work.impl.ts` (private to the UoW), reached only via `getScopedExpenseChecker()`. This keeps the dependency direction clean even when `forwardRef()` is needed for the NestJS DI graph. (There is no standalone global binding — the only legitimate callers, `DeleteBudget` / `UpdateBudgetLimit`, run inside the UoW.)
+
+### 6. `reports`: a read model with **no `domain/` layer** (documented exception)
+
+Every other module has the three-layer skeleton. `reports` deliberately does **not** have a `domain/` folder — no entities, no value objects, no mappers, no `reconstitute()`, no UoW, no locks. This is the one sanctioned exception to "each module has three layers", and it exists because reports is a **read model** (CQRS-lite): it only aggregates already-persisted rows to answer queries. There are no write-side invariants to protect, so the machinery that protects them (rich entities, VO re-validation, pessimistic locks) would be pure cost.
+
+Consequences and rules:
+
+- The port `IReportsReadStore` lives in `reports/application/ports/` (not `domain/`), because with no domain layer the innermost layer is `application`, and the use case owns the contract. It is still an `abstract class` (DI-token convention, non-negotiable).
+- The impl (`ReportsReadStoreImpl`) injects `DataSource` directly. This does **not** violate the "no `DataSource` in use cases" anti-pattern: that rule protects the write-side lock model, and there are no locks here. The prohibition is about use cases; infrastructure read stores are fine (precedent: `TypeOrmUnitOfWorkImpl` injects `DataSource` too).
+- **The exception is scoped to pure read aggregation.** The day reports needs to mutate state, enforce an invariant, or run non-trivial app-side computation, it must be promoted to a full module with a `domain/` layer. Do not use this section as a license to skip `domain/` in modules that write.
+- `v_period_expenses` (a DB view, created by a hand-written migration — see the migrations note) is the **single definition of "what counts as an expense"**, shared by `GET /reports/summary` and the three budget-enforcement aggregates in the UoW. It is **not** registered as a `@ViewEntity`: TypeORM only manages views tracked in `typeorm_metadata`, so a raw-SQL view is invisible to `migration:generate` (verified with a dry-run — it reports "No changes"). Never accept a generated migration that tries to `DROP` or recreate it.
+- `monthPeriod(year, month)` in `shared/domain/` is the **single definition of a monthly period's `[start, end)` bounds**, shared by reports and the same three UoW aggregates. It is the one place to fix the pending timezone-semantics question (`transaction_date` is `TIMESTAMP` without zone; the bounds are computed in the server's local time).
+- **No cache in v1.** The repo has a per-module Redis cache pattern (`IBudgetsCache`), but reports intentionally skips it: invalidating a reports cache would couple `transactions → reports` (every create/delete would have to bust report keys). Deferred until monitoring shows a need — a decision, not a gap.
 
 ---
 
@@ -163,6 +178,8 @@ Row-based reads (`findById`, `findByTokenHashWithLock`) take `FOR UPDATE`. Aggre
 | `ScopedRefreshTokenRepository.findByTokenHashWithLock`                | Serializes two concurrent `/auth/refresh` calls on the same token — replay detection depends on this                                                                                                        |
 
 The budget row functions as a **logical mutex** for its invariant ("Σ period expenses ≤ limit"). Any flow that mutates that invariant must take `FOR UPDATE` on the budget row first.
+
+> The three aggregate rows above (`sumExpenseAmountByUserCategoryAndPeriod`, `hasExpensesInPeriod`, `sumExpenseAmountInPeriod`) now read `FROM v_period_expenses` — the shared "what counts as an expense" definition, also consumed by `GET /reports/summary` (see the reports read-model section). This is a **read-source** change, not a locking change: the view is a stateless macro that Postgres **inlines** into the plan (verified: same `Index Scan using idx_tx_user_cat_nature_date` as before), and the queries still run on the UoW's `EntityManager` (same `QueryRunner` → same transaction), so the budget-row lock the caller takes first still serializes them. Since the view has no entity metadata, these three queries use **raw snake_case columns** and a bare `createQueryBuilder().from('v_period_expenses', 'e')`.
 
 ### Closed race conditions (historical)
 
@@ -271,6 +288,9 @@ All other routes are protected by the global JWT guard (`APP_GUARD`). The actor 
 **Transactions** (collection accepts `?page=&limit=&from=&to=`)
 `POST /transactions` · `GET /transactions` · `GET /transactions/account/:accountId` · `GET /transactions/:id` · `DELETE /transactions/:id`
 
+**Reports**
+`GET /reports/summary?month=&year=` — both params **required** (a "current month" default would depend on the server timezone; requiring the pair also caps query cost to a single month by construction). Empty period → `200` with zeros.
+
 ---
 
 ## Defense in depth for unique constraints
@@ -298,6 +318,7 @@ Three layers, every time a uniqueness rule exists:
 - **categories** — `CategoryNature` value object (`income` | `expense`). **Budgetability is derived from `nature`**: any `expense` category is budgetable. There is no `isBudgetable` flag (never present in the consolidated `InitialSchema` migration). Deletion blocked by FK (`CategoryInUseException` from catch 23503 **or 23001** — newer managed Postgres reports `restrict_violation` 23001 for `ON DELETE RESTRICT` FKs while local PG 15 reports 23503; catching only one of them 500s in the other environment. Same dual catch in accounts `delete()`).
 - **budgets** — `AmountLimit` value object. One budget per `(user, category, month, year)` enforced by DB unique constraint + `catch 23505`. Category must be `expense` (`BudgetCategoryMustBeExpenseException`). `UpdateBudgetLimit` rejects `new limit < spent` under lock (`BudgetLimitBelowSpentException`). `DeleteBudget` rejects deletion when expenses exist in the period (`BudgetHasTransactionsInPeriodException`).
 - **transactions** — Immutable records (no `update` use case — delete + recreate). `TransactionNature` (`income` | `expense`) and `Amount` value objects. Create rules: account exists and not archived, category exists with matching nature, expenses require an existing budget for the period and projected total ≤ limit. All creates and deletes run inside `ITransactionUnitOfWork`.
+- **reports** — Read model (CQRS-lite), **no `domain/` layer** (see the documented exception under "Patterns"). One endpoint today: `GET /reports/summary?month=&year=` → `{ month, year, income, expenses, net }`, scoped to `@CurrentUser()`. Single aggregated SQL statement (one MVCC snapshot → income/expenses mutually consistent without a transaction), no locks, no cache. `expenses` reads the shared `v_period_expenses` view; empty period returns zeros (200, not 404) so it raises no domain exceptions.
 
 ---
 
