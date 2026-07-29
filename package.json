@@ -27,7 +27,8 @@
     "migration:show": "npm run typeorm -- migration:show",
     "migration:run:prod": "typeorm -d dist/data-source.js migration:run",
     "migration:show:prod": "typeorm -d dist/data-source.js migration:show",
-    "seed:demo": "node scripts/seed-demo.mjs"
+    "seed:demo": "node scripts/seed-demo.mjs",
+    "populate": "node scripts/populate.mjs"
   },
   "engines": {
     "node": ">=20 <21"
