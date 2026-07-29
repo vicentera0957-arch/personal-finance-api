@@ -10,20 +10,38 @@
  * re-prove the write-side invariants the app's UoW already protects —
  * it just needs to produce FK-valid, internally consistent rows.
  *
+ * Why the distribution is skewed, not flat: this table is meant to be used
+ * for EXPLAIN (ANALYZE, BUFFERS) exercises — planner-plan-change demos,
+ * partial indexes, Index Only Scan, keyset pagination. A uniform
+ * distribution makes `WHERE user_id = $1` equally selective for every
+ * value of $1, so there is no parameter that pushes the planner from Seq
+ * Scan to Index Scan. See paretoAllocation/temporalAllocation below.
+ *
  * Usage:
  *   npm run populate
  *   npm run populate -- --reset          # wipe previously-seeded users first
+ *   npm run populate -- --no-analyze     # skip ANALYZE (see SEED_SKEW notes)
  *   SEED_USERS=20 SEED_TX_COUNT=5000 npm run populate
+ *   SEED_USERS=200 SEED_TX_COUNT=200000 npm run populate   # for OFFSET/keyset
+ *                                                           # pagination experiments
  *
  * Env vars (all optional):
  *   SEED_USERS       synthetic users to create (default 50)
  *   SEED_TX_COUNT    total transactions across all users, exact (default 15000)
  *   SEED_MONTHS      trailing months of history incl. current (default 12)
+ *   SEED_SKEW        Pareto exponent (alpha) for the per-user tx-count
+ *                     distribution (default 1.1). Higher = more skewed.
  *   ALLOW_NON_LOCAL_SEED=true   required (or --force) if DB_HOST isn't localhost
  *
  * Requires Node >= 20. Uses `pg`/`bcrypt`/`dotenv`, all already dependencies —
  * no ts-node, no TypeORM, so it runs directly against the DB the same way
  * migrations do (see src/data-source.ts for the same env-var/default pattern).
+ *
+ * Everything is built in memory before the bulk insert (see bulkInsert
+ * below) — fine through the hundreds of thousands, but past roughly 500k
+ * rows the array-building and multi-row VALUES() batching both start
+ * costing real time/memory; at that scale switch to `COPY FROM STDIN`
+ * instead of parameterized INSERTs.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -38,8 +56,10 @@ const { Client } = pg;
 const SEED_USERS = Number(process.env.SEED_USERS ?? 50);
 const SEED_TX_COUNT = Number(process.env.SEED_TX_COUNT ?? 15000);
 const SEED_MONTHS = Number(process.env.SEED_MONTHS ?? 12);
+const SEED_SKEW = Number(process.env.SEED_SKEW ?? 1.1);
 const RESET = process.argv.includes('--reset');
 const FORCE = process.argv.includes('--force') || process.env.ALLOW_NON_LOCAL_SEED === 'true';
+const NO_ANALYZE = process.argv.includes('--no-analyze');
 
 const DEMO_EMAIL_PATTERN = 'seed-load-user-%@finanzas.dev';
 const SHARED_PASSWORD = 'SeedLoad2026!';
@@ -105,6 +125,49 @@ function randomDateInMonth(month, year) {
   return new Date(year, month - 1, day, hour, minute, randomInt(0, 59));
 }
 
+// ── Distribution shaping ─────────────────────────────────────────────────────
+
+// Ranked n^-alpha weights normalized to `totalCount`. Rank 1 (the first
+// bucket) gets the largest share. Both the shortfall from enforcing
+// `minPerBucket` and the rounding remainder are reconciled onto bucket 0 —
+// the largest allocation has the most room to absorb an adjustment without
+// disturbing the tail the skew exists to create in the first place.
+function paretoAllocation(totalCount, n, alpha, minPerBucket) {
+  const weights = Array.from({ length: n }, (_, i) => (i + 1) ** -alpha);
+  const weightSum = weights.reduce((s, w) => s + w, 0);
+  const alloc = weights.map((w) => Math.round((w / weightSum) * totalCount));
+
+  for (let i = 0; i < alloc.length; i++) {
+    if (alloc[i] < minPerBucket) {
+      alloc[0] -= minPerBucket - alloc[i];
+      alloc[i] = minPerBucket;
+    }
+  }
+  alloc[0] += totalCount - alloc.reduce((s, v) => s + v, 0);
+  return alloc;
+}
+
+// Linear recency weights (oldest month = 1x, newest = ~2x): a real table
+// grows over time, it doesn't backfill evenly across history. Every month
+// is floored at 1 (its salary slot) and reconciled onto the newest month —
+// same reasoning as paretoAllocation, just keyed by recency instead of rank.
+function temporalAllocation(totalForUser, monthCount) {
+  const denom = Math.max(monthCount - 1, 1);
+  const weights = Array.from({ length: monthCount }, (_, m) => 1 + m / denom);
+  const weightSum = weights.reduce((s, w) => s + w, 0);
+  const alloc = weights.map((w) => Math.round((w / weightSum) * totalForUser));
+
+  const newestIdx = monthCount - 1;
+  for (let m = 0; m < alloc.length; m++) {
+    if (alloc[m] < 1) {
+      alloc[newestIdx] -= 1 - alloc[m];
+      alloc[m] = 1;
+    }
+  }
+  alloc[newestIdx] += totalForUser - alloc.reduce((s, v) => s + v, 0);
+  return alloc;
+}
+
 // ── Category catalog ─────────────────────────────────────────────────────────
 
 const CATEGORIES = [
@@ -135,15 +198,19 @@ const VARIABLE_SLOTS = [
   { cat: 'Freelance', kind: 'income', weight: 5, amt: [50_000, 400_000] },
 ];
 
-// Budget ceilings — deliberately close to typical spend so some months land
-// over 100% and most don't (see CATEGORIES for the expense set).
+// Budget ceilings for a user at the *global average* activity level — scaled
+// per user-month by activityFactor before use (see buildUser). Arriendo and
+// Servicios are excluded from that scaling: both are always exactly one
+// transaction/month regardless of Pareto rank, so their monthly spend
+// doesn't grow with activity the way the four "variable" categories'
+// does (their transaction COUNT grows with activity, these two don't).
 const BUDGET_LIMITS = {
-  Arriendo: null, // computed per-user from their fixed rent
+  Arriendo: null, // computed per-user from their fixed rent, see buildUser
   Supermercado: 300_000,
   Transporte: 120_000,
   Ocio: 150_000,
   Salud: 100_000,
-  Servicios: 90_000,
+  Servicios: 90_000, // flat, like Arriendo — see comment above
 };
 
 // ── Bulk insert helper ───────────────────────────────────────────────────────
@@ -166,7 +233,7 @@ async function bulkInsert(client, table, columns, rows) {
 
 // ── Per-user data generation ─────────────────────────────────────────────────
 
-function buildUser(index, months) {
+function buildUser(index, months, txPerMonth, globalAvgPerMonth) {
   const now = new Date();
   const userId = randomUUID();
   const email = `seed-load-user-${index}@finanzas.dev`;
@@ -189,16 +256,26 @@ function buildUser(index, months) {
   const categories = CATEGORIES.map((c) => ({ ...c, id: randomUUID(), userId }));
   const catByName = Object.fromEntries(categories.map((c) => [c.name, c]));
 
-  const salaryBase = randomInt(900_000, 2_200_000);
   const arriendoBase = randomInt(250_000, 650_000);
 
   const budgets = [];
   const transactions = [];
 
-  for (const { month, year } of months) {
-    // Budgets: one per expense category per month.
+  months.forEach(({ month, year }, m) => {
+    // Activity level of THIS user-month relative to the flat/uniform
+    // baseline (globalAvgPerMonth). Without this, a flat BUDGET_LIMITS
+    // value means Pareto "whales" blow through every category every month
+    // while the tail never comes close — the column loses all variety.
+    const activityFactor = txPerMonth[m] / globalAvgPerMonth;
     for (const [name, flatLimit] of Object.entries(BUDGET_LIMITS)) {
-      const limit = name === 'Arriendo' ? Math.round(arriendoBase * 1.02) : variance(flatLimit, 0.1);
+      let limit;
+      if (name === 'Arriendo') {
+        limit = Math.round(arriendoBase * 1.02);
+      } else if (name === 'Servicios') {
+        limit = variance(flatLimit, 0.1);
+      } else {
+        limit = Math.max(1, Math.round(variance(flatLimit * activityFactor, 0.15)));
+      }
       budgets.push({
         id: randomUUID(),
         userId,
@@ -210,9 +287,9 @@ function buildUser(index, months) {
         updatedAt: now,
       });
     }
-  }
+  });
 
-  return { userId, email, accounts, categories, budgets, transactions, salaryBase, arriendoBase };
+  return { userId, email, accounts, categories, budgets, transactions, arriendoBase };
 }
 
 // Fixed slots (salary + rent + utilities) plus weighted-random slots, sized to
@@ -247,7 +324,7 @@ function chargeAccount(account, amount) {
   return applied;
 }
 
-// Secondary accounts (savings-type) never receive salary, so over 12
+// Secondary accounts (savings-type) never receive salary, so over many
 // months of random redirects they can run dry. Only redirect an expense to
 // one if it can actually cover it — otherwise fall back to the primary
 // account, which is replenished by salary every month.
@@ -265,19 +342,19 @@ function generateTransactions(user, months, txPerMonth) {
   for (let m = 0; m < months.length; m++) {
     const { month, year } = months[m];
     const slots = monthSlots(txPerMonth[m]);
-    for (const slot of slots) {
-      const date = randomDateInMonth(month, year);
-      const cat = user.categories.find((c) => c.name === slot.cat);
 
-      // One random draw per transaction — reused for both account
-      // selection (does a secondary account have enough?) and the charge
-      // itself, instead of drawing twice and letting them disagree.
+    // Pass 1: price every non-salary slot first. With SEED_SKEW some users
+    // get hundreds of expense slots in a single month against what used to
+    // be a flat, arbitrary salary figure — chargeAccount would clamp that
+    // account to 0 within the first few dozen transactions and leave the
+    // rest of the month's rows at amount=0. Pricing expenses first lets the
+    // salary below be sized to actually cover them.
+    let projectedExpenses = 0;
+    const priced = slots.map((slot) => {
+      if (slot.cat === 'Sueldo') return slot;
       let rawAmount;
       let description;
-      if (slot.cat === 'Sueldo') {
-        rawAmount = variance(user.salaryBase, 0.05);
-        description = 'Sueldo mensual';
-      } else if (slot.cat === 'Arriendo') {
+      if (slot.cat === 'Arriendo') {
         rawAmount = variance(user.arriendoBase, 0.03);
         description = 'Arriendo depto';
       } else if (slot.cat === 'Servicios') {
@@ -287,16 +364,37 @@ function generateTransactions(user, months, txPerMonth) {
         rawAmount = randomInt(...slot.amt);
         description = pick(DESCRIPTIONS[slot.cat] ?? [slot.cat]);
       }
+      if (slot.kind === 'expense') projectedExpenses += rawAmount;
+      return { ...slot, rawAmount, description };
+    });
+
+    for (const slot of priced) {
+      const date = randomDateInMonth(month, year);
+      const cat = user.categories.find((c) => c.name === slot.cat);
 
       let amount;
       let account;
-      if (slot.kind === 'income') {
+      let description;
+      if (slot.cat === 'Sueldo') {
+        // Proportional to this month's own projected expenses (1.05x-1.35x
+        // headroom) instead of an absolute figure — this is what keeps
+        // chargeAccount's clamp from firing regardless of how much Pareto
+        // activity this user-month has. 50k floor covers the rare
+        // all-salary month (see monthSlots: a user floored at 1 tx/month
+        // has zero projected expenses that month).
+        amount = Math.max(Math.round(projectedExpenses * (1.05 + Math.random() * 0.3)), 50_000);
+        description = 'Sueldo mensual';
         account = primary;
-        amount = rawAmount;
+        account.balance += amount;
+      } else if (slot.kind === 'income') {
+        amount = slot.rawAmount;
+        description = slot.description;
+        account = primary;
         account.balance += amount;
       } else {
-        account = pickExpenseAccount(user, rawAmount);
-        amount = chargeAccount(account, rawAmount);
+        account = pickExpenseAccount(user, slot.rawAmount);
+        amount = chargeAccount(account, slot.rawAmount);
+        description = slot.description;
       }
 
       user.transactions.push({
@@ -314,12 +412,86 @@ function generateTransactions(user, months, txPerMonth) {
   }
 }
 
+// ── Reporting ────────────────────────────────────────────────────────────────
+
+function median(sortedAsc) {
+  const mid = Math.floor(sortedAsc.length / 2);
+  return sortedAsc.length % 2 ? sortedAsc[mid] : (sortedAsc[mid - 1] + sortedAsc[mid]) / 2;
+}
+
+// Compares each budget row against the ACTUAL spend of its own user's
+// expense transactions in that (category, month, year) — categoryId is
+// already unique per user (buildUser mints a fresh id per user), so it
+// alone is enough to key the lookup.
+function computeBudgetExceedStats(users) {
+  const spend = new Map();
+  for (const u of users) {
+    for (const t of u.transactions) {
+      if (t.nature !== 'expense') continue;
+      const key = `${t.categoryId}|${t.transactionDate.getMonth() + 1}|${t.transactionDate.getFullYear()}`;
+      spend.set(key, (spend.get(key) ?? 0) + t.amount);
+    }
+  }
+  let exceeded = 0;
+  let total = 0;
+  for (const u of users) {
+    for (const b of u.budgets) {
+      total++;
+      const key = `${b.categoryId}|${b.month}|${b.year}`;
+      if ((spend.get(key) ?? 0) > b.amountLimit) exceeded++;
+    }
+  }
+  return { exceeded, total };
+}
+
+function printDistributionReport(users, allTransactions) {
+  const byUser = users
+    .map((u) => ({ email: u.email, count: u.transactions.length }))
+    .sort((a, b) => b.count - a.count);
+  const countsAsc = byUser.map((u) => u.count).sort((a, b) => a - b);
+  const totalTx = allTransactions.length;
+
+  console.log(`\n   Distribution:`);
+  console.log(`   Top 5 users by transaction count:`);
+  byUser.slice(0, 5).forEach((u, i) => {
+    console.log(`     ${i + 1}. ${u.email}: ${u.count} (${((u.count / totalTx) * 100).toFixed(1)}%)`);
+  });
+
+  const min = countsAsc[0];
+  const max = countsAsc[countsAsc.length - 1];
+  console.log(`   Per-user tx count — min ${min}, median ${median(countsAsc)}, max ${max}`);
+  console.log(
+    `   Selectivity — largest user ${((max / totalTx) * 100).toFixed(2)}% of rows, ` +
+      `smallest ${((min / totalTx) * 100).toFixed(3)}%`,
+  );
+
+  const incomeCount = allTransactions.filter((t) => t.nature === 'income').length;
+  const expenseCount = totalTx - incomeCount;
+  console.log(
+    `   income/expense split — ${((incomeCount / totalTx) * 100).toFixed(1)}% / ` +
+      `${((expenseCount / totalTx) * 100).toFixed(1)}%`,
+  );
+
+  const zeroCount = allTransactions.filter((t) => t.amount === 0).length;
+  const zeroPct = (zeroCount / totalTx) * 100;
+  console.log(`   amount=0 rows — ${zeroCount} (${zeroPct.toFixed(3)}%)`);
+  if (zeroPct > 0.1) {
+    console.warn(
+      `   WARNING: amount=0 rows exceed 0.1% of the total — chargeAccount is clamping ` +
+        `more than expected; check the salary-sizing headroom in generateTransactions.`,
+    );
+  }
+
+  const { exceeded, total } = computeBudgetExceedStats(users);
+  console.log(`   Budgets exceeded — ${exceeded}/${total} (${((exceeded / total) * 100).toFixed(1)}%)`);
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────
 
 async function main() {
   const start = Date.now();
   const months = monthsBack(SEED_MONTHS);
-  console.log(`\nPopulating ${SEED_TX_COUNT} transactions across ${SEED_USERS} users (${SEED_MONTHS} months) → ${DB.host}:${DB.port}/${DB.database}\n`);
+  console.log(`\nPopulating ${SEED_TX_COUNT} transactions across ${SEED_USERS} users (${SEED_MONTHS} months, skew=${SEED_SKEW}) → ${DB.host}:${DB.port}/${DB.database}\n`);
 
   const client = new Client(DB);
   await client.connect();
@@ -336,25 +508,32 @@ async function main() {
     }
 
     const passwordHash = await bcrypt.hash(SHARED_PASSWORD, 10);
-    const now = new Date();
 
-    // Exact distribution: base + remainder, so sums land exactly on the target.
-    const baseTxPerUser = Math.floor(SEED_TX_COUNT / SEED_USERS);
-    const userRemainder = SEED_TX_COUNT % SEED_USERS;
+    // Pareto-ish skew across users (rank 1 = biggest), each floored at
+    // SEED_MONTHS so every user keeps at least one transaction per month
+    // (its salary slot — see monthSlots/temporalAllocation).
+    const userTotals = paretoAllocation(SEED_TX_COUNT, SEED_USERS, SEED_SKEW, SEED_MONTHS);
+    const globalAvgPerMonth = SEED_TX_COUNT / SEED_USERS / SEED_MONTHS;
 
     const users = [];
     for (let i = 1; i <= SEED_USERS; i++) {
-      const user = buildUser(i, months);
-      const txForUser = baseTxPerUser + (i <= userRemainder ? 1 : 0);
-      const baseTxPerMonth = Math.floor(txForUser / SEED_MONTHS);
-      const monthRemainder = txForUser % SEED_MONTHS;
-      const txPerMonth = months.map((_, m) => baseTxPerMonth + (m < monthRemainder ? 1 : 0));
-
+      const txPerMonth = temporalAllocation(userTotals[i - 1], SEED_MONTHS);
+      const user = buildUser(i, months, txPerMonth, globalAvgPerMonth);
       generateTransactions(user, months, txPerMonth);
       users.push(user);
     }
 
-    const totalTx = users.reduce((s, u) => s + u.transactions.length, 0);
+    // Flatten and sort by date GLOBALLY (not grouped by user) before the
+    // bulk insert below — this is what makes the heap's physical layout
+    // resemble production, where rows from many users arrive interleaved
+    // in time rather than clustered by user_id. It's also what gives
+    // transaction_date a physical correlation close to 1 in pg_stats after
+    // ANALYZE (verified as one of the acceptance checks) — inserting
+    // user-then-date order would leave the heap ordered by user_id instead,
+    // and a date-range query's cost estimate wouldn't reflect reality.
+    const allTransactions = users.flatMap((u) => u.transactions);
+    allTransactions.sort((a, b) => a.transactionDate - b.transactionDate);
+    const totalTx = allTransactions.length;
 
     await bulkInsert(
       client,
@@ -365,8 +544,8 @@ async function main() {
         email: u.email,
         password_hash: passwordHash,
         full_name: `Usuario Carga ${u.email.match(/user-(\d+)/)[1]}`,
-        created_at: now,
-        updated_at: now,
+        created_at: new Date(),
+        updated_at: new Date(),
       })),
     );
 
@@ -383,8 +562,8 @@ async function main() {
           initial_balance: a.initialBalance,
           current_balance: a.balance,
           is_archived: false,
-          created_at: now,
-          updated_at: now,
+          created_at: new Date(),
+          updated_at: new Date(),
         })),
       ),
     );
@@ -401,8 +580,8 @@ async function main() {
           nature: c.nature,
           color: c.color,
           icon: c.icon,
-          created_at: now,
-          updated_at: now,
+          created_at: new Date(),
+          updated_at: new Date(),
         })),
       ),
     );
@@ -429,22 +608,36 @@ async function main() {
       client,
       'transactions',
       ['id', 'user_id', 'account_id', 'category_id', 'nature', 'amount', 'description', 'transaction_date', 'created_at'],
-      users.flatMap((u) =>
-        u.transactions.map((t) => ({
-          id: t.id,
-          user_id: t.userId,
-          account_id: t.accountId,
-          category_id: t.categoryId,
-          nature: t.nature,
-          amount: t.amount,
-          description: t.description,
-          transaction_date: t.transactionDate,
-          created_at: t.createdAt,
-        })),
-      ),
+      allTransactions.map((t) => ({
+        id: t.id,
+        user_id: t.userId,
+        account_id: t.accountId,
+        category_id: t.categoryId,
+        nature: t.nature,
+        amount: t.amount,
+        description: t.description,
+        transaction_date: t.transactionDate,
+        created_at: t.createdAt,
+      })),
     );
 
     await client.query('COMMIT');
+
+    // ANALYZE runs OUTSIDE the transaction (after COMMIT, same connection):
+    // without fresh stats the planner would still see these tables as
+    // whatever they were before this run (often empty), and every
+    // EXPLAIN taken afterward would be measuring noise, not the dataset.
+    if (!NO_ANALYZE) {
+      await client.query('ANALYZE transactions, accounts, budgets, categories, users');
+    } else {
+      console.log(`  … --no-analyze: skipping ANALYZE on purpose (stats stay stale — rows= vs actual rows= should diverge)`);
+    }
+
+    const sizeRes = await client.query(`
+      SELECT pg_size_pretty(pg_total_relation_size('transactions')) AS size,
+             reltuples::bigint AS reltuples
+      FROM pg_class WHERE relname = 'transactions'
+    `);
 
     const elapsed = ((Date.now() - start) / 1000).toFixed(1);
     console.log(`Done in ${elapsed}s:`);
@@ -453,6 +646,10 @@ async function main() {
     console.log(`   categories   ${users.reduce((s, u) => s + u.categories.length, 0)}`);
     console.log(`   budgets      ${users.reduce((s, u) => s + u.budgets.length, 0)}`);
     console.log(`   transactions ${totalTx}`);
+    console.log(`   transactions table — ${sizeRes.rows[0].size}, reltuples=${sizeRes.rows[0].reltuples}`);
+
+    printDistributionReport(users, allTransactions);
+
     console.log(`\n   Sample login   ${users[0].email} / ${SHARED_PASSWORD}`);
     console.log(`   Re-run with --reset to wipe these ${users.length} users and regenerate.\n`);
   } catch (err) {
