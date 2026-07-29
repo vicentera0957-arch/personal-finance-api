@@ -238,12 +238,26 @@ function monthSlots(count) {
 
 function chargeAccount(account, amount) {
   // Mirrors the domain's Balance >= 0 invariant even though this path
-  // bypasses the VO — clamp instead of letting a seed run produce a
-  // nonsensical negative balance.
-  const available = account.balance;
-  const applied = Math.max(1, Math.min(amount, available));
+  // bypasses the VO — clamp to whatever's actually available instead of
+  // letting a seed run produce a negative balance. Never floor above 0:
+  // once an account is drained, further charges apply cleanly (0 CLP),
+  // they never push it negative.
+  const applied = Math.min(amount, account.balance);
   account.balance -= applied;
   return applied;
+}
+
+// Secondary accounts (savings-type) never receive salary, so over 12
+// months of random redirects they can run dry. Only redirect an expense to
+// one if it can actually cover it — otherwise fall back to the primary
+// account, which is replenished by salary every month.
+function pickExpenseAccount(user, amount) {
+  const primary = user.accounts[0];
+  if (user.accounts.length > 1 && Math.random() < 0.25) {
+    const candidate = pick(user.accounts.slice(1));
+    if (candidate.balance >= amount) return candidate;
+  }
+  return primary;
 }
 
 function generateTransactions(user, months, txPerMonth) {
@@ -254,27 +268,35 @@ function generateTransactions(user, months, txPerMonth) {
     for (const slot of slots) {
       const date = randomDateInMonth(month, year);
       const cat = user.categories.find((c) => c.name === slot.cat);
-      const account = slot.cat === 'Sueldo' ? primary : pick(user.accounts.length > 1 && Math.random() < 0.3 ? user.accounts : [primary]);
 
-      let amount;
+      // One random draw per transaction — reused for both account
+      // selection (does a secondary account have enough?) and the charge
+      // itself, instead of drawing twice and letting them disagree.
+      let rawAmount;
       let description;
       if (slot.cat === 'Sueldo') {
-        amount = variance(user.salaryBase, 0.05);
+        rawAmount = variance(user.salaryBase, 0.05);
         description = 'Sueldo mensual';
-        account.balance += amount;
       } else if (slot.cat === 'Arriendo') {
-        amount = chargeAccount(account, variance(user.arriendoBase, 0.03));
+        rawAmount = variance(user.arriendoBase, 0.03);
         description = 'Arriendo depto';
       } else if (slot.cat === 'Servicios') {
-        amount = chargeAccount(account, randomInt(20_000, 80_000));
+        rawAmount = randomInt(20_000, 80_000);
         description = 'Cuentas de servicios (luz/agua/gas)';
-      } else if (slot.kind === 'income') {
-        amount = randomInt(...slot.amt);
+      } else {
+        rawAmount = randomInt(...slot.amt);
         description = pick(DESCRIPTIONS[slot.cat] ?? [slot.cat]);
+      }
+
+      let amount;
+      let account;
+      if (slot.kind === 'income') {
+        account = primary;
+        amount = rawAmount;
         account.balance += amount;
       } else {
-        amount = chargeAccount(account, randomInt(...slot.amt));
-        description = pick(DESCRIPTIONS[slot.cat] ?? [slot.cat]);
+        account = pickExpenseAccount(user, rawAmount);
+        amount = chargeAccount(account, rawAmount);
       }
 
       user.transactions.push({
