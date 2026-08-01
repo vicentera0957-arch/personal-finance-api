@@ -49,6 +49,6 @@ import { DeleteAccountUseCase } from './application/use-cases/delete-account.use
       scope: Scope.REQUEST,
     },
   ],
-  exports: [AccountMapper, GetAccountByIdUseCase, GetAccountsByUserIdUseCase],
+  exports: [AccountMapper, GetAccountByIdUseCase],
 })
 export class AccountsModule {}

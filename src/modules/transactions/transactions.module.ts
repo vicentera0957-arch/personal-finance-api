@@ -28,7 +28,7 @@ import { BudgetsModule } from '../budgets/budgets.module';
 @Module({
   imports: [
     TypeOrmModule.forFeature([TransactionOrmEntity]),
-    AccountsModule, // provee AccountMapper, GetAccountByIdUseCase y GetAccountsByUserIdUseCase
+    AccountsModule, // provee AccountMapper y GetAccountByIdUseCase
     CategoriesModule, // provee GetCategoryByIdUseCase
     forwardRef(() => BudgetsModule), // provee GetBudgetByUserCategoryPeriodUseCase
   ],
@@ -68,6 +68,6 @@ import { BudgetsModule } from '../budgets/budgets.module';
       useExisting: TypeOrmUnitOfWorkImpl,
     },
   ],
-  exports: [ITransactionUnitOfWork, IBudgetUnitOfWork],
+  exports: [IBudgetUnitOfWork],
 })
 export class TransactionsModule {}
