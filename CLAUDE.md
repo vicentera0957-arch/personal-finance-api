@@ -6,48 +6,20 @@ Source of truth for collaborators (humans and AI). Mixes **reference** (tables, 
 
 ## Stack & commands
 
-- **Runtime:** NestJS 11 + TypeORM + PostgreSQL 15 (alpine in dev).
-- **Auth:** JWT access + refresh, refresh persisted with rotation + replay detection.
-- **Scheduling:** `@nestjs/schedule` (refresh-token cleanup cron).
-- **Validation:** `class-validator` DTOs at the HTTP boundary, `joi` for env vars.
-- **Local DB:** `docker-compose` exposes Postgres on port **5433** (not 5432) and pgAdmin on 5051. Use `DB_PORT=5433` in `.env`.
+Stack and npm scripts are in `package.json`. What that file does **not** tell you:
+
+- **Local DB:** `docker-compose` exposes Postgres on port **5433** (not 5432) and pgAdmin on 5051. Use `DB_PORT=5433` in `.env`. The integration suite reads `test/.env.test`, which also points at 5433 — if the compose stack isn't up, every integration suite fails at bootstrap with an unrelated-looking error.
 - **Schema in dev:** `synchronize` is opt-in via `DB_SYNCHRONIZE=true` AND `NODE_ENV !== 'production'`. Default is `false` — migrations are the path. Note: `synchronize` only creates tables from entities, **not** the `v_period_expenses` view (it has no entity), so a dev DB built with `DB_SYNCHRONIZE=true` will lack the view and break any query that reads it. Run `migration:run` — the view lives in a hand-written migration, never in `migration:generate` output.
-
-Scripts you'll actually use:
-
-```
-npm run start:dev          # nest start --watch
-npm test                   # all unit tests
-npm run test:integration   # integration suite (uses test/.env.test)
-npm run migration:run      # apply pending migrations
-npm run migration:generate # generate from current entity diff
-npm run lint
-```
 
 ---
 
 ## Architecture
 
-Each module has the same three-layer skeleton:
+Every module has the same `domain/` → `application/` → `infrastructure/` skeleton; `ls src/modules/<module>` shows the layout. The rules that the layout does **not** show:
 
-```
-src/modules/<module>/
-  domain/                   # Pure: no NestJS, no TypeORM, no HTTP
-    entities/               # Rich entities, private constructors
-    value-objects/          # Immutable, self-validating
-    exceptions/             # Plain Error subclasses
-    repository/             # Port interfaces (abstract classes)
-    I<Module>UnitOfWork.ts  # If module needs transactional boundary
-  application/
-    use-cases/              # One class per use case, single execute()
-    schedulers/             # @Cron jobs (auth only today)
-  infrastructure/
-    persistence/            # ORM entity, mapper, repo impl, UoW impl
-    http/
-      dto/                  # class-validator request/response DTOs
-      <name>-controller/    # NestJS controller — maps domain → HTTP
-    adapters/               # External-system adapters (bcrypt, JWT, …)
-```
+- `domain/` is pure — no NestJS, no TypeORM, no HTTP. That prohibition is the whole point of the layer.
+- `application/use-cases/` is one class per use case with a single `execute()`.
+- `reports` is the one sanctioned exception to the three layers (see the read-model section under "Patterns").
 
 ### Why DDD with abstract-class ports
 
@@ -202,17 +174,11 @@ The budget row functions as a **logical mutex** for its invariant ("Σ period ex
 
 ### Closed race conditions (historical)
 
-Kept here so future contributors don't redo the analysis. All currently closed.
-
-| ID     | Scenario                                                                      | How it was closed                                                                                                                                                                                          |
-| ------ | ----------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Bug A  | `PATCH /budgets/:id/limit` racing `POST /transactions` (write skew on limit)  | `ScopedBudgetRepository.findById` and `findByUserIdAndCategoryIdAndPeriod` take `FOR UPDATE`. `CreateTransaction` reads the budget through the scoped repo, not the global use case.                       |
-| Bug B  | Two concurrent `POST /transactions` on the same account (lost balance update) | `ScopedAccountRepository.findById` takes `FOR UPDATE`.                                                                                                                                                     |
-| Bug E  | Two concurrent `POST /auth/register` with same email returned 500             | `UserRepositoryImpl.save()` catches `QueryFailedError` 23505 → `UserAlreadyExistsException` → 409.                                                                                                         |
-| Race 1 | `DELETE /budgets/:id` racing `POST /transactions` (TOCTOU outside DB tx)      | `DeleteBudget` runs inside `IBudgetUnitOfWork`; `getScopedExpenseChecker().hasExpensesInPeriod` runs under the same `QueryRunner`, serialized by the budget-row `FOR UPDATE` taken first.                                                                |
-| Race 2 | `PATCH /accounts/:id/{archive,unarchive,name}` racing transaction mutations   | All three rewritten to inject `IAccountUnitOfWork`; `findById` takes `FOR UPDATE` and competes with `CreateTransaction`/`DeleteTransaction`.                                                               |
-| Race 3 | Two concurrent `DELETE /transactions/:id` (double-reverse balance)            | `ScopedTransactionRepository.findByIdWithLock` takes `FOR UPDATE`. `DeleteTransactionUseCase` does fail-fast outside UoW (cheap 404/403) then re-fetches inside UoW. Second arrival sees null after first commits. |
-| B4     | `PATCH /budgets/:id/limit` could lower limit below already-spent amount       | `UpdateBudgetLimitUseCase` sums period expenses (`ScopedExpenseChecker.sumExpenseAmountInPeriod`, no own lock) under the budget-row `FOR UPDATE` and throws `BudgetLimitBelowSpentException` (→ 409) when `new limit < spent`.         |
+Seven closed races (Bug A/B/E, Race 1/2/3, B4) with the analysis that closed each one:
+`docs/history/closed-race-conditions.md`. Read it before changing anything in the locking map above
+— it is why each lock exists. The regression net is
+`test/integration/concurrency/concurrency.integration.spec.ts`, and those scenarios must keep
+passing **unmodified**.
 
 ---
 
@@ -280,35 +246,11 @@ Single source of truth. **If you change a controller's mapping, change this tabl
 
 ### Endpoints
 
-**Auth** (all `@Public()` — no JWT required)
+The route table is in the controllers (`src/modules/*/infrastructure/http/*/`). What the decorators don't tell you:
 
-| Method | Route            |
-| ------ | ---------------- |
-| POST   | `/auth/register` |
-| POST   | `/auth/login`    |
-| POST   | `/auth/refresh`  |
-| POST   | `/auth/logout`   |
-
-All other routes are protected by the global JWT guard (`APP_GUARD`). The actor is read from `@CurrentUser()`. Collection endpoints (`GET /accounts`, etc.) implicitly scope to the caller; item endpoints enforce ownership inside the use case.
-
-**Users**
-`GET /users/:id` · `PATCH /users/:id/profile` · `DELETE /users/:id`
-(Account creation is `POST /auth/register`.)
-
-**Accounts**
-`POST /accounts` · `GET /accounts` · `GET /accounts/:id` · `PATCH /accounts/:id/name` · `PATCH /accounts/:id/archive` · `PATCH /accounts/:id/unarchive` · `DELETE /accounts/:id`
-
-**Categories**
-`POST /categories` · `GET /categories` · `GET /categories/:id` · `PATCH /categories/:id` · `DELETE /categories/:id`
-
-**Budgets** (collection accepts `?month=&year=`)
-`POST /budgets` · `GET /budgets` · `GET /budgets/:id` · `PATCH /budgets/:id/limit` · `DELETE /budgets/:id`
-
-**Transactions** (collection accepts `?page=&limit=&from=&to=`)
-`POST /transactions` · `GET /transactions` · `GET /transactions/account/:accountId` · `GET /transactions/:id` · `DELETE /transactions/:id`
-
-**Reports**
-`GET /reports/summary?month=&year=` — both params **required** (a "current month" default would depend on the server timezone; requiring the pair also caps query cost to a single month by construction). Empty period → `200` with zeros.
+- **All four `/auth/*` routes are `@Public()`**; every other route is protected by the global JWT guard (`APP_GUARD`). The actor comes from `@CurrentUser()` — collection endpoints implicitly scope to the caller, item endpoints enforce ownership inside the use case.
+- **`GET /reports/summary?month=&year=` requires both params.** A "current month" default would depend on the server timezone, and requiring the pair caps query cost to a single month by construction. Empty period → `200` with zeros, not `404`.
+- **Transactions have no update route.** They are immutable by design: delete and recreate.
 
 ---
 
@@ -358,14 +300,16 @@ Three layers, every time a uniqueness rule exists:
 
 ## Deployment
 
-Build → Release → Run (12-factor). Full runbook in `docs/deployment.md`.
+Build → Release → Run (12-factor). **Full runbook: `docs/deployment.md`** — read it before touching
+the `Dockerfile`, `docker-entrypoint.sh` or the prod migration flow.
 
-- **Build:** multi-stage `Dockerfile` → `node:20-alpine` runtime with `dist/` + prod deps only, non-root user, `tini` as PID 1 (forwards SIGTERM so `enableShutdownHooks()` closes cleanly).
-- **Release:** `docker-entrypoint.sh` runs `migration:run` against `dist/data-source.js` **before** the app starts (`RUN_MIGRATIONS=false` to skip when a separate Job handles it).
-- **`data-source.ts` is env-aware:** detects compiled (`.js`→`dist/`) vs ts-node (`.ts`→`src/`) so the same file serves dev and the prod image. Prod scripts: `migration:run:prod`, `migration:show:prod`.
-- **DB connection:** `DB_SSL` (TLS for managed Postgres) + pool (`DB_POOL_MAX`, `DB_CONNECTION_TIMEOUT_MS`) in `app.module.ts` and `data-source.ts`.
-- **Bootstrap hardening (`main.ts`):** `TRUST_PROXY` (real client IP behind a LB, required for per-IP throttling), CORS forbids `'*'` in production (enforced by Joi in `env.validation.ts`).
-- **Health:** `/health` (liveness, `AppController`) and `/ready` (readiness via `@nestjs/terminus`, `src/shared/infrastructure/health/`) — both `@Public()` and excluded from the `api/v1` prefix.
+The two traps that bite outside a deploy:
+
+- **`data-source.ts` is env-aware** — it detects compiled (`.js`→`dist/`) vs ts-node (`.ts`→`src/`) so
+  one file serves dev and the prod image. Change it carelessly and migrations break in exactly one
+  of the two environments.
+- **Migrations run at release, not at boot** — `docker-entrypoint.sh` applies them before the app
+  starts (`RUN_MIGRATIONS=false` when a separate Job handles it).
 
 ---
 
