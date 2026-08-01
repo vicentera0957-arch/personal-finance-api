@@ -8,6 +8,43 @@
 
 ---
 
+## 0. Estado actual vs. propuesta
+
+### 0.1 Lo que YA está implementado hoy (estado anterior, nada de esto es propuesta)
+
+| Pieza | Dónde | Cómo está hoy |
+| --- | --- | --- |
+| Puerto `IAccountUnitOfWork` | `accounts/domain/IAccountUnitOfWork.ts` | **Ya está en su lugar correcto.** Expone un solo getter. No se toca |
+| Provider del puerto | `transactions.module.ts:71-74`, exportado en `:76` | Lo declara **transactions**, que nunca lo inyecta. Existe solo para alimentar a accounts |
+| Import de vuelta | `accounts.module.ts:15` y `:29` | `forwardRef(() => TransactionsModule)` — **única** arista `accounts → transactions` en todo el módulo |
+| `ScopedAccountRepository` | privado dentro de `transactions/infrastructure/persistence/unit-of-work.impl.ts` | Toma el `FOR UPDATE` sobre la fila de cuenta (mecanismo de la Race 2), escrito fuera del módulo dueño |
+| Los 3 use cases | `archive` / `unarchive` / `rename` | Inyectan `IAccountUnitOfWork` y usan **solo** `getScopedAccountRepository()` + ciclo de vida (`findById`, `save`) |
+| ORM | `account.orm.entity.ts:9` | Importa solo `UserOrmEntity` → **no hay ciclo a nivel ORM** |
+| Test que verifique el `FOR UPDATE` de cuenta | — | **No existe uno directo.** Ver §7.1 |
+
+**Consecuencia del estado actual:** el ciclo es puramente de composición. Ningún use case, entidad, VO, mapper, repo ni controller de accounts importa nada de transactions — solo el archivo de módulo, y solo por el token.
+
+### 0.2 Lo que este plan PROPONE cambiar
+
+| # | Propuesta | Estado |
+| --- | --- | --- |
+| 1 | **CREAR** `accounts/infrastructure/persistence/scoped-account.repository.ts` — el repo scoped y su `FOR UPDATE` vuelven a su módulo dueño | ✅ §4 paso 1 |
+| 2 | **CREAR** `accounts/infrastructure/persistence/account-unit-of-work.impl.ts` — UoW propio, molde de `AuthUnitOfWorkImpl` | ✅ §4 paso 2 |
+| 3 | **EDITAR** `accounts.module.ts` — cae el `forwardRef`, entra el provider propio | ✅ §4 paso 3 |
+| 4 | **EDITAR** `transactions.module.ts` + `unit-of-work.impl.ts` — cae el binding y el export ajenos; transactions compone la pieza que accounts publica | ✅ §4 pasos 4-5 |
+| 5 | **CREAR** un test unitario que assertee la opción `lock` en `findOne` | ✅ §4 paso 6 — **obligatorio**, ver abajo |
+| 6 | P5 (angostar el puerto a una capacidad acotada) | ⏸ **Diferido** — §3 |
+
+**Los 3 use cases y sus `.spec.ts` NO cambian.** Es criterio de corrección, no aspiración: si el plan los obliga a cambiar, el plan está mal (§5).
+
+### 0.3 Dos advertencias sobre este documento
+
+**1. La decisión de diseño de §2.4 quedó superada.** Este plan recomienda la **Opción A endurecida** (publicar la clase scoped con un guard en el constructor). Tras contrastarla con el plan hermano de budgets, la decisión adoptada es la **Opción B — factory acotada que recibe un `QueryRunner`, no un `EntityManager`**: con esa firma `dataSource.manager` **deja de compilar**, lo que mueve la verificación de runtime a tiempo de compilación, y además valida `isTransactionActive`, cubriendo el caso de un runner conectado pero sin transacción abierta que el guard de constructor deja pasar. El diagnóstico del riesgo en §2.2 sigue siendo válido y vale la pena leerlo; lo que cambia es dónde se ataja. Ver `src/PLAN-P1P2-budgets.md` §2.
+
+**2. El oráculo de integración es necesario pero NO suficiente.** Si el `FOR UPDATE` del lado accounts desapareciera, el test de la Race 2 (`concurrency.integration.spec.ts:357-389`) **pasaría igual**. Por eso el test unitario del punto 5 no es opcional. Detalle en §7.1.
+
+---
+
 ## 1. Estado verificado del acoplamiento
 
 ### 1.1 Todo lo que `accounts` importa de `transactions`

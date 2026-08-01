@@ -5,6 +5,41 @@
 
 ---
 
+## 0. Estado actual vs. propuesta
+
+### 0.1 Lo que YA está implementado hoy (estado anterior, nada de esto es propuesta)
+
+| Pieza | Dónde | Cómo está hoy |
+| --- | --- | --- |
+| Invalidación de caché en `DeleteBudget` | `delete-budget.use-case.ts:50-59` | Corre **después** del `commit()` pero **dentro del `try`** |
+| Invalidación de caché en `UpdateBudgetLimit` | `update-budget-limit.use-case.ts:62-71` | Igual |
+| `catch` de ambos | mismos archivos | Llama `await this.uow.rollback()` sin verificar si la transacción sigue abierta |
+| `rollback()` de los UoW | `unit-of-work.impl.ts`, `auth-unit-of-work.impl.ts` | `await this.queryRunner?.rollbackTransaction()` — **sin guard** de estado transaccional |
+| `isActive()` | ambos impls | Existe, devuelve `queryRunner !== null`, y **no se usa en ningún lado** |
+| TTL de la caché de budgets | `budgets-cache.impl.ts:8` | 600 s |
+| Protección equivalente en auth | `refresh-token.use-case.ts:28,87` | **Ya resuelto** ahí con un flag `committed` — precedente vivo, no se toca |
+| Cobertura del fallo de caché post-commit | — | **No existe ningún test.** Por eso el defecto pasó inadvertido |
+
+**Consecuencia del estado actual:** si Redis está caído, la invalidación lanza → cae al `catch` → `rollback()` sobre una transacción ya commiteada → TypeORM lanza `TransactionNotStartedError`, que enmascara el error original. El budget quedó borrado, pero el cliente recibe un 500.
+
+### 0.2 Lo que este plan PROPONE cambiar
+
+| # | Propuesta | Estado |
+| --- | --- | --- |
+| **A** | Invalidación en su propio `try/catch` inmediatamente tras el `commit()`, con `logger.warn` | ✅ **Recomendada** — §3 |
+| **C** | Endurecer `rollback()` en **ambos** impls con `queryRunner.isTransactionActive` | ✅ **Recomendada como complemento** — §3 |
+| **B** | Mover la invalidación después del `finally` | ❌ Descartada — §3 |
+| **D** | Flag `committed` replicando el de auth | ❌ Descartada — §3 |
+| **E** | Fire-and-forget | ❌ Descartada — §3 |
+| **F** | Reintentos / outbox | ❌ Descartada — §3 |
+| — | Dos tests unitarios nuevos con un doble de caché que explota | ✅ Parte de la propuesta — §4 |
+
+**Por qué A + C y no solo una:** C sola **no arregla P7** — el error de Redis seguiría propagando y el cliente seguiría viendo un 500, solo que con el error correcto en lugar del enmascarado. A sola arregla el síntoma pero deja `rollback()` sin protección para el próximo llamador que se equivoque.
+
+**Corrección respecto del enunciado original del problema:** `isActive()` **no sirve** como guard para C. Devuelve `queryRunner !== null`, o sea verdadero desde `begin()` hasta `release()`, **incluido después del `commit()`**. El guard correcto es `queryRunner.isTransactionActive`. Además `isActive()` debe conservar su semántica actual porque P4 la necesita para el guard de reentrada en `begin()`.
+
+---
+
 ## 1. Alcance real, verificado
 
 ### 1.1 Método de barrido

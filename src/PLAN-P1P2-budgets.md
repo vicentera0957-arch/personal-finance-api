@@ -8,6 +8,46 @@
 
 ---
 
+## 0. Estado actual vs. propuesta
+
+### 0.1 Lo que YA está implementado hoy (estado anterior, nada de esto es propuesta)
+
+| Pieza | Dónde | Cómo está hoy |
+| --- | --- | --- |
+| Puertos `IBudgetUnitOfWork` e `IExpenseChecker` | `budgets/domain/` | **Ya están en su lugar correcto.** No se mueven |
+| Provider de `IBudgetUnitOfWork` | `transactions.module.ts:67-70`, exportado en `:76` | Lo declara **transactions**, que nunca lo inyecta |
+| Import de vuelta | `budgets.module.ts:17` y `:23` | `forwardRef(() => TransactionsModule)` — `grep` sobre todo `budgets/` devuelve **una sola** coincidencia hacia transactions |
+| `ScopedExpenseChecker` | `transactions/.../unit-of-work.impl.ts:188-243` | Recibe **solo** un `EntityManager` (`:189`) y consulta `v_period_expenses` en SQL crudo (`:203`, `:231`). No toca `TransactionOrmEntity` ni `TransactionMapper` → **es código de budgets alojado en el archivo equivocado** |
+| `ScopedBudgetRepository` | mismo archivo | Toma el `FOR UPDATE` sobre la fila de budget — el mutex lógico del invariante de período — escrito fuera del módulo dueño |
+| Los 2 use cases | `DeleteBudget`, `UpdateBudgetLimit` | Usan **solo** `getScopedBudgetRepository()` + `getScopedExpenseChecker()` + ciclo de vida |
+| Suma de gastos del período | `unit-of-work.impl.ts:57-90` **y** `:220-242` | **Duplicada byte a byte**: misma sentencia, misma firma, mismos nombres de parámetro (P6) |
+| Equivalencia entre ambos caminos | `summary-enforcement-equivalence.integration.spec.ts:88-126` | El suite **ya trata la divergencia como bug** — usa las tres sondas 200/409/422 |
+| Nº de use cases que inyectan dos tokens de UoW | los 8 revisados | **Cero.** Ver §1.4 — es el pilar del argumento de locks |
+
+### 0.2 Lo que este plan PROPONE cambiar
+
+| Commit | Propuesta | Naturaleza |
+| --- | --- | --- |
+| **1** | Mover `ScopedExpenseChecker` a `budgets/infrastructure` | Movimiento puro, sin cambio de DI — §4.1 |
+| **2** | Extraer `createScopedBudgetRepository` como factory acotada | Movimiento puro — §4.2 |
+| **3** | `BudgetUnitOfWorkImpl` propio + recableado de ambos módulos | El P1 propiamente dicho — §4.3 |
+| **4** | Consolidar la suma duplicada (P6) | Separado y **posterior** al split — §5.3 |
+| — | Detección positiva del `FOR UPDATE` (test) | Recomendada una vez — §7.2 |
+
+**Punto de rollback de mayor valor: después del commit 2.** Ahí todo el código de locks ya está en su módulo definitivo detrás de factories validadas, y el grafo de DI **todavía no cambió** — o sea, P2 queda resuelto sin haber tocado P1.
+
+**Los 2 use cases de budgets y sus `.spec.ts`: cero líneas modificadas** (§6.1, §6.2). Criterio de corrección.
+
+### 0.3 Decisión de diseño — adoptada globalmente
+
+Este plan recomienda la **Opción B (factory acotada)** y **esa es la decisión adoptada para todo el refactor**, incluido `accounts` (cuyo plan proponía la Opción A y quedó superado). La diferencia no es ceremonial: la factory recibe un `QueryRunner`, no un `EntityManager`, así que `dataSource.manager` **deja de compilar** — la verificación pasa de runtime a tiempo de compilación — y valida `isTransactionActive`, con lo que un runner conectado pero sin transacción abierta falla ruidosamente. Es más fuerte que el estado actual, donde `this.queryRunner!.manager` no valida nada.
+
+### 0.4 Advertencia — regresión que el split introduce
+
+Hoy el `useExisting` de `transactions.module.ts:63-74` hace **estructuralmente imposible** que un request abra dos transacciones. Tras el split esa propiedad se pierde: un use case que inyecte dos puertos de UoW puede auto-bloquearse (TX_A con `FOR UPDATE`, TX_B esperándola en la misma cadena de `await`) y consumir dos slots de `DB_POOL_MAX`. Es un costo real del refactor, no un detalle. Ver §8.3.
+
+---
+
 ## 1. Estado verificado del acoplamiento
 
 ### 1.1 La arista `budgets → transactions` existe por un solo motivo
