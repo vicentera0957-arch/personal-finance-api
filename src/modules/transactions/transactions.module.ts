@@ -13,7 +13,6 @@ import { TypeOrmUnitOfWorkImpl } from './infrastructure/persistence/unit-of-work
 import { ITransactionRepository } from './domain/repository/transaction.repository';
 import { ITransactionUnitOfWork } from './domain/ITransactionUnitOfWork';
 import { IBudgetUnitOfWork } from '../budgets/domain/IBudgetUnitOfWork';
-import { IAccountUnitOfWork } from '../accounts/domain/IAccountUnitOfWork';
 // Use Cases
 import { CreateTransactionUseCase } from './application/use-cases/create-transaction.use-case';
 import { GetTransactionByIdUseCase } from './application/use-cases/get-transaction-by-id.use-case';
@@ -29,7 +28,7 @@ import { BudgetsModule } from '../budgets/budgets.module';
 @Module({
   imports: [
     TypeOrmModule.forFeature([TransactionOrmEntity]),
-    forwardRef(() => AccountsModule), // provee GetAccountByIdUseCase + IAccountRepository
+    AccountsModule, // provee AccountMapper, GetAccountByIdUseCase y GetAccountsByUserIdUseCase
     CategoriesModule, // provee GetCategoryByIdUseCase
     forwardRef(() => BudgetsModule), // provee GetBudgetByUserCategoryPeriodUseCase
   ],
@@ -54,7 +53,7 @@ import { BudgetsModule } from '../budgets/budgets.module';
     // to each module-specific port via `useExisting` so all consumers share
     // the SAME instance (and therefore the same QueryRunner) per request.
     {
-      provide: TypeOrmUnitOfWorkImpl, //This token is never used directly — only the module-specific interfaces (ITransactionUnitOfWork, IAccountUnitOfWork, IBudgetUnitOfWork) are injected into the use cases.
+      provide: TypeOrmUnitOfWorkImpl, //This token is never used directly — only the module-specific interfaces (ITransactionUnitOfWork, IBudgetUnitOfWork) are injected into the use cases.
       useClass: TypeOrmUnitOfWorkImpl, //But we still need to provide the concrete class itself here so Nest can instantiate it and manage its lifecycle.
       scope: Scope.REQUEST,
     },
@@ -68,11 +67,7 @@ import { BudgetsModule } from '../budgets/budgets.module';
       provide: IBudgetUnitOfWork,
       useExisting: TypeOrmUnitOfWorkImpl,
     },
-    {
-      provide: IAccountUnitOfWork,
-      useExisting: TypeOrmUnitOfWorkImpl,
-    },
   ],
-  exports: [ITransactionUnitOfWork, IBudgetUnitOfWork, IAccountUnitOfWork],
+  exports: [ITransactionUnitOfWork, IBudgetUnitOfWork],
 })
 export class TransactionsModule {}

@@ -2,7 +2,6 @@ import { Injectable, Scope } from '@nestjs/common';
 import { DataSource, EntityManager, QueryRunner } from 'typeorm';
 import { ITransactionUnitOfWork } from '../../domain/ITransactionUnitOfWork';
 import { IBudgetUnitOfWork } from '../../../budgets/domain/IBudgetUnitOfWork';
-import { IAccountUnitOfWork } from '../../../accounts/domain/IAccountUnitOfWork';
 import { IScopedTransactionRepository } from '../../domain/repository/scoped-transaction.repository';
 import { IAccountRepository } from '../../../accounts/domain/repository/accounts.repository';
 import { IBudgetRepository } from '../../../budgets/domain/repository/budgets.repository';
@@ -10,9 +9,8 @@ import { IExpenseChecker } from '../../../budgets/domain/repository/expense-chec
 import { Transaction } from '../../domain/entities/transaction.entity';
 import { TransactionOrmEntity } from './transaction.orm.entity';
 import { TransactionMapper } from './transaction.mapper';
-import { AccountOrmEntity } from '../../../accounts/infrastructure/persistence/account.orm.entity';
 import { AccountMapper } from '../../../accounts/infrastructure/persistence/account.mapper';
-import { Account } from '../../../accounts/domain/entities/account.entity';
+import { createScopedAccountRepository } from '../../../accounts/infrastructure/persistence/scoped-account.repository';
 import { BudgetOrmEntity } from '../../../budgets/infrastructure/persistence/budget.orm.entity';
 import { BudgetMapper } from '../../../budgets/infrastructure/persistence/budget.mapper';
 import { Budget } from '../../../budgets/domain/budget.entity';
@@ -91,43 +89,6 @@ class ScopedTransactionRepository extends IScopedTransactionRepository {
 
   async delete(id: string): Promise<void> {
     await this.manager.delete(TransactionOrmEntity, id);
-  }
-}
-
-class ScopedAccountRepository extends IAccountRepository {
-  constructor(
-    private readonly manager: EntityManager,
-    private readonly mapper: AccountMapper,
-  ) {
-    super();
-  }
-
-  // LOCK (FOR UPDATE): account row, held until commit. Serializes every balance
-  // mutation on this account — CreateTransaction, DeleteTransaction, and the
-  // Archive/Unarchive/Rename use cases all compete for this same row (Race 2).
-  async findById(id: string): Promise<Account | null> {
-    const orm = await this.manager.findOne(AccountOrmEntity, {
-      where: { id },
-      lock: { mode: 'pessimistic_write' },
-    });
-    return orm ? this.mapper.toDomain(orm) : null;
-  }
-
-  async findByUserId(userId: string): Promise<Account[]> {
-    const orms = await this.manager.find(AccountOrmEntity, {
-      where: { userId },
-    });
-    return orms.map((orm) => this.mapper.toDomain(orm));
-  }
-
-  async save(account: Account): Promise<Account> {
-    const orm = this.mapper.toOrm(account);
-    const saved = await this.manager.save(AccountOrmEntity, orm);
-    return this.mapper.toDomain(saved);
-  }
-
-  async delete(id: string): Promise<void> {
-    await this.manager.delete(AccountOrmEntity, id);
   }
 }
 
@@ -254,7 +215,7 @@ class ScopedExpenseChecker extends IExpenseChecker {
 @Injectable({ scope: Scope.REQUEST })
 export class TypeOrmUnitOfWorkImpl
   extends ITransactionUnitOfWork
-  implements IBudgetUnitOfWork, IAccountUnitOfWork
+  implements IBudgetUnitOfWork
 {
   private queryRunner: QueryRunner | null = null;
 
@@ -299,10 +260,7 @@ export class TypeOrmUnitOfWorkImpl
   }
 
   getScopedAccountRepository(): IAccountRepository {
-    return new ScopedAccountRepository(
-      this.queryRunner!.manager,
-      this.accountMapper,
-    );
+    return createScopedAccountRepository(this.queryRunner!, this.accountMapper);
   }
 
   getScopedBudgetRepository(): IBudgetRepository {
