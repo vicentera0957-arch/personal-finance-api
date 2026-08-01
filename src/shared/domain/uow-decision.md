@@ -10,8 +10,18 @@ Example: ITransactionUnitOfWork exposes getTransactionRepository() + getAccountR
 
 This port lives in the consumer module's domain/ ("port owned by consumer" pattern), even though it returns repo interfaces of other modules. Those repo interfaces are those of their owning module's domain (e.g. IAccountRepository still belongs to accounts/domain); the UoW merely exposes them grouped according to what the use case needs.
 
-Level 3 - Single implementation (infrastructure/persistence/unit-of-work.impl.ts)
-A single class TypeOrmUnitOfWorkImpl that satisfies every UoW port whose getters it knows how to serve. It is wired in NestJS with useExisting, pointing all the ports to the same request-scoped provider -> same instance, same QueryRunner, same DB transaction within a request.
+Level 3 - One implementation per transactional boundary
+There is no single global impl. Each impl serves the ports whose flows share one boundary:
+
+- TypeOrmUnitOfWorkImpl (transactions/infrastructure/persistence/unit-of-work.impl.ts) - serves ITransactionUnitOfWork and IBudgetUnitOfWork, wired with useExisting so both point at the same request-scoped provider -> same instance, same QueryRunner, same DB transaction within a request. This sharing is required only by CreateTransaction, the one flow that takes several scoped repos at once.
+- AccountUnitOfWorkImpl (accounts/infrastructure/persistence/account-unit-of-work.impl.ts) - serves IAccountUnitOfWork. Archive/Unarchive/Rename touch only the account aggregate, so accounts owns its boundary and imports nothing.
+- AuthUnitOfWorkImpl (auth/infrastructure/persistence/auth-unit-of-work.impl.ts) - serves IAuthUnitOfWork. Refresh-token rotation touches only refresh_tokens.
+
+The rule: a module whose transactional flows touch only its own aggregate owns its impl. Serving another module's UoW token from your own module is what created the accounts <-> transactions cycle, now removed.
+
+Note what useExisting does NOT buy. Scope.REQUEST already means one instance per request, so two concurrent requests always had distinct QueryRunners. Cross-request serialization comes from the Postgres row lock, not from a shared instance - which is exactly why splitting the impl costs no concurrency guarantee.
+
+Scoped repos needed by more than one impl (ScopedAccountRepository) stay unexported and are reached through a factory that takes a QueryRunner, not an EntityManager, so passing dataSource.manager does not compile.
 
 How the use case consumes it (reference: create-transaction.use-case.ts:30)
 

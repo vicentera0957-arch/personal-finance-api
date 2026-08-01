@@ -63,7 +63,8 @@ reports → (schema-only dependency on transactions, via the v_period_expenses v
 ```
 
 - `auth` sits above `users` because login/register call `GetUserByEmailUseCase` and `CreateUserUseCase`.
-- Domain modules (accounts, categories, budgets, transactions) are peers but with one direction of dependency: **transactions → budgets → categories → accounts**, plus the cycle resolved via the "port owned by consumer" pattern (see below).
+- Domain modules (accounts, categories, budgets, transactions) are peers but with one direction of dependency: **transactions → budgets → categories → accounts**, plus the remaining `transactions ↔ budgets` cycle resolved via the "port owned by consumer" pattern (see below).
+- **`accounts` is a leaf.** It owns its own `AccountUnitOfWorkImpl`, so it imports no other module and nothing of `transactions`. The `accounts ↔ transactions` cycle (and its `forwardRef`) is gone; `transactions → accounts` remains, one-way, because the multi-aggregate invariant lives in transactions.
 - `reports` imports **no** other module. Its only link to `transactions` is at the **schema** level (the view reads the `transactions` table); there is zero compile-time coupling. See the reports read-model section under "Patterns".
 
 ---
@@ -120,28 +121,35 @@ Consequences and rules:
 
 ### The model
 
-The system has **two** concrete UoW implementations, satisfying **four** module-specific ports:
+The system has **three** concrete UoW implementations, satisfying **four** module-specific ports:
 
 | Port                     | Owner                 | Used by                                  | Implemented by          |
 | ------------------------ | --------------------- | ---------------------------------------- | ----------------------- |
 | `IUnitOfWork`            | `shared/domain`       | (base — lifecycle only)                  | both impls              |
 | `ITransactionUnitOfWork` | `transactions/domain` | `CreateTransaction`, `DeleteTransaction` | `TypeOrmUnitOfWorkImpl` |
 | `IBudgetUnitOfWork`      | `budgets/domain`      | `UpdateBudgetLimit`, `DeleteBudget`      | `TypeOrmUnitOfWorkImpl` |
-| `IAccountUnitOfWork`     | `accounts/domain`     | `Archive`, `Unarchive`, `Rename`         | `TypeOrmUnitOfWorkImpl` |
+| `IAccountUnitOfWork`     | `accounts/domain`     | `Archive`, `Unarchive`, `Rename`         | `AccountUnitOfWorkImpl` |
 | `IAuthUnitOfWork`        | `auth/domain`         | `RefreshToken`                           | `AuthUnitOfWorkImpl`    |
 
-**`TypeOrmUnitOfWorkImpl`** lives in `transactions/infrastructure/`. One class implements three module ports. NestJS wires them via `useExisting`, so all three resolve to the same request-scoped instance — and therefore the same `QueryRunner` / DB transaction.
+**`TypeOrmUnitOfWorkImpl`** lives in `transactions/infrastructure/`. One class implements two module ports. NestJS wires them via `useExisting`, so both resolve to the same request-scoped instance — and therefore the same `QueryRunner` / DB transaction.
+
+Note what this sharing does and does **not** buy. It is required **within one request**, so that a use case taking several scoped repos gets them all on one transaction — only `CreateTransaction` needs that. It buys nothing **between** requests: `Scope.REQUEST` already means one instance per request, so two concurrent requests always had distinct `QueryRunner`s. What serializes them is the Postgres row lock, not the shared instance. That is why a module whose flows touch a single aggregate can own its UoW without weakening anything.
 
 ```ts
 { provide: TypeOrmUnitOfWorkImpl,  useClass: TypeOrmUnitOfWorkImpl, scope: Scope.REQUEST }
 { provide: ITransactionUnitOfWork, useExisting: TypeOrmUnitOfWorkImpl }
 { provide: IBudgetUnitOfWork,      useExisting: TypeOrmUnitOfWorkImpl }
-{ provide: IAccountUnitOfWork,     useExisting: TypeOrmUnitOfWorkImpl }
 ```
 
 ### Why the impl lives in `transactions/`
 
-Every multi-aggregate invariant in this domain is anchored to a `Transaction` mutation: balance update, budget-limit enforcement, period-spent sums. The races that need `FOR UPDATE` all involve the transactions module. The other modules' invariants (uniqueness of email, of budget per period, etc.) are enforced by DB constraints + `catch 23505`, not by application-level locks. This makes `transactions` the natural home for the impl. The ports in each consumer's domain express ownership of the _contract_; the impl in transactions expresses ownership of the _driving need_.
+Every **multi-aggregate** invariant in this domain is anchored to a `Transaction` mutation: balance update, budget-limit enforcement, period-spent sums. Those are the only flows that need several scoped repos inside one transaction, so `transactions` is the natural home for the impl that composes them.
+
+The scope of that claim is narrow, and the rule that follows from it is: **a module whose transactional flows touch only its own aggregate owns its UoW impl.** `Archive` / `Unarchive` / `Rename` take only the account repo, so `accounts` owns `AccountUnitOfWorkImpl` — same reasoning that already kept `auth` separate. What stays in `transactions` is the *composition* of the three-aggregate boundary, not the persistence of its neighbours.
+
+### Why `IAccountUnitOfWork` is separate
+
+`Archive`, `Unarchive` and `Rename` need a transaction and a `FOR UPDATE` on the account row — nothing else. Serving that from the transactions impl forced `accounts` to import `TransactionsModule` just to resolve the token, which closed a module cycle for no domain reason. `AccountUnitOfWorkImpl` lives in `accounts/infrastructure/`, and `accounts` is now a leaf. Cross-request serialization against `CreateTransaction` / `DeleteTransaction` is unaffected: both paths lock the same row, and locks live in Postgres, not in the instance.
 
 ### Why `IAuthUnitOfWork` is separate
 
@@ -149,18 +157,29 @@ Auth's transactional boundary is independent: refresh-token rotation only touche
 
 ### Scoped resources
 
-The transactional UoW exposes four scoped resources, all sharing the same `EntityManager`(typeorm):
+`TypeOrmUnitOfWorkImpl` exposes four scoped resources, all sharing the same `EntityManager`(typeorm):
 
-- `getTransactionRepository()` → `ScopedTransactionRepository`
-- `getAccountRepository()` → `ScopedAccountRepository`
-- `getBudgetRepository()` → `ScopedBudgetRepository`
+- `getScopedTransactionRepository()` → `ScopedTransactionRepository`
+- `getScopedAccountRepository()` → `ScopedAccountRepository` (built from `accounts`' factory — see below)
+- `getScopedBudgetRepository()` → `ScopedBudgetRepository`
 - `getScopedExpenseChecker()` → `ScopedExpenseChecker`
+
+`AccountUnitOfWorkImpl` exposes one:
+
+- `getScopedAccountRepository()` → `ScopedAccountRepository`
 
 The auth UoW exposes:
 
 - `getRefreshTokenRepository()` → `ScopedRefreshTokenRepository`
 
-These classes are **private to the impl file**. The only way to obtain them is through the UoW. They take pessimistic locks aggressively because, by construction, they only ever execute inside an active `QueryRunner` — reading by id inside a transaction implies intent to mutate.
+These classes take pessimistic locks aggressively because, by construction, they only ever execute inside an active `QueryRunner` — reading by id inside a transaction implies intent to mutate.
+
+**How that "by construction" is enforced.** Two shapes coexist:
+
+- **Private to the impl file** — the class is declared in the same file as the UoW that hands it out, and never exported (`ScopedTransactionRepository`, `ScopedBudgetRepository`, `ScopedExpenseChecker`, `ScopedRefreshTokenRepository`). The guarantee is syntactic: it holds only while there is exactly one consumer.
+- **Private class + exported factory** — used when a second module legitimately needs the same scoped repo on *its* `QueryRunner` (`ScopedAccountRepository`, consumed by both `AccountUnitOfWorkImpl` and `TypeOrmUnitOfWorkImpl`). The class stays unexported; the only way in is `createScopedAccountRepository(queryRunner, mapper)`.
+
+**The factory takes a `QueryRunner`, never an `EntityManager`.** That is the whole point: `dataSource.manager` is an `EntityManager`, so passing it stops *compiling*. A `QueryRunner` that is connected but has no open transaction is still type-correct and still silently useless, so the factory also throws on `isReleased || !isTransactionActive`. Never publish a scoped repository class directly — a `FOR UPDATE` that quietly does nothing is the worst failure mode in this system, and no integration test reliably catches it.
 
 ### Locking & serialization map
 
@@ -168,7 +187,7 @@ Row-based reads (`findById`, `findByTokenHashWithLock`) take `FOR UPDATE`. Aggre
 
 | Method                                                                | Purpose                                                                                                                                                                                                     |
 | --------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ScopedAccountRepository.findById`                                    | Serializes balance mutations (`CreateTransaction`, `DeleteTransaction`, `Archive`, `Unarchive`, `Rename`) on the same account row                                                                           |
+| `ScopedAccountRepository.findById`                                    | Serializes balance mutations (`CreateTransaction`, `DeleteTransaction`, `Archive`, `Unarchive`, `Rename`) on the same account row. Lives in `accounts/infrastructure/persistence/scoped-account.repository.ts`; the two callers reach it through **different** UoWs and therefore different `QueryRunner`s — they still serialize, because the lock is on the row |
 | `ScopedBudgetRepository.findById`                                     | Serializes `UpdateBudgetLimit` and `DeleteBudget` against concurrent transaction creates                                                                                                                    |
 | `ScopedBudgetRepository.findByUserIdAndCategoryIdAndPeriod`           | Serializes the budget-limit check inside `CreateTransaction`                                                                                                                                                |
 | `ScopedTransactionRepository.findByIdWithLock`                                | Serializes concurrent `DELETE /transactions/:id` on the same row — second arrival sees null after first commits, throws `TransactionNotFoundException`, rolls back. Prevents double-reverse of the balance. |
@@ -359,5 +378,6 @@ Build → Release → Run (12-factor). Full runbook in `docs/deployment.md`.
 - **Do not** take `userId` from the request body or URL. Always `@CurrentUser()`.
 - **Do not** call `VO.create()` in a mapper. Use `VO.reconstitute()` so persisted data isn't re-validated.
 - **Do not** throw `HttpException` from the domain layer. Domain throws domain exceptions; controllers map.
-- **Do not** inject `DataSource` directly in a use case. Use the module's UoW port. If the existing port doesn't expose what you need, extend the port and add a getter to `TypeOrmUnitOfWorkImpl` (or `AuthUnitOfWorkImpl` for auth-only flows).
+- **Do not** inject `DataSource` directly in a use case. Use the module's UoW port. If the existing port doesn't expose what you need, extend the port and add a getter to the impl that serves it (`AccountUnitOfWorkImpl`, `AuthUnitOfWorkImpl`, or `TypeOrmUnitOfWorkImpl` for the multi-aggregate boundary).
+- **Do not** declare a provider for another module's UoW token. A module that needs a transactional boundary over its own aggregate implements its own UoW; serving it from a neighbour is what created the `accounts ↔ transactions` cycle. Only the genuinely multi-aggregate boundary is shared, and it lives with the module that drives it.
 - **Do not** read inside an open UoW with the global (non-scoped) repository. The global repo runs on a different connection — locks won't apply, and you'll think your invariant is protected when it isn't.

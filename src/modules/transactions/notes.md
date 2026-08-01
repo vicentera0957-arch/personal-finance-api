@@ -46,9 +46,9 @@ Abstract class that **extends `IUnitOfWork`** (`shared/domain`). The lifecycle c
 
 What this port **adds** are the getters for the repositories that `CreateTransactionUseCase` and `DeleteTransactionUseCase` need to coordinate writes across the three aggregates within a single transaction:
 
-- `getTransactionRepository()` → scoped `ITransactionRepository`
-- `getAccountRepository()` → scoped `IAccountRepository`
-- `getBudgetRepository()` → scoped `IBudgetRepository`
+- `getScopedTransactionRepository()` → scoped `IScopedTransactionRepository`
+- `getScopedAccountRepository()` → scoped `IAccountRepository`
+- `getScopedBudgetRepository()` → scoped `IBudgetRepository`
 
 The three scoped repos share the active `QueryRunner`'s `EntityManager`, so every read/write runs in the same PostgreSQL transaction. By construction (they are only obtained via the UoW, already inside an open tx) their by-id reads take `FOR UPDATE` — see the *Architectural decision — locks in scoped repos* section below.
 
@@ -118,7 +118,9 @@ The third one covers the `sumExpenseAmountByUserCategoryAndPeriod` that runs on 
 
 > The **pattern** (why a single impl satisfies several ports, why the ports are `abstract class`, why they are counted per *atomic operation* and not per module) lives in [shared/domain/uow-decision.md](../../shared/domain/uow-decision.md) and in CLAUDE.md. This section documents only the **concrete mechanics** of this class — to avoid duplicating the "why" and having it drift again.
 
-A single concrete class that satisfies **three** module ports: `ITransactionUnitOfWork` (extends it), `IBudgetUnitOfWork` and `IAccountUnitOfWork` (implements them). The three tokens resolve to the **same** instance via `useExisting` in the wiring — an alias, not copies. Scope: `REQUEST` — NestJS creates a new instance per request, so each request has its own isolated `QueryRunner`.
+A single concrete class that satisfies **two** module ports: `ITransactionUnitOfWork` (extends it) and `IBudgetUnitOfWork` (implements it). Both tokens resolve to the **same** instance via `useExisting` in the wiring — an alias, not copies. Scope: `REQUEST` — NestJS creates a new instance per request, so each request has its own isolated `QueryRunner`.
+
+`IAccountUnitOfWork` used to be a third alias here. It moved to `accounts`, which now owns `AccountUnitOfWorkImpl`: its three use cases touch only the account aggregate, so they never needed this multi-aggregate engine, and serving them from here forced `accounts` to import this module and closed a cycle. Note what `useExisting` actually buys — a shared `QueryRunner` **within one request**, which only `CreateTransactionUseCase` needs. Between requests it buys nothing, because `Scope.REQUEST` already yields one instance per request; what serializes concurrent requests is the Postgres row lock.
 
 #### State and lifecycle
 
@@ -138,12 +140,14 @@ The optional chaining (`?.`) in commit/rollback/release makes calling them witho
 
 Four getters build the scoped repos, all on `this.queryRunner!.manager` (the active runner's `EntityManager`):
 
-- `getTransactionRepository()` → `ScopedTransactionRepository`
-- `getAccountRepository()` → `ScopedAccountRepository`
-- `getBudgetRepository()` → `ScopedBudgetRepository`
+- `getScopedTransactionRepository()` → `ScopedTransactionRepository`
+- `getScopedAccountRepository()` → `ScopedAccountRepository`, built by `createScopedAccountRepository()` from `accounts/infrastructure/persistence/scoped-account.repository.ts`
+- `getScopedBudgetRepository()` → `ScopedBudgetRepository`
 - `getScopedExpenseChecker()` → `ScopedExpenseChecker` (satisfies the `IExpenseChecker` port of `budgets`, *port owned by consumer* pattern)
 
-The four classes are **private to the file** (not exported). The only way to obtain them is through the UoW, and that only makes sense after `begin()`. That guarantee is what justifies the `!` (non-null assertion) on `queryRunner` in the getters: by contract they are never called with the runner at `null`. Since they all share the same `manager`, every read and write lands in the same PostgreSQL transaction.
+Three of those classes are **private to this file** (not exported). The only way to obtain them is through the UoW, and that only makes sense after `begin()`. That guarantee is what justifies the `!` (non-null assertion) on `queryRunner` in the getters: by contract they are never called with the runner at `null`. Since they all share the same `manager`, every read and write lands in the same PostgreSQL transaction.
+
+`ScopedAccountRepository` is the exception, and deliberately so: `accounts` also needs it for its own `AccountUnitOfWorkImpl`, so the class lives in `accounts/infrastructure` — next to the aggregate whose invariant its `FOR UPDATE` protects — and is still unexported there. Both UoWs reach it through the same factory, each passing its own `QueryRunner`. The factory takes a `QueryRunner` rather than an `EntityManager` precisely so that `dataSource.manager` fails to compile; it also throws if the runner has no active transaction. Same guarantee as the private classes, enforced by types instead of by file scope.
 
 #### Locks by construction
 
@@ -181,8 +185,8 @@ Exception mapping:
 
 ## Wiring — `TransactionsModule`
 
-Imports: `AccountsModule`, `BudgetsModule` (with `forwardRef` because of the cycle), `CategoriesModule`.
-Exports: `IExpenseChecker` (implementation used by `BudgetsModule` to validate budget deletion).
+Imports: `AccountsModule` (direct — no `forwardRef`, the cycle is gone), `BudgetsModule` (with `forwardRef`, that cycle is still open), `CategoriesModule`.
+Exports: `ITransactionUnitOfWork` and `IBudgetUnitOfWork`.
 
 ---
 

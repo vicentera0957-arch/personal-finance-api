@@ -85,6 +85,15 @@ Abstract class. Methods: `findById`, `findByUserId`, `save`, `delete`.
 | `DeleteAccountUseCase` | Delegates to `GetAccountByIdUseCase` (existence + ownership) → `repo.delete()` — no UoW (doesn't mutate balance) |
 
 > **Why Rename/Archive/Unarchive use the UoW and Delete doesn't:** the first three compete for the account row's lock against `CreateTransaction`/`DeleteTransaction` (see Race 2). `Delete` doesn't mutate the balance, so it doesn't need to serialize with the financial mutations.
+
+> **`IAccountUnitOfWork` is served by this module.** `AccountUnitOfWorkImpl`
+> (`infrastructure/persistence/account-unit-of-work.impl.ts`) exposes a single
+> `getScopedAccountRepository()`. It used to come from `transactions`, which forced this module to
+> import `TransactionsModule` and closed a dependency cycle — for no domain reason, since
+> `transactions` never injected that token. Competing for the same row lock never required the same
+> UoW instance: `Scope.REQUEST` already gives one instance per request, so an `archive` and a
+> `POST /transactions` always ran on separate `QueryRunner`s. The serialization is Postgres holding
+> the row until commit. **`accounts` is now a leaf module.**
 | `UpdateAccountBalanceUseCase` | `repo.findById()` → `account.inflow()` or `account.outflow()` → `repo.save()` |
 
 ### `UpdateAccountBalanceUseCase` — consumed by `transactions`
@@ -95,7 +104,7 @@ This use case IS consumed by `CreateTransactionUseCase` and `DeleteTransactionUs
 
 ```typescript
 // create-transaction.use-case.ts (inside the UoW block)
-const acctRepo = this.uow.getAccountRepository(); // ScopedAccountRepository
+const acctRepo = this.uow.getScopedAccountRepository(); // ScopedAccountRepository
 const updateBalance = new UpdateAccountBalanceUseCase(acctRepo);
 await updateBalance.execute(command.accountId, amount.getValue(), 'inflow' | 'outflow');
 ```
@@ -153,7 +162,16 @@ Exports:
 - `GetAccountByIdUseCase` — consumed by `budgets` and `transactions` (cross-module ownership check)
 - `GetAccountsByUserIdUseCase` — consumed by `transactions`
 - `UpdateAccountBalanceUseCase` — consumed by `transactions`
-- `IAccountRepository` — consumed by `transactions` for the UoW scoped repo
+- `AccountMapper` — consumed by `transactions` to build the scoped repo on its own `QueryRunner`
+
+Imports: only `TypeOrmModule.forFeature([AccountOrmEntity])`. **No domain module** — `accounts` is a leaf.
+
+`createScopedAccountRepository(queryRunner, mapper)`
+(`infrastructure/persistence/scoped-account.repository.ts`) is exported as a plain function, not as
+a NestJS provider. The class behind it stays unexported, and the factory takes a `QueryRunner`
+rather than an `EntityManager` on purpose: `dataSource.manager` then fails to compile, so the
+`FOR UPDATE` cannot silently degrade to autocommit. It also throws if the runner is released or has
+no active transaction.
 
 ---
 

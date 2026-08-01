@@ -54,19 +54,27 @@ between the `findById` and the `commit`, the row is locked for everyone else.
 
 ## 3. The transactional boundary — Unit of Work
 
-Two concrete implementations, separated by **atomic operation**, not by module:
+Three concrete implementations, separated by **atomic operation**, not by module:
 
 - **`TypeOrmUnitOfWorkImpl`** (`transactions/infrastructure/persistence/unit-of-work.impl.ts`) —
-  satisfies 3 ports (`ITransactionUnitOfWork`, `IBudgetUnitOfWork`, `IAccountUnitOfWork`) via
-  `useExisting`. One `Scope.REQUEST` instance → one `QueryRunner` → one PG transaction shared
-  by the three financial modules.
+  satisfies 2 ports (`ITransactionUnitOfWork`, `IBudgetUnitOfWork`) via `useExisting`. One
+  `Scope.REQUEST` instance → one `QueryRunner` → one PG transaction, which `CreateTransaction`
+  needs because it writes three aggregates at once.
+- **`AccountUnitOfWorkImpl`** (`accounts/infrastructure/`) — separate: `Archive`, `Unarchive` and
+  `Rename` touch only the account aggregate.
 - **`AuthUnitOfWorkImpl`** (`auth/infrastructure/`) — separate: refresh-token rotation shares no
   invariant with the financial aggregates.
 
-A single financial impl because **every multi-aggregate invariant in the domain is anchored to a
-`Transaction` mutation** (balance, limit, period sum). The three ports are three *roles* of the
-same transactional engine; `useExisting` expresses "same object, three narrow contracts". Pattern
-details in [uow-decision.md](../src/shared/domain/uow-decision.md).
+`transactions` keeps the multi-aggregate impl because **every multi-aggregate invariant in the
+domain is anchored to a `Transaction` mutation** (balance, limit, period sum).
+
+**What `useExisting` does not do.** It shares one `QueryRunner` *within a request*, which only a
+use case taking several scoped repos needs. It is irrelevant *between* requests: `Scope.REQUEST`
+already yields one instance per request, so two concurrent requests always had separate
+`QueryRunner`s. Cross-request serialization is the Postgres row lock — held until commit and
+visible on any connection. Hence a module whose flows touch one aggregate can own its impl at no
+cost to concurrency, which is why `IAccountUnitOfWork` moved out. Pattern details in
+[uow-decision.md](../src/shared/domain/uow-decision.md).
 
 ---
 
@@ -74,7 +82,7 @@ details in [uow-decision.md](../src/shared/domain/uow-decision.md).
 
 | Read (scoped) | Lock | Serializes |
 | --- | --- | --- |
-| `ScopedAccountRepository.findById` | **FOR UPDATE** | Balance mutations: Create/DeleteTransaction + Archive/Unarchive/Rename (Race 2, Bug B) |
+| `ScopedAccountRepository.findById` | **FOR UPDATE** | Balance mutations: Create/DeleteTransaction + Archive/Unarchive/Rename (Race 2, Bug B). Defined in `accounts/infrastructure/persistence/scoped-account.repository.ts`; the two callers reach it from different UoWs and therefore different `QueryRunner`s — the row lock serializes them regardless |
 | `ScopedBudgetRepository.findById` | **FOR UPDATE** | UpdateBudgetLimit, DeleteBudget vs concurrent creates |
 | `ScopedBudgetRepository.findByUserIdAndCategoryIdAndPeriod` | **FOR UPDATE** | The period-invariant gate in CreateTransaction (Bug A) |
 | `ScopedTransactionRepository.findById` | **FOR UPDATE** | Double DELETE of the same tx (Race 3) |

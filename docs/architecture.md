@@ -50,7 +50,7 @@ flowchart LR
 
 Module-to-module dependencies, taken from each module's NestJS `imports`. A **solid**
 edge is a direct import; a **dashed** edge is a `forwardRef()` that closes a dependency
-cycle. `users` and `categories` are leaves (they import no other domain module).
+cycle. `users`, `categories` and `accounts` are leaves (they import no other domain module).
 
 ```mermaid
 graph TD
@@ -62,17 +62,20 @@ graph TD
     budgets --> categories
 
     budgets -. forwardRef .-> transactions
-    accounts -. forwardRef .-> transactions
 
-    linkStyle 5,6 stroke:#d39e00,stroke-width:2px;
+    linkStyle 5 stroke:#d39e00,stroke-width:2px;
 ```
 
-There are two cycles — `accounts ↔ transactions` and `budgets ↔ transactions` — and
-both are deliberate. `transactions` imports `accounts`/`budgets` to read accounts,
-validate categories and check budgets; in the other direction, `accounts` and `budgets`
-need behaviour that only `transactions` can provide. That reverse direction is handled
-by the **port-owned-by-consumer** pattern (detailed for `budgets` in §2.1 and for
-`accounts` in §2.2), not by a raw import of transactions' internals.
+One cycle remains, `budgets ↔ transactions`, and it is deliberate: `transactions`
+imports `budgets` to check budgets, and `budgets` needs `IBudgetUnitOfWork` and
+`IExpenseChecker`, which `transactions` implements. That reverse direction is handled
+by the **port-owned-by-consumer** pattern (§2.1), not by a raw import of transactions'
+internals.
+
+The `accounts ↔ transactions` cycle **is gone**. It never carried domain meaning: it
+existed only because the provider for `IAccountUnitOfWork` was declared in
+`transactions.module.ts`, a token `transactions` never injected. `accounts` now owns
+`AccountUnitOfWorkImpl` and is a leaf; `transactions → accounts` remains, one-way (§2.2).
 
 | Module | Responsibility |
 | --- | --- |
@@ -125,53 +128,59 @@ flowchart LR
 > reverse (`transactions → budgets`). That inversion is the whole point — it keeps the
 > domain dependency one-way while letting the two modules collaborate.
 
-The **same shape** is used twice more, all implemented by `transactions`:
+The **same shape** is used once more, implemented by `transactions`:
 
 | Port (contract) | Owned by (domain) | Implemented by | Consumed by |
 | --- | --- | --- | --- |
 | `IExpenseChecker` | `budgets` | `transactions` (`ScopedExpenseChecker`, in the UoW) | `DeleteBudget`, `UpdateBudgetLimit` |
 | `IBudgetUnitOfWork` | `budgets` | `transactions` (`TypeOrmUnitOfWorkImpl`) | `UpdateBudgetLimit`, `DeleteBudget` |
-| `IAccountUnitOfWork` | `accounts` | `transactions` (`TypeOrmUnitOfWorkImpl`) | `Archive`, `Unarchive`, `Rename` |
+| `IAccountUnitOfWork` | `accounts` | **`accounts`** (`AccountUnitOfWorkImpl`) | `Archive`, `Unarchive`, `Rename` |
 
-### 2.2 Why `accounts` depends on `transactions`
+### 2.2 Why `accounts` does **not** depend on `transactions`
 
-Same pattern, different invariant. `accounts` has three state-changing operations —
-`archive`, `unarchive`, `rename` — that must serialize against a transaction mutating the
-**same account row**. The sharp case: archiving an account is a TOCTOU race with a
-concurrent `POST /transactions` ("Race 2"). Archived accounts are read-only, so if
-`archive` commits while a `CreateTransaction` has already read the account as *active*,
-the transaction would be applied to an account that is now archived — invariant violated.
+`accounts` has three state-changing operations — `archive`, `unarchive`, `rename` — that
+must serialize against a transaction mutating the **same account row**. The sharp case:
+archiving an account is a TOCTOU race with a concurrent `POST /transactions` ("Race 2").
+Archived accounts are read-only, so if `archive` commits while a `CreateTransaction` has
+already read the account as *active*, the transaction would be applied to an account that
+is now archived — invariant violated.
 
-The serialization point is the **account-row lock** (`SELECT ... FOR UPDATE`) that
-`CreateTransaction` / `DeleteTransaction` already take. For the account operations to
-compete for that *same* lock, they must run inside the *same* request-scoped Unit of Work
-— and the only UoW implementation (`TypeOrmUnitOfWorkImpl`) lives in `transactions`,
-because that module owns the driving need for the locks
-([ADR-0002](./adr/0002-unit-of-work-pessimistic-locks.md)).
+The serialization point is the **account-row lock** (`SELECT ... FOR UPDATE`). This module
+originally received `IAccountUnitOfWork` from `transactions`, on the belief that competing
+for the *same* lock required the *same* UoW instance. That belief was wrong, and it was
+what closed the cycle.
 
-So the port `IAccountUnitOfWork` is **owned by `accounts/domain`** and **implemented in
-`transactions/infrastructure`**; `accounts` imports `transactions` (via `forwardRef()`)
-only to receive that binding. Compile-time arrow: `transactions → accounts`. Runtime
-call (an `archive` taking the lock): `accounts → transactions`. Identical inversion to
-the expense-checker in §2.1.
+`Scope.REQUEST` already means **one instance per request**: an `archive` request and a
+`POST /transactions` request always had distinct instances, distinct `QueryRunner`s and
+distinct DB transactions. What serializes them is Postgres holding the row lock until
+commit — visible to any concurrent transaction, on any connection. Sharing the class never
+entered into it.
+
+So `accounts` implements its own `AccountUnitOfWorkImpl` and imports nothing. The single
+`ScopedAccountRepository` — with the `FOR UPDATE` — lives in `accounts/infrastructure` and
+is reached through a factory that takes a `QueryRunner`; `transactions` composes it on its
+own runner for the multi-aggregate boundary. One arrow remains, `transactions → accounts`,
+and it carries real domain weight.
 
 ```mermaid
 flowchart LR
     subgraph accounts["accounts module"]
         direction TB
-        AUC["Archive · Unarchive · Rename<br/><i>use cases — the consumer</i>"]
-        IAU["«port» IAccountUnitOfWork<br/><i>defined in accounts/domain</i>"]
+        AUC["Archive · Unarchive · Rename<br/><i>use cases</i>"]
+        IAU["«port» IAccountUnitOfWork<br/><i>accounts/domain</i>"]
+        UOW["«impl» AccountUnitOfWorkImpl<br/><i>accounts/infrastructure</i>"]
+        LOCK["ScopedAccountRepository.findById<br/>SELECT … FOR UPDATE (account row)"]
         AUC -->|"calls at runtime"| IAU
+        UOW -.->|implements| IAU
+        UOW -->|"factory (QueryRunner)"| LOCK
     end
 
     subgraph transactions["transactions module"]
         direction TB
-        UOW["«impl» TypeOrmUnitOfWorkImpl<br/><i>transactions/infrastructure</i>"]
-        LOCK["ScopedAccountRepository.findById<br/>SELECT … FOR UPDATE (account row)"]
-        UOW -->|uses| LOCK
+        TUOW["«impl» TypeOrmUnitOfWorkImpl<br/><i>transactions/infrastructure</i>"]
     end
 
-    UOW -.->|"implements (compile-time dep: transactions → accounts)"| IAU
+    TUOW -->|"same factory, its own QueryRunner<br/>(compile-time dep: transactions → accounts)"| LOCK
 
     classDef port fill:#fff3cd,stroke:#d39e00,color:#222;
     classDef impl fill:#d1e7dd,stroke:#0f5132,color:#222;
