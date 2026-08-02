@@ -14,6 +14,7 @@ import { createScopedAccountRepository } from '../../../accounts/infrastructure/
 import { BudgetOrmEntity } from '../../../budgets/infrastructure/persistence/budget.orm.entity';
 import { BudgetMapper } from '../../../budgets/infrastructure/persistence/budget.mapper';
 import { Budget } from '../../../budgets/domain/budget.entity';
+import { createScopedExpenseChecker } from '../../../budgets/infrastructure/persistence/scoped-expense-checker';
 import { monthPeriod } from '../../../../shared/domain/month-period';
 
 // ── Scoped repositories — private to this file; only the UoW constructs them ──
@@ -146,63 +147,6 @@ class ScopedBudgetRepository extends IBudgetRepository {
   }
 }
 
-class ScopedExpenseChecker extends IExpenseChecker {
-  constructor(private readonly manager: EntityManager) {
-    super();
-  }
-
-  async hasExpensesInPeriod(
-    userId: string,
-    categoryId: string,
-    month: number,
-    year: number,
-  ): Promise<boolean> {
-    const { start, end } = monthPeriod(year, month);
-    const raw = await this.manager
-      .createQueryBuilder()
-      .select('COUNT(*)', 'cnt')
-      .from('v_period_expenses', 'e')
-      .where('e.user_id = :userId', { userId })
-      .andWhere('e.category_id = :categoryId', { categoryId })
-      .andWhere('e.transaction_date >= :start', { start })
-      .andWhere('e.transaction_date < :end', { end })
-      // NO LOCK: Postgres forbids pessimistic locks on aggregates (COUNT).
-      // Serialization against CreateTransaction is guaranteed by the budget-row
-      // lock that DeleteBudgetUseCase takes BEFORE calling this checker. Locking
-      // existing rows wouldn't stop phantom inserts anyway.
-      // Reads FROM v_period_expenses (shared expense definition) on the same
-      // this.manager → same transaction; the view inlines, lock model unchanged.
-      // COUNT(*) replaces getCount() because a raw-table query builder has no
-      // entity metadata; the semantics are identical.
-      .getRawOne<{ cnt: string }>();
-    return Number(raw?.cnt ?? 0) > 0;
-  }
-
-  async sumExpenseAmountInPeriod(
-    userId: string,
-    categoryId: string,
-    month: number,
-    year: number,
-  ): Promise<number> {
-    const { start, end } = monthPeriod(year, month);
-    const raw = await this.manager
-      .createQueryBuilder()
-      .select('COALESCE(SUM(e.amount), 0)', 'total')
-      .from('v_period_expenses', 'e')
-      .where('e.user_id = :userId', { userId })
-      .andWhere('e.category_id = :categoryId', { categoryId })
-      .andWhere('e.transaction_date >= :start', { start })
-      .andWhere('e.transaction_date < :end', { end })
-      // NO LOCK: Postgres forbids pessimistic locks on aggregates (SUM).
-      // Serialization against CreateTransaction is guaranteed by the budget-row
-      // lock that UpdateBudgetLimitUseCase takes BEFORE calling this checker.
-      // Reads FROM v_period_expenses (shared expense definition) on the same
-      // this.manager → same transaction; the view inlines, lock model unchanged.
-      .getRawOne<{ total: string }>();
-    return Number(raw?.total ?? 0);
-  }
-}
-
 // ── Implementación del UoW ────────────────────────────────────────────────────
 
 /**
@@ -271,6 +215,6 @@ export class TypeOrmUnitOfWorkImpl
   }
 
   getScopedExpenseChecker(): IExpenseChecker {
-    return new ScopedExpenseChecker(this.queryRunner!.manager);
+    return createScopedExpenseChecker(this.queryRunner!);
   }
 }

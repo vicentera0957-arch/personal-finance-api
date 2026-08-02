@@ -1,6 +1,10 @@
 // Puerto para verificar si existen gastos en un periodo.
-// Definido en budgets para evitar dependencia circular con transactions.
-// La implementación concreta vive en transactions y se inyecta en budgets.
+// Puerto e implementación viven ambos en budgets (ver
+// infrastructure/persistence/scoped-expense-checker.ts, servida por
+// BudgetUnitOfWorkImpl.getScopedExpenseChecker()). No hay dependencia
+// circular con transactions que resolver aquí: transactions ni siquiera
+// importa este puerto. Consumidores: DeleteBudgetUseCase,
+// UpdateBudgetLimitUseCase.
 export abstract class IExpenseChecker {
   abstract hasExpensesInPeriod(
     userId: string,
