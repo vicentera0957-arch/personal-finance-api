@@ -1,6 +1,6 @@
 import { UpdateBudgetLimitUseCase } from './update-budget-limit.use-case';
 import { IBudgetUnitOfWork } from '../../domain/IBudgetUnitOfWork';
-import { IExpenseChecker } from '../../domain/repository/expense-checker.port';
+import { IExpenseChecker } from '../../domain/ports/expense-checker.port';
 import { InMemoryBudgetRepository } from '../../infrastructure/persistence/__fakes__/in-memory-budget.repository';
 import {
   BudgetNotFoundException,

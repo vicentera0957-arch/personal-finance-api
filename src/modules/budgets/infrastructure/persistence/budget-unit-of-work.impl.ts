@@ -2,7 +2,7 @@ import { Injectable, Scope } from '@nestjs/common';
 import { DataSource, QueryRunner } from 'typeorm';
 import { IBudgetUnitOfWork } from '../../domain/IBudgetUnitOfWork';
 import { IBudgetRepository } from '../../domain/repository/budgets.repository';
-import { IExpenseChecker } from '../../domain/repository/expense-checker.port';
+import { IExpenseChecker } from '../../domain/ports/expense-checker.port';
 import { BudgetMapper } from './budget.mapper';
 import { createScopedBudgetRepository } from './scoped-budget.repository';
 import { createScopedExpenseChecker } from './scoped-expense-checker';

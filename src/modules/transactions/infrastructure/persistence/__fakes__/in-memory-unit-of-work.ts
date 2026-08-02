@@ -3,7 +3,7 @@ import { IBudgetUnitOfWork } from '../../../../budgets/domain/IBudgetUnitOfWork'
 import { IScopedTransactionRepository } from '../../../domain/repository/scoped-transaction.repository';
 import { IAccountRepository } from '../../../../accounts/domain/repository/accounts.repository';
 import { IBudgetRepository } from '../../../../budgets/domain/repository/budgets.repository';
-import { IExpenseChecker } from '../../../../budgets/domain/repository/expense-checker.port';
+import { IExpenseChecker } from '../../../../budgets/domain/ports/expense-checker.port';
 
 export class InMemoryUnitOfWork
   extends ITransactionUnitOfWork

@@ -49,7 +49,7 @@ Business method: `updateLimit(newLimit: AmountLimit)` — replaces the limit.
 
 ### `IExpenseChecker` port
 
-**File:** `domain/repository/expense-checker.port.ts`
+**File:** `domain/ports/expense-checker.port.ts` (moved out of `domain/repository/`: it answers a derived query about a period — a `boolean`, a `number` — not an aggregate's persistence lifecycle, so it doesn't belong next to `budgets.repository.ts`. Flat under `ports/`, not `ports/query/`: `ports/cache/` groups by adapter technology, and a single domain query port doesn't warrant its own subfolder yet.)
 
 Defined here, and — as of the `IBudgetUnitOfWork` split — implemented here too: `ScopedExpenseChecker` in `infrastructure/persistence/scoped-expense-checker.ts`, unexported, reached only through `createScopedExpenseChecker(queryRunner)`. Served by `BudgetUnitOfWorkImpl.getScopedExpenseChecker()`. `transactions` does not import this port at all.
 
@@ -120,12 +120,14 @@ Exports: `GetBudgetByUserCategoryPeriodUseCase`, `BudgetMapper` — consumed by 
 Until the `IBudgetUnitOfWork` split, `budgets` needed two things from `transactions`: the `IBudgetUnitOfWork` transactional boundary itself, and `IExpenseChecker` (an answer to "are there expenses in this period, and how much?", needed by `DeleteBudget` / `UpdateBudgetLimit`). Both were implemented inside `transactions/infrastructure/persistence/unit-of-work.impl.ts`, reached from `budgets.module.ts` via `forwardRef(() => TransactionsModule)` — the "port owned by consumer" pattern:
 
 ```
-budgets/domain/repository/expense-checker.port.ts       ← defined the port
+budgets/domain/repository/expense-checker.port.ts       ← defined the port (now domain/ports/, see below)
 transactions/infrastructure/persistence/unit-of-work.impl.ts (ScopedExpenseChecker) ← implemented it
 budgets/domain/IBudgetUnitOfWork.ts                      ← defined this port too
 transactions/infrastructure/persistence/unit-of-work.impl.ts (TypeOrmUnitOfWorkImpl) ← implemented it too
 budgets.module.ts:      imported forwardRef(() => TransactionsModule)
 ```
+
+(`expense-checker.port.ts` moved a second time, independently of this cycle fix: from `domain/repository/` to `domain/ports/`, since it answers a derived query rather than modeling an aggregate's persistence lifecycle — see the `IExpenseChecker` port section above.)
 
 Neither port actually needed anything `transactions`-specific: `UpdateBudgetLimit` and `DeleteBudget` only ever needed a transaction, a `FOR UPDATE` on the budget row, and one aggregate read under that lock — all scoped to the budget aggregate. So instead of keeping the cross-module split, both implementations (`ScopedExpenseChecker`, `BudgetUnitOfWorkImpl`) moved into `budgets/infrastructure/persistence/`, next to the ports they serve. `budgets` no longer imports `transactions`; `forwardRef()` is gone from the whole module graph.
 

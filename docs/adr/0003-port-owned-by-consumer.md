@@ -20,11 +20,14 @@
 need to ask `transactions` a question (e.g. "are there expenses in this period?"),
 which would create a circular module dependency.
 
-> Fact from the code: the port `IExpenseChecker` is declared in **budgets'** domain
-> ([`expense-checker.port.ts`](../../src/modules/budgets/domain/repository/expense-checker.port.ts))
+> Fact from the code (historical — see the supersede note above): the port `IExpenseChecker` was
+> declared in **budgets'** domain
+> ([`expense-checker.port.ts`](../../src/modules/budgets/domain/ports/expense-checker.port.ts),
+> moved again since from `domain/repository/` to `domain/ports/` — it answers a derived query, not
+> a persistence lifecycle)
 > and implemented by `ScopedExpenseChecker` in **transactions'** infrastructure
 > ([`unit-of-work.impl.ts`](../../src/modules/transactions/infrastructure/persistence/unit-of-work.impl.ts)).
-> The same shape applies to `IAccountUnitOfWork`. `forwardRef()` resolves the NestJS DI graph.
+> The same shape applied to `IAccountUnitOfWork`. `forwardRef()` resolved the NestJS DI graph.
 
 ## Decision
 

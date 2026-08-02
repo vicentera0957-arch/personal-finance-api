@@ -5,7 +5,7 @@ import {
   BudgetNotFoundException,
 } from '../../domain/exceptions/budget.exceptions';
 import { ResourceOwnershipException } from '../../../../shared/domain/exceptions/resource-ownership.exception';
-import { IExpenseChecker } from '../../domain/repository/expense-checker.port';
+import { IExpenseChecker } from '../../domain/ports/expense-checker.port';
 import { makeBudget } from '../../../../test-support/factories';
 import { NullBudgetsCache } from '../../infrastructure/cache/__fakes__/null-budgets-cache';
 import { IBudgetUnitOfWork } from '../../domain/IBudgetUnitOfWork';

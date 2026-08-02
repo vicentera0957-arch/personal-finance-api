@@ -1,5 +1,5 @@
 import { EntityManager, QueryRunner } from 'typeorm';
-import { IExpenseChecker } from '../../domain/repository/expense-checker.port';
+import { IExpenseChecker } from '../../domain/ports/expense-checker.port';
 import { monthPeriod } from '../../../../shared/domain/month-period';
 
 // ── Scoped checker — private to this file; only the factory below constructs it ──
