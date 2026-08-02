@@ -11,9 +11,8 @@ import { TransactionOrmEntity } from './transaction.orm.entity';
 import { TransactionMapper } from './transaction.mapper';
 import { AccountMapper } from '../../../accounts/infrastructure/persistence/account.mapper';
 import { createScopedAccountRepository } from '../../../accounts/infrastructure/persistence/scoped-account.repository';
-import { BudgetOrmEntity } from '../../../budgets/infrastructure/persistence/budget.orm.entity';
 import { BudgetMapper } from '../../../budgets/infrastructure/persistence/budget.mapper';
-import { Budget } from '../../../budgets/domain/budget.entity';
+import { createScopedBudgetRepository } from '../../../budgets/infrastructure/persistence/scoped-budget.repository';
 import { createScopedExpenseChecker } from '../../../budgets/infrastructure/persistence/scoped-expense-checker';
 import { monthPeriod } from '../../../../shared/domain/month-period';
 
@@ -93,60 +92,6 @@ class ScopedTransactionRepository extends IScopedTransactionRepository {
   }
 }
 
-class ScopedBudgetRepository extends IBudgetRepository {
-  constructor(
-    private readonly manager: EntityManager,
-    private readonly mapper: BudgetMapper,
-  ) {
-    super();
-  }
-
-  // LOCK (FOR UPDATE): budget row, held until commit. The "logical mutex" for the
-  // period invariant (Σ expenses ≤ limit). Used by UpdateBudgetLimit / DeleteBudget
-  // when the budget id is known; serializes them against concurrent expense creates.
-  async findById(id: string): Promise<Budget | null> {
-    const orm = await this.manager.findOne(BudgetOrmEntity, {
-      where: { id },
-      lock: { mode: 'pessimistic_write' },
-    });
-    return orm ? this.mapper.toDomain(orm) : null;
-  }
-
-  async findByUserId(userId: string): Promise<Budget[]> {
-    const orms = await this.manager.find(BudgetOrmEntity, {
-      where: { userId },
-    });
-    return orms.map((orm) => this.mapper.toDomain(orm));
-  }
-
-  // LOCK (FOR UPDATE): budget row, held until commit. Same logical mutex as
-  // findById, but reached by the natural tuple (user, category, month, year)
-  // instead of the PK. This is the gate CreateTransaction takes first, before
-  // summing period expenses — so both paths converge on the same locked row.
-  async findByUserIdAndCategoryIdAndPeriod(
-    userId: string,
-    categoryId: string,
-    month: number,
-    year: number,
-  ): Promise<Budget | null> {
-    const orm = await this.manager.findOne(BudgetOrmEntity, {
-      where: { userId, categoryId, month, year },
-      lock: { mode: 'pessimistic_write' },
-    });
-    return orm ? this.mapper.toDomain(orm) : null;
-  }
-
-  async save(budget: Budget): Promise<Budget> {
-    const orm = this.mapper.toOrm(budget);
-    const saved = await this.manager.save(BudgetOrmEntity, orm);
-    return this.mapper.toDomain(saved);
-  }
-
-  async delete(id: string): Promise<void> {
-    await this.manager.delete(BudgetOrmEntity, id);
-  }
-}
-
 // ── Implementación del UoW ────────────────────────────────────────────────────
 
 /**
@@ -208,10 +153,7 @@ export class TypeOrmUnitOfWorkImpl
   }
 
   getScopedBudgetRepository(): IBudgetRepository {
-    return new ScopedBudgetRepository(
-      this.queryRunner!.manager,
-      this.budgetMapper,
-    );
+    return createScopedBudgetRepository(this.queryRunner!, this.budgetMapper);
   }
 
   getScopedExpenseChecker(): IExpenseChecker {
