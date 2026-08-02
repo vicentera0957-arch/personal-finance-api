@@ -48,9 +48,11 @@ flowchart LR
 
 ## 2. Module graph
 
-Module-to-module dependencies, taken from each module's NestJS `imports`. A **solid**
-edge is a direct import; a **dashed** edge is a `forwardRef()` that closes a dependency
-cycle. `users`, `categories` and `accounts` are leaves (they import no other domain module).
+Module-to-module dependencies, taken from each module's NestJS `imports`. Every edge
+below is a **direct** import — there are **no cycles** and **no `forwardRef()`** calls
+anywhere in the module graph. `users`, `categories`, `accounts` and `budgets` are
+leaves (they import no other *domain* module; `budgets` still imports `categories`,
+itself a leaf).
 
 ```mermaid
 graph TD
@@ -60,22 +62,24 @@ graph TD
     transactions --> categories["categories"]
     transactions --> budgets["budgets"]
     budgets --> categories
-
-    budgets -. forwardRef .-> transactions
-
-    linkStyle 5 stroke:#d39e00,stroke-width:2px;
 ```
 
-One cycle remains, `budgets ↔ transactions`, and it is deliberate: `transactions`
-imports `budgets` to check budgets, and `budgets` needs `IBudgetUnitOfWork` and
-`IExpenseChecker`, which `transactions` implements. That reverse direction is handled
-by the **port-owned-by-consumer** pattern (§2.1), not by a raw import of transactions'
-internals.
+Both cycles that used to exist here are gone, and both closed the **same way**: not by
+keeping the `forwardRef()` split, but by moving the shared port's implementation into
+the module that owns the port, so the neighbour stops needing anything back from
+`transactions` at all.
 
-The `accounts ↔ transactions` cycle **is gone**. It never carried domain meaning: it
-existed only because the provider for `IAccountUnitOfWork` was declared in
-`transactions.module.ts`, a token `transactions` never injected. `accounts` now owns
-`AccountUnitOfWorkImpl` and is a leaf; `transactions → accounts` remains, one-way (§2.2).
+- The `accounts ↔ transactions` cycle **is gone** (§2.2): the provider for
+  `IAccountUnitOfWork` used to be declared in `transactions.module.ts`, a token
+  `transactions` itself never injected. `accounts` now owns `AccountUnitOfWorkImpl`
+  and is a leaf; `transactions → accounts` remains, one-way.
+- The `budgets ↔ transactions` cycle **is gone** (§2.1): the providers for
+  `IBudgetUnitOfWork` and `IExpenseChecker` used to be declared in
+  `transactions.module.ts` (well, `IExpenseChecker`'s impl lived there; `budgets`
+  reached it via `forwardRef(() => TransactionsModule)`). `budgets` now owns
+  `BudgetUnitOfWorkImpl` and is a leaf; `transactions → budgets` remains, one-way,
+  because `CreateTransaction` is the one flow with a genuine multi-aggregate
+  invariant (transaction + account + budget rows, one PostgreSQL transaction).
 
 | Module | Responsibility |
 | --- | --- |
@@ -86,55 +90,75 @@ existed only because the provider for `IAccountUnitOfWork` was declared in
 | **budgets** | One budget per (user, category, month, year). Limit enforcement. |
 | **transactions** | Immutable, single-entry records ([ADR-0005](./adr/0005-single-entry-immutable-transactions.md)). All creates/deletes run inside a Unit of Work. |
 
-### 2.1 Port owned by consumer — how `budgets` depends on `transactions`
+### 2.1 Why `budgets` does **not** depend on `transactions`
 
-`budgets` needs to ask `transactions` a question — *"are there expenses in this period,
-and how much?"* — to enforce its rules (`DeleteBudget`, `UpdateBudgetLimit`). But
-`transactions` already imports `budgets`. A direct call back would be a hard cycle.
+`budgets` used to need `transactions` for two things: the `IBudgetUnitOfWork`
+transactional boundary, and an answer to *"are there expenses in this period, and how
+much?"* (`IExpenseChecker`) to enforce `DeleteBudget` / `UpdateBudgetLimit`. Both used
+to be implemented in `transactions/infrastructure/persistence/unit-of-work.impl.ts`,
+reached from `budgets.module.ts` via `forwardRef(() => TransactionsModule)` — the
+**"port owned by consumer"** pattern ([ADR-0003](./adr/0003-port-owned-by-consumer.md)):
+`budgets` (the consumer) owned the port's domain contract, `transactions` (the
+provider) supplied the implementation, and `forwardRef()` patched the resulting DI
+cycle.
 
-The fix: the **port is defined in the consumer's domain (`budgets`)**, and the
-**implementation lives in the provider (`transactions`)**. So the compile-time
-dependency points `transactions → budgets` (the impl imports the port), while the
-runtime call points `budgets → transactions` (the use case calls the impl that DI
-injected). `forwardRef()` lets NestJS wire the cycle. See
-[ADR-0003](./adr/0003-port-owned-by-consumer.md).
+That pattern is the right tool when a genuine two-way dependency exists. Here it
+didn't have to: neither `UpdateBudgetLimit` nor `DeleteBudget` ever needed anything
+`transactions`-specific — they needed a transaction, a `FOR UPDATE` on the budget row,
+and an aggregate read under that lock, all scoped to the budget aggregate alone. So
+instead of keeping the cross-module split, `ScopedExpenseChecker` and
+`BudgetUnitOfWorkImpl` moved into `budgets/infrastructure/persistence/`, next to the
+port they serve. `budgets` no longer imports `transactions`, `forwardRef()` disappears,
+and the DI graph goes from a patched cycle to a straight line.
 
 ```mermaid
 flowchart LR
     subgraph budgets["budgets module"]
         direction TB
-        BUC["DeleteBudget · UpdateBudgetLimit<br/><i>use cases — the consumer</i>"]
-        IEC["«port» IExpenseChecker<br/><i>defined in budgets/domain</i>"]
-        BUC -->|"calls at runtime"| IEC
+        BUC["DeleteBudget · UpdateBudgetLimit<br/><i>use cases</i>"]
+        IBU["«port» IBudgetUnitOfWork<br/><i>budgets/domain</i>"]
+        UOW["«impl» BudgetUnitOfWorkImpl<br/><i>budgets/infrastructure</i>"]
+        IEC["«port» IExpenseChecker<br/><i>budgets/domain</i>"]
+        ECI["«impl» ScopedExpenseChecker<br/><i>budgets/infrastructure</i>"]
+        BLOCK["ScopedBudgetRepository.findById<br/>SELECT … FOR UPDATE (budget row)"]
+        BUC -->|"calls at runtime"| IBU
+        UOW -.->|implements| IBU
+        UOW -->|"factory (QueryRunner)"| BLOCK
+        UOW -->|"factory (QueryRunner)"| ECI
+        ECI -.->|implements| IEC
     end
 
     subgraph transactions["transactions module"]
         direction TB
-        ECI["«impl» ScopedExpenseChecker<br/><i>transactions/infrastructure (UoW)</i>"]
-        TR["TransactionRepository<br/>SUM expenses in period"]
-        ECI -->|uses| TR
+        TUOW["«impl» TypeOrmUnitOfWorkImpl<br/><i>transactions/infrastructure</i>"]
     end
 
-    ECI -.->|"implements (compile-time dep: transactions → budgets)"| IEC
+    TUOW -->|"same factory, its own QueryRunner<br/>(compile-time dep: transactions → budgets)"| BLOCK
 
     classDef port fill:#fff3cd,stroke:#d39e00,color:#222;
     classDef impl fill:#d1e7dd,stroke:#0f5132,color:#222;
-    class IEC port
-    class ECI impl
+    class IBU,IEC port
+    class UOW,ECI impl
 ```
 
-> Read it as: **budgets owns the contract, transactions fulfils it.** At runtime the
-> arrow you "feel" is `budgets → transactions`; at compile time the source arrow is the
-> reverse (`transactions → budgets`). That inversion is the whole point — it keeps the
-> domain dependency one-way while letting the two modules collaborate.
-
-The **same shape** is used once more, implemented by `transactions`:
+This is the **same shape** §2.2 documents for accounts: the module that owns the
+invariant (`budgets`) owns its scoped repository and its UoW; the one flow that
+legitimately needs the same lock from outside (`CreateTransaction`, locking the budget
+row before summing period expenses) reaches it through the same guarded factory,
+`createScopedBudgetRepository(queryRunner, mapper)`, on its **own** `QueryRunner`. No
+instance is shared — only the factory, and therefore the lock semantics.
 
 | Port (contract) | Owned by (domain) | Implemented by | Consumed by |
 | --- | --- | --- | --- |
-| `IExpenseChecker` | `budgets` | `transactions` (`ScopedExpenseChecker`, in the UoW) | `DeleteBudget`, `UpdateBudgetLimit` |
-| `IBudgetUnitOfWork` | `budgets` | `transactions` (`TypeOrmUnitOfWorkImpl`) | `UpdateBudgetLimit`, `DeleteBudget` |
-| `IAccountUnitOfWork` | `accounts` | **`accounts`** (`AccountUnitOfWorkImpl`) | `Archive`, `Unarchive`, `Rename` |
+| `IBudgetUnitOfWork` | `budgets` | `budgets` (`BudgetUnitOfWorkImpl`) | `UpdateBudgetLimit`, `DeleteBudget` |
+| `IExpenseChecker` | `budgets` | `budgets` (`ScopedExpenseChecker`) | `DeleteBudget`, `UpdateBudgetLimit` |
+| `IAccountUnitOfWork` | `accounts` | `accounts` (`AccountUnitOfWorkImpl`) | `Archive`, `Unarchive`, `Rename` |
+
+All three module-specific UoW-adjacent ports are now implemented **inside their own
+module** — the "port owned by consumer" pattern (§2.1 as originally written, before
+this section was rewritten) no longer has a live example in this codebase. It stays
+documented in [ADR-0003](./adr/0003-port-owned-by-consumer.md) as the correct fix
+*if* a genuine cross-module dependency reappears.
 
 ### 2.2 Why `accounts` does **not** depend on `transactions`
 

@@ -54,27 +54,46 @@ between the `findById` and the `commit`, the row is locked for everyone else.
 
 ## 3. The transactional boundary — Unit of Work
 
-Three concrete implementations, separated by **atomic operation**, not by module:
+**Four** concrete implementations, separated by **atomic operation**, not by module — a 1:1 mapping
+onto the four module-specific ports:
 
 - **`TypeOrmUnitOfWorkImpl`** (`transactions/infrastructure/persistence/unit-of-work.impl.ts`) —
-  satisfies 2 ports (`ITransactionUnitOfWork`, `IBudgetUnitOfWork`) via `useExisting`. One
-  `Scope.REQUEST` instance → one `QueryRunner` → one PG transaction, which `CreateTransaction`
-  needs because it writes three aggregates at once.
+  satisfies `ITransactionUnitOfWork` only. One `Scope.REQUEST` instance → one `QueryRunner` → one PG
+  transaction, which `CreateTransaction` needs because it writes three aggregates at once. It used
+  to also satisfy `IBudgetUnitOfWork` via `useExisting` (and, earlier, `IAccountUnitOfWork`); see
+  below for why that stopped.
+- **`BudgetUnitOfWorkImpl`** (`budgets/infrastructure/`) — separate: `UpdateBudgetLimit` and
+  `DeleteBudget` touch only the budget aggregate (+ one aggregate expense read).
 - **`AccountUnitOfWorkImpl`** (`accounts/infrastructure/`) — separate: `Archive`, `Unarchive` and
   `Rename` touch only the account aggregate.
 - **`AuthUnitOfWorkImpl`** (`auth/infrastructure/`) — separate: refresh-token rotation shares no
   invariant with the financial aggregates.
 
 `transactions` keeps the multi-aggregate impl because **every multi-aggregate invariant in the
-domain is anchored to a `Transaction` mutation** (balance, limit, period sum).
+domain is anchored to a `Transaction` mutation** (balance, limit, period sum). Every *single*-aggregate
+invariant now has its own dedicated impl, in its own module.
 
-**What `useExisting` does not do.** It shares one `QueryRunner` *within a request*, which only a
-use case taking several scoped repos needs. It is irrelevant *between* requests: `Scope.REQUEST`
-already yields one instance per request, so two concurrent requests always had separate
-`QueryRunner`s. Cross-request serialization is the Postgres row lock — held until commit and
-visible on any connection. Hence a module whose flows touch one aggregate can own its impl at no
-cost to concurrency, which is why `IAccountUnitOfWork` moved out. Pattern details in
+**What `useExisting` does not do.** Historically, sharing one `QueryRunner` *within a request* was
+required only by a use case taking several scoped repos at once — in this codebase, only
+`CreateTransaction`. It was irrelevant *between* requests: `Scope.REQUEST` already yields one
+instance per request, so two concurrent requests always had separate `QueryRunner`s. Cross-request
+serialization is the Postgres row lock — held until commit and visible on any connection. Hence a
+module whose flows touch one aggregate can own its impl at no cost to concurrency, which is why
+`IAccountUnitOfWork` moved out first, and `IBudgetUnitOfWork` followed the same reasoning: neither
+`UpdateBudgetLimit` nor `DeleteBudget` ever needed a `QueryRunner` shared with `transactions`, so the
+`forwardRef(() => TransactionsModule)` that `budgets.module.ts` used to resolve the token was pure
+DI-graph cost with no concurrency benefit. Pattern details in
 [uow-decision.md](../src/shared/domain/uow-decision.md).
+
+**Accepted cost of the split.** Before this, `useExisting` made it structurally impossible for a use
+case to open two separate DB transactions by injecting `ITransactionUnitOfWork` and
+`IBudgetUnitOfWork` together — both tokens resolved to the same instance, so there was only ever one
+`QueryRunner`. Now that the two ports have independent impls, that guarantee is gone: a hypothetical
+use case injecting both and calling `begin()` on each would open two transactions and could deadlock
+against itself. Nothing enforces "at most one UoW port per use case" in the type system — see
+CLAUDE.md's anti-patterns list. If a future flow needs to coordinate `transactions` and `budgets`
+atomically, it belongs inside `TypeOrmUnitOfWorkImpl`, composing `budgets`' scoped repos the way
+`CreateTransaction` already does — not by injecting two module-specific UoW ports side by side.
 
 ---
 
@@ -83,12 +102,12 @@ cost to concurrency, which is why `IAccountUnitOfWork` moved out. Pattern detail
 | Read (scoped) | Lock | Serializes |
 | --- | --- | --- |
 | `ScopedAccountRepository.findById` | **FOR UPDATE** | Balance mutations: Create/DeleteTransaction + Archive/Unarchive/Rename (Race 2, Bug B). Defined in `accounts/infrastructure/persistence/scoped-account.repository.ts`; the two callers reach it from different UoWs and therefore different `QueryRunner`s — the row lock serializes them regardless |
-| `ScopedBudgetRepository.findById` | **FOR UPDATE** | UpdateBudgetLimit, DeleteBudget vs concurrent creates |
+| `ScopedBudgetRepository.findById` | **FOR UPDATE** | UpdateBudgetLimit, DeleteBudget vs concurrent creates. Defined in `budgets/infrastructure/persistence/scoped-budget.repository.ts`; `BudgetUnitOfWorkImpl` and `TypeOrmUnitOfWorkImpl` reach it through the same factory on different `QueryRunner`s — same shape as `ScopedAccountRepository` above |
 | `ScopedBudgetRepository.findByUserIdAndCategoryIdAndPeriod` | **FOR UPDATE** | The period-invariant gate in CreateTransaction (Bug A) |
 | `ScopedTransactionRepository.findById` | **FOR UPDATE** | Double DELETE of the same tx (Race 3) |
 | `ScopedRefreshTokenRepository.findByTokenHashWithLock` | **FOR UPDATE** | Two `/refresh` with the same token → replay detection |
 | `sumExpenseAmountByUserCategoryAndPeriod` | **no lock** (aggregate) | Serialized by the budget lock taken beforehand |
-| `ScopedExpenseChecker.hasExpensesInPeriod` / `sumExpenseAmountInPeriod` | **no lock** (aggregate) | Serialized by the budget lock of Delete/Update |
+| `ScopedExpenseChecker.hasExpensesInPeriod` / `sumExpenseAmountInPeriod` | **no lock** (aggregate) | Serialized by the budget lock of Delete/Update. Lives in `budgets/infrastructure/persistence/scoped-expense-checker.ts`, served by `BudgetUnitOfWorkImpl` — moved out of `transactions/infrastructure/persistence/unit-of-work.impl.ts` when `IBudgetUnitOfWork` got its own impl. Closes Race 1 (`hasExpensesInPeriod`) and B4 (`sumExpenseAmountInPeriod`) |
 
 Aggregates (`SUM`/`COUNT`) **cannot** take `FOR UPDATE` (Postgres forbids it) and it wouldn't
 help anyway: a lock on existing rows does not stop *phantom inserts* in the range. Their consistency

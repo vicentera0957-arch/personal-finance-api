@@ -51,9 +51,9 @@ Business method: `updateLimit(newLimit: AmountLimit)` — replaces the limit.
 
 **File:** `domain/repository/expense-checker.port.ts`
 
-Defined here (consumer owns the port). Implemented in `transactions/infrastructure/persistence/expense-checker.implement.ts`. Exported by `TransactionsModule`.
+Defined here, and — as of the `IBudgetUnitOfWork` split — implemented here too: `ScopedExpenseChecker` in `infrastructure/persistence/scoped-expense-checker.ts`, unexported, reached only through `createScopedExpenseChecker(queryRunner)`. Served by `BudgetUnitOfWorkImpl.getScopedExpenseChecker()`. `transactions` does not import this port at all.
 
-Methods: `hasExpensesInPeriod(userId, categoryId, month, year): Promise<boolean>` and `sumExpenseAmountInPeriod(...): Promise<number>`. **Neither takes `FOR UPDATE`** (Postgres forbids pessimistic locks on `COUNT`/`SUM` aggregates); serialization comes from the lock on the budget row that the consumer (`DeleteBudget` / `UpdateBudgetLimit`) acquires first.
+Methods: `hasExpensesInPeriod(userId, categoryId, month, year): Promise<boolean>` and `sumExpenseAmountInPeriod(...): Promise<number>`. **Neither takes `FOR UPDATE`** (Postgres forbids pessimistic locks on `COUNT`/`SUM` aggregates); serialization comes from the lock on the budget row that the consumer (`DeleteBudget` / `UpdateBudgetLimit`) acquires first, inside the same `BudgetUnitOfWorkImpl` transaction.
 
 ---
 
@@ -104,25 +104,32 @@ Methods: `hasExpensesInPeriod(userId, categoryId, month, year): Promise<boolean>
 
 ## Wiring — `BudgetsModule`
 
-Imports `TransactionsModule` (with `forwardRef`) to obtain `IExpenseChecker`.
-Exports: `GetBudgetByUserCategoryPeriodUseCase` — consumed by `CreateTransactionUseCase`.
+Imports only `CategoriesModule` (itself a leaf) — `budgets` is a leaf module. It owns its own transactional boundary:
+
+```ts
+{ provide: BudgetUnitOfWorkImpl, useClass: BudgetUnitOfWorkImpl, scope: Scope.REQUEST }
+{ provide: IBudgetUnitOfWork,    useExisting: BudgetUnitOfWorkImpl }
+```
+
+Exports: `GetBudgetByUserCategoryPeriodUseCase`, `BudgetMapper` — consumed by `TransactionsModule` (a direct import there now, no `forwardRef`).
 
 ---
 
-## Dependency inversion: the `budgets ↔ transactions` cycle
+## Why `budgets` does not depend on `transactions` (historical: the cycle that used to exist here)
 
-Problem: `transactions` needs `budgets` to validate R8. `budgets` needs to know whether transactions exist to validate the delete. Without care, a `budgets → transactions → budgets` cycle.
-
-"Port owned by consumer" solution:
+Until the `IBudgetUnitOfWork` split, `budgets` needed two things from `transactions`: the `IBudgetUnitOfWork` transactional boundary itself, and `IExpenseChecker` (an answer to "are there expenses in this period, and how much?", needed by `DeleteBudget` / `UpdateBudgetLimit`). Both were implemented inside `transactions/infrastructure/persistence/unit-of-work.impl.ts`, reached from `budgets.module.ts` via `forwardRef(() => TransactionsModule)` — the "port owned by consumer" pattern:
 
 ```
-budgets/domain/repository/expense-checker.port.ts   ← defines the port
-transactions/infrastructure/persistence/expense-checker.implement.ts  ← implements
-transactions.module.ts: exports IExpenseChecker
-budgets.module.ts:      imports forwardRef(() => TransactionsModule)
+budgets/domain/repository/expense-checker.port.ts       ← defined the port
+transactions/infrastructure/persistence/unit-of-work.impl.ts (ScopedExpenseChecker) ← implemented it
+budgets/domain/IBudgetUnitOfWork.ts                      ← defined this port too
+transactions/infrastructure/persistence/unit-of-work.impl.ts (TypeOrmUnitOfWorkImpl) ← implemented it too
+budgets.module.ts:      imported forwardRef(() => TransactionsModule)
 ```
 
-The `forwardRef()` is an artifact of NestJS's DI graph. The dependency direction in the DOMAIN is clean: `transactions` depends on `budgets` (for the budget lookup); `budgets` defines the port that `transactions` implements.
+Neither port actually needed anything `transactions`-specific: `UpdateBudgetLimit` and `DeleteBudget` only ever needed a transaction, a `FOR UPDATE` on the budget row, and one aggregate read under that lock — all scoped to the budget aggregate. So instead of keeping the cross-module split, both implementations (`ScopedExpenseChecker`, `BudgetUnitOfWorkImpl`) moved into `budgets/infrastructure/persistence/`, next to the ports they serve. `budgets` no longer imports `transactions`; `forwardRef()` is gone from the whole module graph.
+
+The one piece that stayed genuinely shared is `ScopedBudgetRepository`: `CreateTransactionUseCase` still locks the budget row (on `TypeOrmUnitOfWorkImpl`'s own `QueryRunner`) before summing period expenses, independent of `UpdateBudgetLimit` / `DeleteBudget` locking it (on `BudgetUnitOfWorkImpl`'s own `QueryRunner`). So `ScopedBudgetRepository` took the shape `ScopedAccountRepository` already used: unexported class, reached only via `createScopedBudgetRepository(queryRunner, mapper)`, called independently by both UoWs, each on its own transaction. `transactions → budgets` remains as a plain one-way import (`GetBudgetByUserCategoryPeriodUseCase`, `BudgetMapper`, and the scoped-repository factory).
 
 ---
 

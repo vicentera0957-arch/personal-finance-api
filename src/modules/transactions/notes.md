@@ -116,11 +116,13 @@ The third one covers the `sumExpenseAmountByUserCategoryAndPeriod` that runs on 
 
 **File:** `infrastructure/persistence/unit-of-work.impl.ts`
 
-> The **pattern** (why a single impl satisfies several ports, why the ports are `abstract class`, why they are counted per *atomic operation* and not per module) lives in [shared/domain/uow-decision.md](../../shared/domain/uow-decision.md) and in CLAUDE.md. This section documents only the **concrete mechanics** of this class — to avoid duplicating the "why" and having it drift again.
+> The **pattern** (why an impl can satisfy several ports via `useExisting`, why the ports are `abstract class`, why they are counted per *atomic operation* and not per module) lives in [shared/domain/uow-decision.md](../../shared/domain/uow-decision.md) and in CLAUDE.md. This section documents only the **concrete mechanics** of this class — to avoid duplicating the "why" and having it drift again.
 
-A single concrete class that satisfies **two** module ports: `ITransactionUnitOfWork` (extends it) and `IBudgetUnitOfWork` (implements it). Both tokens resolve to the **same** instance via `useExisting` in the wiring — an alias, not copies. Scope: `REQUEST` — NestJS creates a new instance per request, so each request has its own isolated `QueryRunner`.
+A concrete class that satisfies **one** module port today: `ITransactionUnitOfWork` (extends it). Scope: `REQUEST` — NestJS creates a new instance per request, so each request has its own isolated `QueryRunner`.
 
-`IAccountUnitOfWork` used to be a third alias here. It moved to `accounts`, which now owns `AccountUnitOfWorkImpl`: its three use cases touch only the account aggregate, so they never needed this multi-aggregate engine, and serving them from here forced `accounts` to import this module and closed a cycle. Note what `useExisting` actually buys — a shared `QueryRunner` **within one request**, which only `CreateTransactionUseCase` needs. Between requests it buys nothing, because `Scope.REQUEST` already yields one instance per request; what serializes concurrent requests is the Postgres row lock.
+It used to also `implement IBudgetUnitOfWork`, aliased via `useExisting` to the same request-scoped instance so `UpdateBudgetLimitUseCase` / `DeleteBudgetUseCase` shared this class's `QueryRunner` whenever they ran in the same request (which they never actually needed to — `CreateTransactionUseCase` is the only flow that genuinely needs a multi-aggregate `QueryRunner`). `IAccountUnitOfWork` was a third alias here before that. Both moved out the same way: `accounts` now owns `AccountUnitOfWorkImpl`, `budgets` now owns `BudgetUnitOfWorkImpl` — neither's use cases ever needed a `QueryRunner` shared with this class, and serving them from here forced their modules to import `TransactionsModule` (via `forwardRef()`, in the budgets case) just to resolve a token this class's own use cases never inject. Note what `useExisting` actually buys — a shared `QueryRunner` **within one request**, which only `CreateTransactionUseCase` needs. Between requests it buys nothing, because `Scope.REQUEST` already yields one instance per request; what serializes concurrent requests is the Postgres row lock.
+
+This class still exposes `getScopedBudgetRepository()` — `CreateTransactionUseCase` locks the budget row before summing period expenses — but that getter goes through `createScopedBudgetRepository()`, the same factory `BudgetUnitOfWorkImpl` calls on its own `QueryRunner`. Two independent consumers, two independent transactions, same lock semantics; see `budgets/notes.md` → "Why `budgets` does not depend on `transactions`".
 
 #### State and lifecycle
 
@@ -136,18 +138,19 @@ The class keeps a single mutable field: `queryRunner: QueryRunner | null` (start
 
 The optional chaining (`?.`) in commit/rollback/release makes calling them without an open tx a no-op instead of a crash.
 
-#### The four scoped resources
+#### The three scoped resources
 
-Four getters build the scoped repos, all on `this.queryRunner!.manager` (the active runner's `EntityManager`):
+Three getters build the scoped repos, all on `this.queryRunner!.manager` (the active runner's `EntityManager`):
 
 - `getScopedTransactionRepository()` → `ScopedTransactionRepository`
 - `getScopedAccountRepository()` → `ScopedAccountRepository`, built by `createScopedAccountRepository()` from `accounts/infrastructure/persistence/scoped-account.repository.ts`
-- `getScopedBudgetRepository()` → `ScopedBudgetRepository`
-- `getScopedExpenseChecker()` → `ScopedExpenseChecker` (satisfies the `IExpenseChecker` port of `budgets`, *port owned by consumer* pattern)
+- `getScopedBudgetRepository()` → `ScopedBudgetRepository`, built by `createScopedBudgetRepository()` from `budgets/infrastructure/persistence/scoped-budget.repository.ts`
 
-Three of those classes are **private to this file** (not exported). The only way to obtain them is through the UoW, and that only makes sense after `begin()`. That guarantee is what justifies the `!` (non-null assertion) on `queryRunner` in the getters: by contract they are never called with the runner at `null`. Since they all share the same `manager`, every read and write lands in the same PostgreSQL transaction.
+(There used to be a fourth, `getScopedExpenseChecker()` → `ScopedExpenseChecker`. It moved to `budgets` along with `IBudgetUnitOfWork` — its only consumers, `DeleteBudgetUseCase` and `UpdateBudgetLimitUseCase`, live there, so keeping it here was serving a port this module no longer implements.)
 
-`ScopedAccountRepository` is the exception, and deliberately so: `accounts` also needs it for its own `AccountUnitOfWorkImpl`, so the class lives in `accounts/infrastructure` — next to the aggregate whose invariant its `FOR UPDATE` protects — and is still unexported there. Both UoWs reach it through the same factory, each passing its own `QueryRunner`. The factory takes a `QueryRunner` rather than an `EntityManager` precisely so that `dataSource.manager` fails to compile; it also throws if the runner has no active transaction. Same guarantee as the private classes, enforced by types instead of by file scope.
+`ScopedTransactionRepository` is **private to this file** (not exported). The only way to obtain it is through the UoW, and that only makes sense after `begin()`. That guarantee is what justifies the `!` (non-null assertion) on `queryRunner` in the getters: by contract it is never called with the runner at `null`. Since all scoped repos share the same `manager`, every read and write lands in the same PostgreSQL transaction.
+
+`ScopedAccountRepository` and `ScopedBudgetRepository` are the exceptions, and deliberately so: `accounts` and `budgets` each also need their own scoped repo for their own single-aggregate UoW (`AccountUnitOfWorkImpl`, `BudgetUnitOfWorkImpl`), so both classes live in their owning module's infrastructure — next to the aggregate whose invariant their `FOR UPDATE` protects — and are still unexported there. Every pair of UoWs that needs one reaches it through the same factory, each passing its own `QueryRunner`. The factory takes a `QueryRunner` rather than an `EntityManager` precisely so that `dataSource.manager` fails to compile; it also throws if the runner has no active transaction. Same guarantee as the private class, enforced by types instead of by file scope.
 
 #### Locks by construction
 
@@ -185,8 +188,8 @@ Exception mapping:
 
 ## Wiring — `TransactionsModule`
 
-Imports: `AccountsModule` (direct — no `forwardRef`, the cycle is gone), `BudgetsModule` (with `forwardRef`, that cycle is still open), `CategoriesModule`.
-Exports: `ITransactionUnitOfWork` and `IBudgetUnitOfWork`.
+Imports: `AccountsModule`, `BudgetsModule`, `CategoriesModule` — all direct imports, no `forwardRef` anywhere. Both cycles that used to exist (`accounts ↔ transactions`, `budgets ↔ transactions`) are gone; there is zero `forwardRef()` left in the module graph.
+Exports: `ITransactionUnitOfWork` only. (`IBudgetUnitOfWork` used to be exported here too, aliased to this module's `TypeOrmUnitOfWorkImpl`; it is now provided and exported by `BudgetsModule`, pointing at `BudgetUnitOfWorkImpl`.)
 
 ---
 

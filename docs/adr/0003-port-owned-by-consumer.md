@@ -4,6 +4,16 @@
 - **Date:** YYYY-MM-DD
 - **Deciders:** Vicente Cristobal Rivas Avello
 
+> **Needs a supersede.** The "Fact from the code" paragraph below is now historical:
+> `IExpenseChecker`'s implementation moved from `transactions` into `budgets` (next
+> to the port), and `IAccountUnitOfWork` moved from `transactions` into `accounts`
+> the same way. Neither is a live example of this pattern anymore — the module
+> graph currently has zero cycles and zero `forwardRef()` calls. The decision
+> record and its reasoning are still correct for the case where a genuine
+> cross-module dependency reappears; a follow-up ADR should supersede this one
+> with an up-to-date example, or note explicitly that the pattern is currently
+> unused. See `docs/architecture.md` §2.1 for the current state.
+
 ## Context and problem statement
 
 `transactions` depends on `accounts` and `budgets`. But those modules sometimes

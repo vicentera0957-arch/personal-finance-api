@@ -203,18 +203,20 @@ That is a **leaky abstraction** guaranteed by construction. Composition closes i
 
 This is the rigorous version of the colloquial "is-a vs has-a".
 
-### 3.5. Cardinality — UoW is 1:1, cache is N:1
+### 3.5. Cardinality — UoW *can be* N:1, cache is always N:1
 
-**UoW.** One concrete class implements several module ports via `useExisting` because they share the same request-scoped `QueryRunner`:
+**UoW.** The inheritance shape (`abstract class IXUnitOfWork extends IUnitOfWork`) exists precisely so that one concrete class *can* implement several module ports via `useExisting`, when those modules' flows genuinely share the same request-scoped `QueryRunner`. As of the `IBudgetUnitOfWork` split, every module-specific UoW port happens to have its own dedicated impl — the wiring below is 1:1 across the board:
 
 ```ts
+// transactions.module.ts
 { provide: TypeOrmUnitOfWorkImpl,  useClass: TypeOrmUnitOfWorkImpl, scope: Scope.REQUEST }
 { provide: ITransactionUnitOfWork, useExisting: TypeOrmUnitOfWorkImpl }
-{ provide: IBudgetUnitOfWork,      useExisting: TypeOrmUnitOfWorkImpl }
-{ provide: IAccountUnitOfWork,     useExisting: TypeOrmUnitOfWorkImpl }
+
+// budgets.module.ts / accounts.module.ts / auth.module.ts: same pattern,
+// one dedicated impl each (BudgetUnitOfWorkImpl, AccountUnitOfWorkImpl, AuthUnitOfWorkImpl)
 ```
 
-Multiple contract inheritance models exactly this: **different typed views over the same transactional resource**.
+That 1:1 state is a fact about how the domain currently decomposes (every remaining transactional flow touches exactly one aggregate, except `CreateTransaction`/`DeleteTransaction`, which is why `TypeOrmUnitOfWorkImpl` itself still composes the transaction/account/budget scoped repos internally), not a constraint of the pattern. `TypeOrmUnitOfWorkImpl` used to alias both `ITransactionUnitOfWork` and `IBudgetUnitOfWork` (and, earlier still, `IAccountUnitOfWork`) via `useExisting`, precisely the N:1 shape this section is about — see CLAUDE.md's "Why `IBudgetUnitOfWork` is separate" for why that stopped being the case. If a future module's flows ever need to share a `QueryRunner` with another module's, this is still the mechanism: multiple contract inheritance models **different typed views over the same transactional resource**.
 
 **Cache.** A single resource (`RedisCacheStore`) serves N semantic caches:
 

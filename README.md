@@ -92,18 +92,20 @@ release phase.
 
 ## Architecture at a glance
 
-Dependencies flow one way; the `accounts ↔ transactions` cycle is resolved with a
-"port owned by consumer" pattern. Full diagrams and request flow in
-[docs/architecture.md](docs/architecture.md).
+Dependencies flow one way — every edge below is a direct import, zero `forwardRef()`
+calls anywhere in the module graph. The two cycles that used to exist here
+(`accounts ↔ transactions`, `budgets ↔ transactions`) both closed the same way: the
+shared port's implementation moved into the module that owns the port, instead of
+keeping a "port owned by consumer" cross-module split. Full diagrams and request flow
+in [docs/architecture.md](docs/architecture.md).
 
 ```mermaid
 graph TD
     auth[auth] --> users[users]
     transactions[transactions] --> budgets[budgets]
-    budgets --> categories[categories]
     transactions --> accounts[accounts]
-    accounts -. forwardRef .-> transactions
-    transactions -. IExpenseChecker / IAccountUnitOfWork .-> accounts
+    transactions --> categories[categories]
+    budgets --> categories
 ```
 
 ## Tech stack

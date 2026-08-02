@@ -1,11 +1,13 @@
-import { Module, forwardRef } from '@nestjs/common';
+import { Module, Scope } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { BudgetOrmEntity } from './infrastructure/persistence/budget.orm.entity';
 import { BudgetRepositoryImpl } from './infrastructure/persistence/budget.repo.implement';
 import { BudgetMapper } from './infrastructure/persistence/budget.mapper';
+import { BudgetUnitOfWorkImpl } from './infrastructure/persistence/budget-unit-of-work.impl';
 import { BudgetsController } from './infrastructure/http/budgets-controller/budgets.controller';
 import { BudgetsCacheImpl } from './infrastructure/cache/budgets-cache.impl';
 import { IBudgetRepository } from './domain/repository/budgets.repository';
+import { IBudgetUnitOfWork } from './domain/IBudgetUnitOfWork';
 import { IBudgetsCache } from './domain/ports/cache/budgets-cache.port';
 import { CreateBudgetUseCase } from './application/use-cases/create-budget.use-case';
 import { GetBudgetByIdUseCase } from './application/use-cases/get-budget-by-id.use-case';
@@ -14,14 +16,9 @@ import { UpdateBudgetLimitUseCase } from './application/use-cases/update-budget-
 import { DeleteBudgetUseCase } from './application/use-cases/delete-budget.use-case';
 import { GetBudgetByUserCategoryPeriodUseCase } from './application/use-cases/get-budget-by-user-category-period.use-case';
 import { CategoriesModule } from '../categories/categories.module';
-import { TransactionsModule } from '../transactions/transactions.module';
 
 @Module({
-  imports: [
-    TypeOrmModule.forFeature([BudgetOrmEntity]),
-    CategoriesModule,
-    forwardRef(() => TransactionsModule),
-  ],
+  imports: [TypeOrmModule.forFeature([BudgetOrmEntity]), CategoriesModule],
   controllers: [BudgetsController],
   providers: [
     BudgetMapper,
@@ -32,6 +29,18 @@ import { TransactionsModule } from '../transactions/transactions.module';
     UpdateBudgetLimitUseCase,
     DeleteBudgetUseCase,
     { provide: IBudgetRepository, useClass: BudgetRepositoryImpl },
+    // budgets now owns its transactional boundary: UpdateBudgetLimit and
+    // DeleteBudget touch only the budget aggregate (+ the aggregate expense
+    // read), so there is no reason to share a QueryRunner with the
+    // multi-aggregate UoW owned by the module that creates money movements.
+    // Same reasoning that already gave accounts and auth their own impls —
+    // see CLAUDE.md, "Why IBudgetUnitOfWork is separate".
+    {
+      provide: BudgetUnitOfWorkImpl,
+      useClass: BudgetUnitOfWorkImpl,
+      scope: Scope.REQUEST,
+    },
+    { provide: IBudgetUnitOfWork, useExisting: BudgetUnitOfWorkImpl },
     BudgetsCacheImpl,
     { provide: IBudgetsCache, useExisting: BudgetsCacheImpl },
   ],

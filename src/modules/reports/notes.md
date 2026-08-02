@@ -80,7 +80,7 @@ These two pieces were introduced alongside `reports` but are consumed by both `r
 
 **Migration:** `database/migrations/1783292601885-CreatePeriodExpensesView.ts`
 
-The single definition of "what counts as an expense" (`nature = 'expense'`), read by both `GET /reports/summary` and the three aggregate queries in `TypeOrmUnitOfWorkImpl` (`sumExpenseAmountByUserCategoryAndPeriod`, `hasExpensesInPeriod`, `sumExpenseAmountInPeriod`). If that definition lived in two separate SQL statements, they could drift and the system would contradict itself — the enforcement path rejecting a spend while the reports path shows a different total for the same data. Same category of bug the repo already paid for once with `isBudgetable`.
+The single definition of "what counts as an expense" (`nature = 'expense'`), read by both `GET /reports/summary` and the three budget-enforcement aggregate queries: `sumExpenseAmountByUserCategoryAndPeriod` (in `TypeOrmUnitOfWorkImpl`, `transactions/infrastructure`) and `hasExpensesInPeriod` / `sumExpenseAmountInPeriod` (in `ScopedExpenseChecker`, `budgets/infrastructure/persistence/scoped-expense-checker.ts`, served by `BudgetUnitOfWorkImpl`). If that definition lived in separate SQL statements, they could drift and the system would contradict itself — the enforcement path rejecting a spend while the reports path shows a different total for the same data. Same category of bug the repo already paid for once with `isBudgetable`.
 
 **Not** registered as a `@ViewEntity` on purpose: TypeORM only manages views tracked in `typeorm_metadata`, so a hand-written SQL view is invisible to `migration:generate` (confirmed with a dry-run — it reports "No changes"). Never accept a generated migration that tries to recreate or `DROP` it.
 

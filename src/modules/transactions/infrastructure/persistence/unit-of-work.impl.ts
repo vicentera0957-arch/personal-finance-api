@@ -1,11 +1,9 @@
 import { Injectable, Scope } from '@nestjs/common';
 import { DataSource, EntityManager, QueryRunner } from 'typeorm';
 import { ITransactionUnitOfWork } from '../../domain/ITransactionUnitOfWork';
-import { IBudgetUnitOfWork } from '../../../budgets/domain/IBudgetUnitOfWork';
 import { IScopedTransactionRepository } from '../../domain/repository/scoped-transaction.repository';
 import { IAccountRepository } from '../../../accounts/domain/repository/accounts.repository';
 import { IBudgetRepository } from '../../../budgets/domain/repository/budgets.repository';
-import { IExpenseChecker } from '../../../budgets/domain/repository/expense-checker.port';
 import { Transaction } from '../../domain/entities/transaction.entity';
 import { TransactionOrmEntity } from './transaction.orm.entity';
 import { TransactionMapper } from './transaction.mapper';
@@ -13,7 +11,6 @@ import { AccountMapper } from '../../../accounts/infrastructure/persistence/acco
 import { createScopedAccountRepository } from '../../../accounts/infrastructure/persistence/scoped-account.repository';
 import { BudgetMapper } from '../../../budgets/infrastructure/persistence/budget.mapper';
 import { createScopedBudgetRepository } from '../../../budgets/infrastructure/persistence/scoped-budget.repository';
-import { createScopedExpenseChecker } from '../../../budgets/infrastructure/persistence/scoped-expense-checker';
 import { monthPeriod } from '../../../../shared/domain/month-period';
 
 // ── Scoped repositories — private to this file; only the UoW constructs them ──
@@ -95,17 +92,26 @@ class ScopedTransactionRepository extends IScopedTransactionRepository {
 // ── Implementación del UoW ────────────────────────────────────────────────────
 
 /**
- * Single concrete implementation that satisfies BOTH module-specific UoW ports.
+ * Concrete implementation of `ITransactionUnitOfWork`.
  *
- * Wired in NestJS via `useExisting` so `ITransactionUnitOfWork` and
- * `IBudgetUnitOfWork` resolve to the SAME request-scoped instance — sharing
- * one QueryRunner / one DB transaction.
+ * Used to also `implement IBudgetUnitOfWork` and be aliased to both ports via
+ * `useExisting`, so `CreateTransaction`/`DeleteTransaction` and
+ * `UpdateBudgetLimit`/`DeleteBudget` shared one QueryRunner / one DB
+ * transaction whenever they happened to run in the same request (which they
+ * never actually needed to — see CLAUDE.md, "Why `IBudgetUnitOfWork` is
+ * separate"). Budgets now owns `BudgetUnitOfWorkImpl` for its own boundary;
+ * this class serves only `ITransactionUnitOfWork`, for the one flow that
+ * genuinely needs a multi-aggregate transaction: `CreateTransaction` writes
+ * the transaction, account and budget rows atomically.
+ *
+ * It still exposes `getScopedBudgetRepository()` — CreateTransaction locks
+ * the budget row before summing period expenses — but that getter now goes
+ * through `createScopedBudgetRepository()`, the same factory
+ * `BudgetUnitOfWorkImpl` uses on its own QueryRunner. Two independent
+ * consumers, two independent transactions, same lock semantics.
  */
 @Injectable({ scope: Scope.REQUEST })
-export class TypeOrmUnitOfWorkImpl
-  extends ITransactionUnitOfWork
-  implements IBudgetUnitOfWork
-{
+export class TypeOrmUnitOfWorkImpl extends ITransactionUnitOfWork {
   private queryRunner: QueryRunner | null = null;
 
   constructor(
@@ -154,9 +160,5 @@ export class TypeOrmUnitOfWorkImpl
 
   getScopedBudgetRepository(): IBudgetRepository {
     return createScopedBudgetRepository(this.queryRunner!, this.budgetMapper);
-  }
-
-  getScopedExpenseChecker(): IExpenseChecker {
-    return createScopedExpenseChecker(this.queryRunner!);
   }
 }
