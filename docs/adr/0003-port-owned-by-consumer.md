@@ -1,18 +1,21 @@
 # ADR-0003: "Port owned by consumer" to break module cycles
 
-- **Status:** Draft
+- **Status:** Superseded by [ADR-0009](./0009-scoped-repositories-as-guarded-factories.md)
 - **Date:** YYYY-MM-DD
 - **Deciders:** Vicente Cristobal Rivas Avello
 
-> **Needs a supersede.** The "Fact from the code" paragraph below is now historical:
-> `IExpenseChecker`'s implementation moved from `transactions` into `budgets` (next
-> to the port), and `IAccountUnitOfWork` moved from `transactions` into `accounts`
-> the same way. Neither is a live example of this pattern anymore — the module
-> graph currently has zero cycles and zero `forwardRef()` calls. The decision
-> record and its reasoning are still correct for the case where a genuine
-> cross-module dependency reappears; a follow-up ADR should supersede this one
-> with an up-to-date example, or note explicitly that the pattern is currently
-> unused. See `docs/architecture.md` §2.1 for the current state.
+> **Superseded — kept as a record, not as guidance.** Both examples this ADR rested on are gone:
+> `IExpenseChecker`'s implementation moved from `transactions` into `budgets` (next to its port),
+> and `IAccountUnitOfWork` moved from `transactions` into `accounts` the same way. The module graph
+> now has **zero cycles and zero `forwardRef()` calls**, so the pattern has no live instance.
+>
+> What replaced it: each module owns its Unit of Work and the `FOR UPDATE` policy for its own rows,
+> and publishes a **guarded factory** when a neighbour needs the same scoped repository on a
+> different `QueryRunner`. See [ADR-0009](./0009-scoped-repositories-as-guarded-factories.md).
+>
+> The reasoning below remains valid for the case it describes — a genuine bidirectional need
+> between two modules. It just is not this codebase's situation: the cycle here was an artefact of
+> composition, because `transactions` declared DI providers for tokens it never injected.
 
 ## Context and problem statement
 

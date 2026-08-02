@@ -6,6 +6,11 @@
 >
 > Esto **no** es un plan de ejecución. Es el mapa de qué problema específico se está resolviendo
 > con cada movimiento, para no confundir causas con síntomas.
+>
+> **P1 y P2 están cerrados** y se eliminaron de este inventario. Rompían los dos ciclos de módulos
+> dando a `accounts` y a `budgets` su propio UoW; el resultado vive en el código y en la sección
+> de concurrencia de `CLAUDE.md`. Los problemas que quedan son internos al UoW o al ciclo de vida
+> transaccional — ninguno es de composición entre módulos.
 
 ---
 
@@ -39,29 +44,30 @@ transacción) e irrelevante para todos los demás flujos.
 Consecuencia: partir el UoW en varias implementaciones **no puede debilitar ninguna garantía de
 concurrencia**, porque entre requests nunca estuvo compartido.
 
-### 3. El ciclo es un artefacto de composición, no de dominio
+### 3. Cada módulo con frontera transaccional propia es dueño de su UoW
 
-El único ciclo a nivel de archivo `.ts` es entre los tres `.module.ts`. Ningún use case, entidad,
-repositorio ni mapper de `accounts` o `budgets` importa nada de `transactions`.
+Los ciclos que motivaban P1 y P2 eran un artefacto de composición, no de dominio: vivían entre los
+`.module.ts` y ningún use case, entidad, repositorio ni mapper de `accounts` o `budgets` importaba
+nada de `transactions`. Cerrarlos consistió en darle a cada módulo su propio UoW, con el molde de
+`AuthUnitOfWorkImpl` — que ya demostraba que el patrón no cicla.
 
 ```
 users ──> (nada)
 auth  ──> users
 categories ──> (nada)          ← hoja
-reports ──> (nada)             ← solo lee la vista v_period_expenses
+accounts   ──> (nada)          ← hoja
+reports    ──> (nada)          ← solo lee la vista v_period_expenses
 
-   accounts  ◄────────────────  transactions      ciclo (forwardRef en ambos extremos)
-        └──────────────────────>     ▲
-                                     │
-                    budgets ◄────────┘             ciclo (forwardRef en ambos extremos)
-                       └─────────────>
+transactions ──> accounts, categories, budgets
+budgets      ──> categories
 ```
 
-- `transactions ↔ accounts`: `transactions.module.ts:32` ↔ `accounts.module.ts:29`
-- `transactions ↔ budgets`: `transactions.module.ts:34` ↔ `budgets.module.ts:23`
+Grafo acíclico, cero `forwardRef`. `transactions` conserva `TypeOrmUnitOfWorkImpl` porque es el
+único que compone varios agregados dentro de una misma transacción; `accounts`, `budgets` y `auth`
+tienen el suyo.
 
-`auth` tiene su propio UoW (`AuthUnitOfWorkImpl`) y por eso es acíclico. Es la prueba de que el
-patrón puede no ciclar.
+Consecuencia para lo que queda: **ningún problema de abajo es de composición entre módulos.** Todos
+son internos al UoW (su forma, su ciclo de vida, la amplitud de sus puertos) o a una duplicación.
 
 ---
 
@@ -72,102 +78,23 @@ patrón puede no ciclar.
 - **¿Causa un bug hoy?** Solo P7. Los demás no producen ninguna incorrección: la app bootea, los
   locks funcionan, la suite pasa.
 - **¿Cuesta algo medible?** Poco. Los unit tests mockean los puertos, así que no sufren el
-  acoplamiento; los de integración levantan la app entera de todos modos. El único costo con impacto
-  de runtime real es P3, y **P3 no lo causa el ciclo**.
+  acoplamiento; los de integración levantan la app entera de todos modos. El único con impacto de
+  runtime plausible es P3 — y **no está medido en este repo**, así que el argumento sólido para
+  hacerlo es P4 (seguridad del ciclo de vida), no rendimiento.
 
-**Entonces por qué hacerlo:**
+**Entonces por qué seguir:**
 
 1. La versión barata es genuinamente barata — no toca lógica de negocio ni tests.
 2. Elimina trampas latentes antes de que la base crezca.
-3. Hace que la composición diga lo que el dominio ya dice: `IAccountUnitOfWork` vive en
-   `accounts/domain`, lo cual afirma que accounts es dueño de su contrato transaccional. Que la
-   implementación venga de `transactions` contradice esa afirmación.
-4. Habilita que P3 se resuelva módulo por módulo en vez de como big-bang.
+3. Con P1 y P2 ya cerrados, P3 se puede resolver módulo por módulo en vez de como big-bang: cada
+   UoW es ahora una unidad independiente que se puede convertir en runner sin estado por separado.
 
-**Cuándo diferirlo es legítimo:** si el foco está en entregar features y el ciclo nunca mordió.
-Excepto P7, que es un defecto de comportamiento.
+**Cuándo diferirlo es legítimo:** si el foco está en entregar features. Excepto P7, que es un
+defecto de comportamiento y el más barato de los cinco.
 
 ---
 
 # Los problemas
-
-## P1 — Binding cruzado de tokens transaccionales
-
-**Enunciado:** un módulo declara y exporta providers para tokens de otros bounded contexts, que esos
-contextos podrían auto-implementar.
-
-**Evidencia:** `transactions.module.ts:67-70` provee `IBudgetUnitOfWork` y `71-74` provee
-`IAccountUnitOfWork`; la línea 76 los exporta. **`transactions` no inyecta ninguno de los dos en
-ningún lado** — existen exclusivamente para alimentar a los vecinos, que a cambio deben importar el
-módulo entero (`accounts.module.ts:29`, `budgets.module.ts:23`).
-
-**Costo real:** dos ciclos, cuatro `forwardRef`, y una trampa latente de evaluación CommonJS entre
-los tres `.module.ts` (hoy inocua porque solo exportan clases decoradas; deja de serlo si alguien
-agrega una `const` de nivel superior derivada de otro módulo). Ningún bug actual. El costo es de
-escalabilidad estructural.
-
-**Independencia:** independiente de todos los demás.
-
-**Propuesta:** cada módulo implementa su propio UoW.
-
-1. Mover `ScopedExpenseChecker` a `budgets/infrastructure`. Su constructor recibe solo
-   `EntityManager` y sus dos métodos consultan `v_period_expenses` con SQL crudo — no importa
-   `TransactionOrmEntity`, ni `TransactionMapper`, ni nada de transactions. Desde que existe la
-   vista, la razón por la que vive ahí ya se evaporó; solo no se movió el archivo. `reports` ya
-   demuestra el patrón: lee la misma vista con cero acoplamiento de compilación.
-2. `AccountUnitOfWorkImpl` en `accounts` y `BudgetUnitOfWorkImpl` en `budgets`, con el molde exacto
-   de `AuthUnitOfWorkImpl`.
-3. `transactions` conserva su UoW multi-agregado.
-
-**Fundamento:** hechos 2 y 3 del marco previo. Además, verificado caso por caso:
-`Archive`/`Unarchive`/`Rename` usan **únicamente** `getScopedAccountRepository()`;
-`DeleteBudget`/`UpdateBudgetLimit` usan **únicamente** `getScopedBudgetRepository()` + el expense
-checker. Ninguno de los cinco necesita una transacción compartida con nadie. La frontera
-multi-agregado es exclusiva de `transactions`.
-
-**Los puertos no se tocan.** `IAccountUnitOfWork` y `IBudgetUnitOfWork` ya están donde deben.
-
-**Prueba de que funcionó:** los tests de concurrencia de Race 1/2/3 pasan sin modificarse, y
-`accounts.module.ts` / `budgets.module.ts` no importan `transactions`.
-
----
-
-## P2 — Política de lock escrita fuera del módulo dueño
-
-**Enunciado:** el `FOR UPDATE` que protege el invariante de un agregado está escrito en el archivo de
-otro módulo.
-
-**Evidencia:** `ScopedAccountRepository.findById` (lock de la fila de cuenta, mecanismo de la Race 2)
-y `ScopedBudgetRepository.findById` / `findByUserIdAndCategoryIdAndPeriod` (el mutex lógico del
-invariante de período) viven los tres en
-`transactions/infrastructure/persistence/unit-of-work.impl.ts`.
-
-**Costo real:** descubribilidad y riesgo de deriva. Quien mantiene `accounts` no encuentra en su
-módulo la razón por la que su fila se bloquea. Si el repo scoped se duplicara en dos lugares, el
-mecanismo de la Race 2 quedaría con dos fuentes de verdad.
-
-**Por qué es distinto de P1:** P1 es ownership del *binding de DI*; P2 es ownership del *código*. Se
-pueden resolver por separado — mover el impl a un módulo neutral resolvería P1 y dejaría P2 intacto.
-
-**Propuesta:** cada módulo publica su clase scoped, y el UoW de `transactions` las **compone** sobre
-su propio `QueryRunner`:
-
-```ts
-new ScopedAccountRepository(this.queryRunner.manager, this.accountMapper)
-```
-
-Dirección `transactions → accounts/budgets`, que ya existe. Sin ciclo.
-
-**Tensión honesta a decidir — la única decisión de diseño real del refactor:** hoy la regla es que
-las clases scoped son privadas al archivo del impl, y la única forma de obtenerlas es a través del
-UoW. Publicarlas la afloja: nada impediría que alguien construya una con `dataSource.manager` en
-autocommit, y el `FOR UPDATE` se evaporaría en silencio. Mitigación posible: exponer una factory
-acotada en vez de la clase cruda.
-
-**Alternativa descartada:** que `transactions` mantenga copias privadas. Duplica el `FOR UPDATE` de
-la fila de cuenta en dos archivos — exactamente la deriva que se quiere evitar.
-
----
 
 ## P3 — UoW como objeto con estado → contagio de `Scope.REQUEST`
 
@@ -204,8 +131,9 @@ entrega un contexto con los repos scoped, y hace commit o rollback según si el 
 `QueryRunner` vive en el stack de la llamada en vez de en un campo, el provider es stateless y puede
 ser singleton.
 
-**Secuencia importante:** después de P1 esto es incremental, módulo por módulo. Antes de P1 es un
-big-bang sobre una clase de la que dependen tres módulos.
+**Secuencia:** esto ya es incremental. Con cada módulo dueño de su UoW, convertir uno en runner sin
+estado es trabajo module-local; antes habría sido un big-bang sobre una clase de la que dependían
+tres módulos.
 
 **Prueba de que funcionó:** ningún provider con `Scope.REQUEST` en el grafo; los 4 controllers
 vuelven a instanciarse una sola vez.
@@ -265,7 +193,13 @@ escribir fuera del UoW *y esté impuesto por tipos*. La misma disciplina no se a
 
 **Propuesta:** puertos de comando acotados. `transactions` no necesita `IAccountRepository`; necesita
 "leer con lock + guardar balance" — dos métodos. Idem budget: "leer con lock por tupla natural".
-Encaja naturalmente con P2: el módulo dueño publica la capacidad acotada en vez de la clase completa.
+
+**El punto de entrada ya existe:** el tipo de retorno de `createScopedAccountRepository` y
+`createScopedBudgetRepository` es exactamente donde se estrecha el puerto, y ninguna otra llamada
+tiene que cambiar. Hoy devuelven el repositorio completo para no ampliar el alcance del refactor que
+las creó. El precedente de la forma final es `IScopedTransactionRepository`
+(`transactions/domain/repository/scoped-transaction.repository.ts`): puerto de consulta separado del
+de comando, y el de comando nunca es token de DI.
 
 ---
 
@@ -273,17 +207,26 @@ Encaja naturalmente con P2: el módulo dueño publica la capacidad acotada en ve
 
 **Enunciado:** la misma query existe dos veces, en dos puertos distintos, con nombres distintos.
 
-**Evidencia:** `ScopedTransactionRepository.sumExpenseAmountByUserCategoryAndPeriod` y
-`ScopedExpenseChecker.sumExpenseAmountInPeriod` son **la misma sentencia carácter por carácter**:
-mismo `COALESCE(SUM(e.amount), 0)`, mismo `FROM v_period_expenses e`, mismos cuatro filtros, mismos
-parámetros.
+**Evidencia:** `ScopedTransactionRepository.sumExpenseAmountByUserCategoryAndPeriod`
+(`transactions/infrastructure/persistence/unit-of-work.impl.ts`) y
+`ScopedExpenseChecker.sumExpenseAmountInPeriod`
+(`budgets/infrastructure/persistence/scoped-expense-checker.ts`) son **la misma sentencia carácter
+por carácter**: mismo `COALESCE(SUM(e.amount), 0)`, mismo `FROM v_period_expenses e`, mismos cuatro
+filtros, mismos parámetros.
 
 **Costo real:** bajo pero irónico. Todo el trabajo de la vista fue para tener *una* definición de
 "qué cuenta como gasto"; en la capa de arriba quedaron dos métodos que la consultan idénticamente. Si
 la firma cambia (excluir transferencias, por ejemplo), hay dos lugares y ningún test que detecte la
 divergencia.
 
-**Independencia:** se hace evidente al hacer P1, pero se puede consolidar antes.
+> **Prioridad subida — efecto colateral de cerrar P1.** Antes las dos copias vivían en el mismo
+> archivo, a cien líneas de distancia: la duplicación se veía de un vistazo. Ahora viven en módulos
+> distintos y una está detrás de una factory, así que es invisible. El refactor no creó la
+> duplicación pero **encareció su costo**, y ese fue un trade aceptado conscientemente para mantener
+> el cierre de P1 como cambio de composición puro (consolidar obligaba a tocar los fakes y un spec
+> de `transactions`).
+
+**Independencia:** total. No depende de nada de lo que queda.
 
 **Propuesta:** un solo dueño de esa consulta. Siendo idénticas, `CreateTransaction` puede consumir la
 misma capacidad que consume `UpdateBudgetLimit` — es la misma pregunta, al mismo dato, bajo el mismo
@@ -364,17 +307,9 @@ O(n) con el mismo lock. Más caro, cero desacople ganado.
 
 ### `AsyncLocalStorage` / propagación transaccional implícita — **incoherente para este proyecto**
 
-Resolvería P2, P3, P4 y P5 de raíz, pero volviendo implícito el mecanismo más delicado del sistema.
+Resolvería P3, P4 y P5 de raíz, pero volviendo implícito el mecanismo más delicado del sistema.
 En una base cuyo activo documental principal es el mapa explícito de locks y serialización, cambiar
 explícito por implícito es un retroceso de legibilidad. Y no resuelve el ownership: lo esconde.
-
-### UoW a un módulo de persistencia neutral — **coherente pero inferior a P1**
-
-Rompe ambos ciclos y es más barato. Pero institucionaliza una afirmación falsa: "existe un contexto
-transaccional compartido para todo el núcleo financiero", cuando `accounts` y `budgets` son
-demostrablemente autosuficientes. Además crea un módulo que debe importar todas las ORM entities y
-mappers —un nuevo hub de acoplamiento— y el UoW multi-agregado sobrevive intacto, solo que mudado.
-Es el fallback si no se quiere tocar la estructura interna del UoW.
 
 ---
 
@@ -382,26 +317,31 @@ Es el fallback si no se quiere tocar la estructura interna del UoW.
 
 ```
 P7  ────────────────────────────  independiente · defecto · arreglo inmediato
+P6  ────────────────────────────  independiente
 P5  ────────────────────────────  independiente
-P6  ────────────────────────────  independiente (se hace obvio con P1)
-
-P1 ──┬──> P2   P2 se resuelve naturalmente al hacer P1 bien
-     └──> P3   P1 primero hace a P3 incremental en vez de big-bang
 
 P3 ══ P4       misma solución: una cirugía compra las dos
 ```
 
-| Problema | ¿Rompe el ciclo? | Costo | Riesgo | Naturaleza |
-| -------- | ---------------- | ----- | ------ | ---------- |
-| **P7** Reacción secundaria dentro del `try` | no | mínimo | nulo | defecto de comportamiento |
-| **P1** Binding cruzado de tokens | sí, ambas aristas | medio | bajo | estructural |
-| **P2** Lock policy fuera de su módulo | — | incluido en P1 | bajo | ownership |
-| **P6** Query de gastos duplicada | no | bajo | nulo | duplicación |
-| **P3** Contagio de `Scope.REQUEST` | no | medio | medio | runtime |
-| **P4** Ciclo de vida manual sin guarda | no | incluido en P3 | medio | robustez |
-| **P5** Puerto sobre-expuesto | no | bajo | nulo | endurecimiento |
+Los cuatro restantes son mutuamente independientes salvo P3 ══ P4. Cerrar P1 y P2 dejó cada UoW
+como una unidad separada, así que P3 + P4 se puede hacer módulo por módulo en vez de como big-bang.
 
-**Orden sugerido:** P7 → P1 + P2 → P6 → P3 + P4 → P5.
+| Problema | Costo | Riesgo | Naturaleza |
+| -------- | ----- | ------ | ---------- |
+| **P7** Reacción secundaria dentro del `try` | mínimo | nulo | defecto de comportamiento |
+| **P6** Query de gastos duplicada | bajo | nulo | duplicación |
+| **P5** Puerto sobre-expuesto | bajo | nulo | endurecimiento |
+| **P3** Contagio de `Scope.REQUEST` | medio | medio | runtime |
+| **P4** Ciclo de vida manual sin guarda | incluido en P3 | medio | robustez |
+
+**Orden sugerido:** P7 → P6 → P3 + P4 → P5.
+
+P7 primero porque es el único defecto real y el más barato. P6 después, porque el cierre de P1 lo
+encareció y sigue encareciéndose. P5 al final: el tipo de retorno de las factories scoped es el
+punto exacto donde se estrecha el puerto, y conviene tocarlo una sola vez.
+
+> **Discrepancia abierta:** el plan de P5 propone hacerlo *antes* de P3 + P4; el plan de P3 + P4
+> asume que P5 sigue diferido. Hay que resolverla antes de empezar cualquiera de los dos.
 
 **Cada parada es un estado coherente.** Después de P7 el sistema es *más correcto*. Después de
-P1 + P2 es *estructuralmente honesto*. Después de P3 + P4 es *más rápido y más seguro de extender*.
+P3 + P4 es *más seguro de extender*.

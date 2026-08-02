@@ -90,11 +90,11 @@ auth → users → (accounts, categories, budgets, transactions)
 ```
 
 - `auth` uses `users` (login/register call users' use cases).
-- Within the finance modules: **transactions → budgets → categories → accounts**.
-- There is an `accounts ↔ transactions` cycle resolved with `forwardRef()` + the
-  **"port owned by consumer"** pattern: when A needs to ask B something but B already depends on A,
-  the *port* is defined in A's domain and the *implementation* in B's infrastructure
-  (e.g. `IExpenseChecker`, `IAccountUnitOfWork`).
+- Within the finance modules: **transactions → budgets → categories**, and **transactions → accounts**.
+- **The graph is acyclic — zero `forwardRef()`.** `accounts` is a leaf; `budgets` depends only on
+  `categories`; `reports` imports nothing (its only link to `transactions` is the
+  `v_period_expenses` view, at the schema level). The direction `transactions → accounts/budgets`
+  is permanent: `transactions` is where the three-aggregate invariant lives.
 
 ---
 
@@ -127,11 +127,18 @@ Use case → uow.begin() → scoped repos (FOR UPDATE) → domain → uow.commit
                                                              ↘ finally → uow.release()
 ```
 
-- A single class (`TypeOrmUnitOfWorkImpl`, in `transactions/infrastructure/`) satisfies three
-  module ports (`ITransactionUnitOfWork`, `IBudgetUnitOfWork`, `IAccountUnitOfWork`)
-  via `useExisting` → the same instance and transaction per request.
-- `auth` has its own UoW (`AuthUnitOfWorkImpl`) because its boundary (refresh-token
-  rotation) shares no invariant with the financial aggregates.
+- **Each module owns its UoW.** `TypeOrmUnitOfWorkImpl` (`transactions/infrastructure/`) serves
+  only `ITransactionUnitOfWork` — it is the one boundary that genuinely composes three aggregates.
+  `AccountUnitOfWorkImpl`, `BudgetUnitOfWorkImpl` and `AuthUnitOfWorkImpl` live in their own
+  modules, because each of their flows touches a single aggregate.
+- Sharing an instance was never what serialized concurrent requests: `Scope.REQUEST` already gives
+  one instance per request, so two requests always had distinct `QueryRunner`s. **What serializes
+  them is the Postgres row lock.** Splitting the UoW therefore weakened nothing.
+- When `transactions` needs a neighbour's locking repository on its own `QueryRunner`, the owning
+  module exports a **guarded factory** (`createScopedAccountRepository`,
+  `createScopedBudgetRepository`) — never the class. The factory takes a `QueryRunner`, not an
+  `EntityManager`, so passing `dataSource.manager` fails to compile and a `FOR UPDATE` cannot
+  silently degrade to autocommit. See [ADR-0009](../adr/0009-scoped-repositories-as-guarded-factories.md).
 - The **budget row works as a logical mutex** for the "Σ period expenses ≤ limit" invariant:
   every flow that touches that invariant locks that row first.
 

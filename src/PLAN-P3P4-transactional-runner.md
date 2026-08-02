@@ -1,11 +1,25 @@
 # PLAN P3 + P4 — el UoW como *runner* sin estado
 
-> Referencia: `src/PROBLEMS.md` §P3 (`:172-213`) y §P4 (`:215-247`). Planes hermanos:
-> `src/PLAN-P1P2-accounts.md`, `src/PLAN-P1P2-budgets.md`, `src/PLAN-P7-cache-rollback.md`.
+> Referencia: `src/PROBLEMS.md` §P3 y §P4. Plan hermano vivo: `src/PLAN-P7-cache-rollback.md`.
 > Este documento no repite los enunciados: aporta **el contrato único**, su aplicación a los cuatro
 > impls, el análisis del auto-deadlock y el impacto exacto sobre los 8 use cases y sus specs.
 >
-> **Supuesto de orden: este plan va DESPUÉS de P1+P2 y DESPUÉS de P7.** Ver §10.
+> **Supuesto de orden: este plan va DESPUÉS de P1+P2 y DESPUÉS de P7.** La primera mitad ya se
+> cumplió — P1+P2 está implementado (ver la nota de referencias).
+
+> **Nota de referencias.** Este plan cita `PLAN-P1P2-accounts.md` y `PLAN-P1P2-budgets.md` con
+> números de sección y de línea. Esos archivos ya no existen: el trabajo que describían está
+> implementado y se borraron al cerrarse P1 y P2. Las citas se conservan porque el razonamiento
+> sigue siendo válido, pero **no las sigas a ciegas** — para el estado real mirá el código, o
+> recuperá el texto original con `git show ba62266:src/PLAN-P1P2-budgets.md`.
+>
+> Commits que cerraron esos planes: `91de97b` · `b026ac8` · `19eed72` (accounts) y
+> `83d4c15` · `dc35dc7` · `ac40f03` · `b140cf4` (budgets).
+>
+> Lo que cambió respecto de lo que este plan asumía: los cuatro impls ya existen y son
+> independientes (`TypeOrmUnitOfWorkImpl`, `AccountUnitOfWorkImpl`, `BudgetUnitOfWorkImpl`,
+> `AuthUnitOfWorkImpl`), así que la conversión a runner sin estado es **module-local** — se puede
+> hacer uno por vez en vez de como big-bang, que es justamente lo que este plan esperaba habilitar.
 
 ---
 

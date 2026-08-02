@@ -1,13 +1,29 @@
 # PLAN — P5: puertos de comando acotados para los agregados vecinos
 
-> Referencia: `src/PROBLEMS.md:250-269` (P5). Planes hermanos ya commiteados:
-> `src/PLAN-P1P2-accounts.md`, `src/PLAN-P1P2-budgets.md`, `src/PLAN-P7-cache-rollback.md`.
+> Referencia: `src/PROBLEMS.md` §P5. Plan hermano vivo: `src/PLAN-P7-cache-rollback.md`.
 > Este documento no repite el enunciado de P5: aporta la derivación de la capacidad real, la forma
 > y ubicación de los puertos, el impacto exacto del rename, y una verificación **a nivel de tipos**.
 >
-> **Decisión previa cerrada por el coordinador:** Opción **B** (factory acotada que recibe
-> `QueryRunner`, no `EntityManager`) para P1/P2, en ambos módulos. Este plan la asume y la usa como
-> mecanismo. Ver §5 — no es un detalle de estilo: es lo que hace que P5 cueste ~40 líneas.
+> **La premisa de este plan ya se cumplió.** La Opción B (factory acotada que recibe `QueryRunner`,
+> no `EntityManager`) está implementada en los dos módulos: `createScopedAccountRepository` y
+> `createScopedBudgetRepository`, más `createScopedExpenseChecker`. Es lo que hace que P5 cueste
+> ~40 líneas: **el tipo de retorno de esas tres factories es el único punto que hay que estrechar.**
+> La decisión está registrada en [ADR-0009](../docs/adr/0009-scoped-repositories-as-guarded-factories.md).
+
+> **Nota de referencias.** Este plan cita `PLAN-P1P2-accounts.md` y `PLAN-P1P2-budgets.md` con
+> números de sección y de línea. Esos archivos ya no existen: el trabajo que describían está
+> implementado y se borraron al cerrarse P1 y P2. Las citas se conservan porque el razonamiento
+> sigue siendo válido, pero **no las sigas a ciegas** — para el estado real mirá el código, o
+> recuperá el texto original con `git show ba62266:src/PLAN-P1P2-budgets.md`.
+>
+> Commits que cerraron esos planes: `91de97b` · `b026ac8` · `19eed72` (accounts) y
+> `83d4c15` · `dc35dc7` · `ac40f03` · `b140cf4` (budgets).
+>
+> Dos supuestos del plan que cambiaron: (1) las clases scoped ya **no** viven en
+> `unit-of-work.impl.ts` — están en `accounts/` y `budgets/infrastructure/persistence/`, cada una
+> con su spec que afirma el `FOR UPDATE`; (2) `IExpenseChecker` se movió de
+> `budgets/domain/repository/` a `budgets/domain/ports/`, porque responde una consulta derivada y
+> no un ciclo de vida de persistencia.
 
 ---
 
