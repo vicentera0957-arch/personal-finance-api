@@ -13,6 +13,17 @@ import {
 } from '../../domain/exceptions/auth.exceptions';
 import { sha256 } from '../utils/token-hash.util';
 
+// Salida discriminada de la transacción (PLAN-P3P4 §2.4.b, opción R1). El
+// caso replay revoca la familia y termina la transacción de forma NORMAL —
+// el runner commitea — porque la revocación debe persistir aunque la
+// request termine en 401 (CLAUDE.md, "Flows": "the commit is intentional:
+// the family must be locked out even if the request fails"). El 401 se
+// decide DESPUÉS del commit, afuera de run(): revocar la familia es un
+// desenlace exitoso de la transacción, no un error de ella.
+type RefreshOutcome =
+  | { readonly kind: 'rotated'; readonly pair: TokenPair }
+  | { readonly kind: 'replay' };
+
 @Injectable()
 export class RefreshTokenUseCase {
   constructor(
@@ -25,26 +36,19 @@ export class RefreshTokenUseCase {
     const payload = await this.tokenProvider.verifyRefreshToken(rawToken);
     const tokenHash = sha256(rawToken);
 
-    let committed = false;
-    await this.uow.begin();
-
-    try {
-      const repo = this.uow.getRefreshTokenRepository();
-
+    const outcome = await this.uow.run<RefreshOutcome>(async (ctx) => {
       // LOCK (FOR UPDATE): refresh-token row. The lock lives inside the scoped repo's
       // findByTokenHashWithLock(). Serializes two concurrent /refresh calls on the same
       // token (e.g. two tabs); replay detection depends on this serialization.
-      const stored = await repo.findByTokenHashWithLock(tokenHash);
+      const stored = await ctx.refreshTokens.findByTokenHashWithLock(tokenHash);
 
       if (!stored) throw new InvalidRefreshTokenException();
 
       if (stored.isRevoked()) {
         // REPLAY DETECTADO: alguien usó un token ya rotado.
         // Revocar toda la familia para expulsar tanto al atacante como al usuario legítimo.
-        await repo.revokeFamily(stored.familyId);
-        await this.uow.commit();
-        committed = true;
-        throw new RefreshTokenReplayDetectedException();
+        await ctx.refreshTokens.revokeFamily(stored.familyId);
+        return { kind: 'replay' }; // ← salida NORMAL ⇒ el runner commitea
       }
 
       if (stored.isExpired()) throw new RefreshTokenExpiredException();
@@ -71,23 +75,24 @@ export class RefreshTokenUseCase {
       // Insertar primero el token nuevo: el viejo lo referencia vía
       // replaced_by_id (FK auto-referencial), así que la fila destino debe
       // existir antes de grabar el UPDATE del viejo (si no, viola la FK).
-      await repo.save(newEntity);
+      await ctx.refreshTokens.save(newEntity);
 
       stored.revoke(newJti); // marca el viejo como "reemplazado por newJti"
-      await repo.save(stored);
+      await ctx.refreshTokens.save(stored);
 
       const newAccessToken = await this.tokenProvider.generateAccessToken({
         sub: stored.userId,
         email: payload.email,
       });
-      await this.uow.commit();
-      committed = true;
-      return { accessToken: newAccessToken, refreshToken: newRefreshToken };
-    } catch (err) {
-      if (!committed) await this.uow.rollback();
-      throw err;
-    } finally {
-      await this.uow.release();
+      return {
+        kind: 'rotated',
+        pair: { accessToken: newAccessToken, refreshToken: newRefreshToken },
+      };
+    });
+
+    if (outcome.kind === 'replay') {
+      throw new RefreshTokenReplayDetectedException();
     }
+    return outcome.pair;
   }
 }
