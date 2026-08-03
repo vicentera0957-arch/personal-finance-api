@@ -6,16 +6,37 @@ import {
 } from '../../domain/exceptions/account.exceptions';
 import { ResourceOwnershipException } from '../../../../shared/domain/exceptions/resource-ownership.exception';
 import { makeAccount } from '../../../../test-support/factories';
-import { IAccountUnitOfWork } from '../../domain/IAccountUnitOfWork';
+import {
+  AccountTxContext,
+  IAccountUnitOfWork,
+} from '../../domain/IAccountUnitOfWork';
 
-const makeMockUow = (repo: InMemoryAccountRepository) => ({
-  begin: jest.fn().mockResolvedValue(undefined),
-  commit: jest.fn().mockResolvedValue(undefined),
-  rollback: jest.fn().mockResolvedValue(undefined),
-  release: jest.fn().mockResolvedValue(undefined),
-  isConnected: jest.fn().mockReturnValue(true),
-  getScopedAccountRepository: jest.fn().mockReturnValue(repo),
-});
+const makeMockUow = (repo: InMemoryAccountRepository) => {
+  const commit = jest.fn();
+  const rollback = jest.fn();
+  const release = jest.fn();
+  return {
+    commit,
+    rollback,
+    release,
+    // El puerto sigue declarando isConnected() durante la migración (nadie
+    // lo llama desde run(), pero el mock lo conserva para no adelantar el
+    // recorte del ciclo de vida manual, que es trabajo de un commit futuro).
+    isConnected: jest.fn().mockReturnValue(true),
+    run: jest.fn(async (work: (ctx: AccountTxContext) => Promise<unknown>) => {
+      try {
+        const result = await work({ accounts: repo });
+        commit();
+        return result;
+      } catch (err) {
+        rollback();
+        throw err;
+      } finally {
+        release();
+      }
+    }),
+  };
+};
 
 describe('UnarchiveAccountUseCase', () => {
   let repo: InMemoryAccountRepository;
