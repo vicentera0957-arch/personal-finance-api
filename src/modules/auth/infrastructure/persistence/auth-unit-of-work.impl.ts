@@ -1,6 +1,6 @@
 import { Injectable, Scope } from '@nestjs/common';
 import { DataSource, EntityManager, QueryRunner } from 'typeorm';
-import { IAuthUnitOfWork } from '../../domain/IAuthUnitOfWork';
+import { AuthTxContext, IAuthUnitOfWork } from '../../domain/IAuthUnitOfWork';
 import { IRefreshTokenRepository } from '../../domain/repository/refresh-token.repository';
 import { RefreshToken } from '../../domain/entities/refresh-token.entity';
 import { RefreshTokenOrmEntity } from './refresh-token.orm.entity';
@@ -101,5 +101,24 @@ export class AuthUnitOfWorkImpl extends IAuthUnitOfWork {
       this.queryRunner!.manager,
       this.mapper,
     );
+  }
+
+  // Transicional: reusa el ciclo de vida manual de arriba. Todavía no usa el
+  // AsyncLocalStorage/Proxy de TypeOrmTransactionRunner — ver el comentario
+  // equivalente en account-unit-of-work.impl.ts.
+  async run<T>(work: (ctx: AuthTxContext) => Promise<T>): Promise<T> {
+    await this.begin();
+    try {
+      const result = await work({
+        refreshTokens: this.getRefreshTokenRepository(),
+      });
+      await this.commit();
+      return result;
+    } catch (err) {
+      await this.rollback();
+      throw err;
+    } finally {
+      await this.release();
+    }
   }
 }

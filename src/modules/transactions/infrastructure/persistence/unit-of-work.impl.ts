@@ -1,6 +1,9 @@
 import { Injectable, Scope } from '@nestjs/common';
 import { DataSource, EntityManager, QueryRunner } from 'typeorm';
-import { ITransactionUnitOfWork } from '../../domain/ITransactionUnitOfWork';
+import {
+  ITransactionUnitOfWork,
+  TransactionTxContext,
+} from '../../domain/ITransactionUnitOfWork';
 import { IScopedTransactionRepository } from '../../domain/repository/scoped-transaction.repository';
 import { IAccountRepository } from '../../../accounts/domain/repository/accounts.repository';
 import { IBudgetRepository } from '../../../budgets/domain/repository/budgets.repository';
@@ -165,5 +168,26 @@ export class TypeOrmUnitOfWorkImpl extends ITransactionUnitOfWork {
 
   getScopedBudgetRepository(): IBudgetRepository {
     return createScopedBudgetRepository(this.queryRunner!, this.budgetMapper);
+  }
+
+  // Transicional: reusa el ciclo de vida manual de arriba. Todavía no usa el
+  // AsyncLocalStorage/Proxy de TypeOrmTransactionRunner — ver el comentario
+  // equivalente en account-unit-of-work.impl.ts.
+  async run<T>(work: (ctx: TransactionTxContext) => Promise<T>): Promise<T> {
+    await this.begin();
+    try {
+      const result = await work({
+        transactions: this.getScopedTransactionRepository(),
+        accounts: this.getScopedAccountRepository(),
+        budgets: this.getScopedBudgetRepository(),
+      });
+      await this.commit();
+      return result;
+    } catch (err) {
+      await this.rollback();
+      throw err;
+    } finally {
+      await this.release();
+    }
   }
 }

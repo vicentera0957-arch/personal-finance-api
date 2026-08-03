@@ -1,6 +1,9 @@
 import { Injectable, Scope } from '@nestjs/common';
 import { DataSource, QueryRunner } from 'typeorm';
-import { IAccountUnitOfWork } from '../../domain/IAccountUnitOfWork';
+import {
+  AccountTxContext,
+  IAccountUnitOfWork,
+} from '../../domain/IAccountUnitOfWork';
 import { IAccountRepository } from '../../domain/repository/accounts.repository';
 import { AccountMapper } from './account.mapper';
 import { createScopedAccountRepository } from './scoped-account.repository';
@@ -48,5 +51,25 @@ export class AccountUnitOfWorkImpl extends IAccountUnitOfWork {
 
   getScopedAccountRepository(): IAccountRepository {
     return createScopedAccountRepository(this.queryRunner!, this.mapper);
+  }
+
+  // Transicional: reusa el ciclo de vida manual de arriba. Todavía no usa el
+  // AsyncLocalStorage/Proxy de TypeOrmTransactionRunner — este impl sigue
+  // siendo statefull, así que el agujero de anidamiento que ese detector
+  // cierra no existe todavía acá (ver PLAN-P3P4 §5.2).
+  async run<T>(work: (ctx: AccountTxContext) => Promise<T>): Promise<T> {
+    await this.begin();
+    try {
+      const result = await work({
+        accounts: this.getScopedAccountRepository(),
+      });
+      await this.commit();
+      return result;
+    } catch (err) {
+      await this.rollback();
+      throw err;
+    } finally {
+      await this.release();
+    }
   }
 }

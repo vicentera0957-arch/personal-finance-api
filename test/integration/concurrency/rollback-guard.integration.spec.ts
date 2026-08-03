@@ -40,7 +40,7 @@ describe('rollback() guard: post-commit and double-rollback are safe (real Query
     await app.close();
   });
 
-  const impls: Array<[string, () => IUnitOfWork]> = [
+  const impls: Array<[string, () => IUnitOfWork<unknown>]> = [
     [
       'TypeOrmUnitOfWorkImpl (transactions)',
       () =>

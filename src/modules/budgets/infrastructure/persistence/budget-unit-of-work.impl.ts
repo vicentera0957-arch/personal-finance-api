@@ -1,6 +1,9 @@
 import { Injectable, Scope } from '@nestjs/common';
 import { DataSource, QueryRunner } from 'typeorm';
-import { IBudgetUnitOfWork } from '../../domain/IBudgetUnitOfWork';
+import {
+  BudgetTxContext,
+  IBudgetUnitOfWork,
+} from '../../domain/IBudgetUnitOfWork';
 import { IBudgetRepository } from '../../domain/repository/budgets.repository';
 import { IExpenseChecker } from '../../domain/ports/expense-checker.port';
 import { BudgetMapper } from './budget.mapper';
@@ -60,5 +63,25 @@ export class BudgetUnitOfWorkImpl extends IBudgetUnitOfWork {
 
   getScopedExpenseChecker(): IExpenseChecker {
     return createScopedExpenseChecker(this.queryRunner!);
+  }
+
+  // Transicional: reusa el ciclo de vida manual de arriba. Todavía no usa el
+  // AsyncLocalStorage/Proxy de TypeOrmTransactionRunner — ver el comentario
+  // equivalente en account-unit-of-work.impl.ts.
+  async run<T>(work: (ctx: BudgetTxContext) => Promise<T>): Promise<T> {
+    await this.begin();
+    try {
+      const result = await work({
+        budgets: this.getScopedBudgetRepository(),
+        expenses: this.getScopedExpenseChecker(),
+      });
+      await this.commit();
+      return result;
+    } catch (err) {
+      await this.rollback();
+      throw err;
+    } finally {
+      await this.release();
+    }
   }
 }

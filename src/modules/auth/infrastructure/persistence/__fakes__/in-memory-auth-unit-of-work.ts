@@ -1,4 +1,7 @@
-import { IAuthUnitOfWork } from '../../../domain/IAuthUnitOfWork';
+import {
+  AuthTxContext,
+  IAuthUnitOfWork,
+} from '../../../domain/IAuthUnitOfWork';
 import { IRefreshTokenRepository } from '../../../domain/repository/refresh-token.repository';
 
 /**
@@ -39,6 +42,20 @@ export class InMemoryAuthUnitOfWork extends IAuthUnitOfWork {
 
   getRefreshTokenRepository(): IRefreshTokenRepository {
     return this.refreshTokenRepo;
+  }
+
+  async run<T>(work: (ctx: AuthTxContext) => Promise<T>): Promise<T> {
+    this.connected = true;
+    try {
+      const result = await work({ refreshTokens: this.refreshTokenRepo });
+      this._commits++;
+      return result;
+    } catch (err) {
+      this._rollbacks++;
+      throw err;
+    } finally {
+      this.connected = false;
+    }
   }
 
   // ── Test helpers ──

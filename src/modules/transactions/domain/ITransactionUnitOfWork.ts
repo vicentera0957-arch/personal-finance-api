@@ -4,6 +4,20 @@ import { IAccountRepository } from '../../accounts/domain/repository/accounts.re
 import { IBudgetRepository } from '../../budgets/domain/repository/budgets.repository';
 
 /**
+ * Recursos escopados que `run()` entrega dentro de una transacción de
+ * `ITransactionUnitOfWork`. `interface`, no `abstract class`: nunca se
+ * inyecta — es sólo el tipo del parámetro de callback de `run()` (misma
+ * categoría que `CreateTransactionCommand`). Ver el docblock de
+ * `IUnitOfWork` para por qué esto no viola la regla de puertos = `abstract
+ * class`.
+ */
+export interface TransactionTxContext {
+  readonly transactions: IScopedTransactionRepository;
+  readonly accounts: IAccountRepository;
+  readonly budgets: IBudgetRepository;
+}
+
+/**
  * Transactions-scoped Unit of Work.
  *
  * Used by `CreateTransactionUseCase` and `DeleteTransactionUseCase`, which
@@ -15,7 +29,7 @@ import { IBudgetRepository } from '../../budgets/domain/repository/budgets.repos
  * which is what makes pessimistic locks (`FOR UPDATE`) effective across
  * the full sequence of reads + writes.
  */
-export abstract class ITransactionUnitOfWork extends IUnitOfWork {
+export abstract class ITransactionUnitOfWork extends IUnitOfWork<TransactionTxContext> {
   abstract getScopedTransactionRepository(): IScopedTransactionRepository;
   abstract getScopedAccountRepository(): IAccountRepository;
   abstract getScopedBudgetRepository(): IBudgetRepository;
