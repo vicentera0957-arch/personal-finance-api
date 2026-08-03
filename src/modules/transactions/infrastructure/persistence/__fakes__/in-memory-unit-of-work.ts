@@ -21,7 +21,6 @@ export class InMemoryUnitOfWork
 {
   private _commits = 0;
   private _rollbacks = 0;
-  private connected = false;
 
   constructor(
     private readonly txRepo: IScopedTransactionRepository,
@@ -32,56 +31,12 @@ export class InMemoryUnitOfWork
     super();
   }
 
-  async begin(): Promise<void> {
-    this.connected = true;
-  }
-
-  async commit(): Promise<void> {
-    this._commits++;
-  }
-
-  async rollback(): Promise<void> {
-    this._rollbacks++;
-  }
-
-  async release(): Promise<void> {
-    this.connected = false;
-  }
-
-  isConnected(): boolean {
-    return this.connected;
-  }
-
-  getScopedTransactionRepository(): IScopedTransactionRepository {
-    return this.txRepo;
-  }
-
-  getScopedAccountRepository(): IAccountRepository {
-    return this.acctRepo;
-  }
-
-  getScopedBudgetRepository(): IBudgetRepository {
-    if (!this.budgetRepo) {
-      throw new Error('BudgetRepository not provided to InMemoryUnitOfWork');
-    }
-    return this.budgetRepo;
-  }
-
-  getScopedExpenseChecker(): IExpenseChecker {
-    if (!this.expenseChecker) {
-      throw new Error('ExpenseChecker not provided to InMemoryUnitOfWork');
-    }
-    return this.expenseChecker;
-  }
-
   // CRÍTICO: el contexto se construye con getters PEREZOSOS, no eager. Si
   // budgetRepo/expenseChecker faltaran y esto los leyera ansiosamente acá,
   // delete-transaction.use-case.spec.ts:25 (que construye este fake SIN
-  // budgetRepo) rompería aunque DeleteTransaction nunca toque ese getter.
-  // Un objeto literal con `get budgets() { … }` preserva la pereza original
-  // de getScopedBudgetRepository()/getScopedExpenseChecker().
+  // budgetRepo) rompería aunque DeleteTransaction nunca toque esa propiedad.
+  // Un objeto literal con `get budgets() { … }` preserva esa pereza.
   async run<T>(work: (ctx: InMemoryTxContext) => Promise<T>): Promise<T> {
-    this.connected = true;
     const txRepo = this.txRepo;
     const acctRepo = this.acctRepo;
     const budgetRepo = this.budgetRepo;
@@ -112,8 +67,6 @@ export class InMemoryUnitOfWork
     } catch (err) {
       this._rollbacks++;
       throw err;
-    } finally {
-      this.connected = false;
     }
   }
 

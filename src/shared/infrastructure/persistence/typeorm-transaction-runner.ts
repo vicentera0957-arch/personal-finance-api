@@ -2,6 +2,7 @@ import { Logger } from '@nestjs/common';
 import { DataSource, QueryRunner } from 'typeorm';
 import { activeTransaction } from './active-transaction.storage';
 import { NestedTransactionError } from './nested-transaction.error';
+import { IUnitOfWork } from '../../domain/IUnitOfWork';
 
 /**
  * Clase base para los cuatro impls de UoW.
@@ -22,15 +23,15 @@ import { NestedTransactionError } from './nested-transaction.error';
  * transacciones distintas y podrían deadlockear entre sí en silencio (ver
  * PLAN-P3P4-transactional-runner.md §5).
  *
- * Nota de secuencia: todavía no `extends IUnitOfWork<TCtx>` — ese puerto
- * sigue sin ser genérico en este punto de la migración (lo gana recién en el
- * siguiente commit). Nadie construye esta clase todavía, así que no hace
- * falta esa relación nominal para compilar; cuando un impl la use de verdad
- * (`extends TypeOrmTransactionRunner<TCtx> implements IFooUnitOfWork`), le
- * alcanza con que `run<T>` calce estructuralmente con el puerto — no
- * necesita heredar de `IUnitOfWork` para eso.
+ * `extends IUnitOfWork<TCtx>`: los 4 impls (`extends
+ * TypeOrmTransactionRunner<TCtx> implements IFooUnitOfWork`) ya no heredan
+ * de su puerto directamente — heredan de esta clase, que sí hereda del
+ * puerto genérico. `implements IFooUnitOfWork` sigue siendo válido porque
+ * ese puerto no declara miembros propios más allá de `run()`.
  */
-export abstract class TypeOrmTransactionRunner<TCtx> {
+export abstract class TypeOrmTransactionRunner<
+  TCtx,
+> implements IUnitOfWork<TCtx> {
   private readonly logger = new Logger(TypeOrmTransactionRunner.name);
 
   protected constructor(private readonly dataSource: DataSource) {}
@@ -61,7 +62,7 @@ export abstract class TypeOrmTransactionRunner<TCtx> {
       const guardedCtx = new Proxy(
         this.createContext(qr) as unknown as Record<string, unknown>,
         {
-          get(target, prop) {
+          get(target: Record<string, unknown>, prop: string | symbol): unknown {
             if (!live.value) {
               throw new Error(
                 `El contexto transaccional de ${ownerName} se usó fuera de run(). ` +

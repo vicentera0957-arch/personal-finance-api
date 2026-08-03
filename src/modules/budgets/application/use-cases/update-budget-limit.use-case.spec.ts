@@ -38,15 +38,14 @@ class ExplodingBudgetsCache extends NullBudgetsCache {
 describe('UpdateBudgetLimitUseCase', () => {
   let budgetRepo: InMemoryBudgetRepository;
   // `let`, no `const`: test 4 swaps it before calling execute() to simulate
-  // getScopedExpenseChecker() returning a different fake for that one case —
-  // run()'s mock reads this variable at call time (closure), not at
-  // mock-creation time, so the swap is visible.
+  // ctx.expenses resolving to a different fake for that one case — run()'s
+  // mock reads this variable at call time (closure), not at mock-creation
+  // time, so the swap is visible.
   let expenseChecker: IExpenseChecker;
   let mockUow: {
     commit: jest.Mock;
     rollback: jest.Mock;
     release: jest.Mock;
-    isConnected: jest.Mock;
     run: jest.Mock;
   };
   let useCase: UpdateBudgetLimitUseCase;
@@ -61,10 +60,6 @@ describe('UpdateBudgetLimitUseCase', () => {
       commit,
       rollback,
       release,
-      // El puerto sigue declarando isConnected() durante la migración (nadie
-      // lo llama desde run(), pero el mock lo conserva para no adelantar el
-      // recorte del ciclo de vida manual, que es trabajo de un commit futuro).
-      isConnected: jest.fn().mockReturnValue(true),
       run: jest.fn(async (work: (ctx: BudgetTxContext) => Promise<unknown>) => {
         try {
           const result = await work({

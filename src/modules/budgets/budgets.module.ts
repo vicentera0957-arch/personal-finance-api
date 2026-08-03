@@ -1,4 +1,4 @@
-import { Module, Scope } from '@nestjs/common';
+import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { BudgetOrmEntity } from './infrastructure/persistence/budget.orm.entity';
 import { BudgetRepositoryImpl } from './infrastructure/persistence/budget.repo.implement';
@@ -34,13 +34,10 @@ import { CategoriesModule } from '../categories/categories.module';
     // read), so there is no reason to share a QueryRunner with the
     // multi-aggregate UoW owned by the module that creates money movements.
     // Same reasoning that already gave accounts and auth their own impls —
-    // see CLAUDE.md, "Why IBudgetUnitOfWork is separate".
-    {
-      provide: BudgetUnitOfWorkImpl,
-      useClass: BudgetUnitOfWorkImpl,
-      scope: Scope.REQUEST,
-    },
-    { provide: IBudgetUnitOfWork, useExisting: BudgetUnitOfWorkImpl },
+    // see CLAUDE.md, "Why IBudgetUnitOfWork is separate". No request scoping:
+    // BudgetUnitOfWorkImpl has no QueryRunner field (it lives on run()'s call
+    // stack), so the provider is a plain singleton.
+    { provide: IBudgetUnitOfWork, useClass: BudgetUnitOfWorkImpl },
     BudgetsCacheImpl,
     { provide: IBudgetsCache, useExisting: BudgetsCacheImpl },
   ],

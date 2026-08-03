@@ -1,4 +1,4 @@
-import { Module, Scope } from '@nestjs/common';
+import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { TypeOrmModule } from '@nestjs/typeorm';
@@ -63,13 +63,10 @@ import { AuthController } from './infrastructure/http/auth-controller/auth.contr
     // Refresh token persistence helpers
     RefreshTokenMapper,
 
-    // UoW — REQUEST scope para que el mismo QueryRunner se use en toda la operación
-    {
-      provide: AuthUnitOfWorkImpl,
-      useClass: AuthUnitOfWorkImpl,
-      scope: Scope.REQUEST,
-    },
-    { provide: IAuthUnitOfWork, useExisting: AuthUnitOfWorkImpl },
+    // UoW — singleton: AuthUnitOfWorkImpl has no QueryRunner field, so there
+    // is no per-request state to isolate. The QueryRunner lives on the call
+    // stack of run() (TypeOrmTransactionRunner), one per invocation.
+    { provide: IAuthUnitOfWork, useClass: AuthUnitOfWorkImpl },
 
     // Passport
     JwtStrategy,

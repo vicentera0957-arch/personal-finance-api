@@ -1,12 +1,10 @@
-import { Injectable, Scope } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { DataSource, EntityManager, QueryRunner } from 'typeorm';
 import {
   ITransactionUnitOfWork,
   TransactionTxContext,
 } from '../../domain/ITransactionUnitOfWork';
 import { IScopedTransactionRepository } from '../../domain/repository/scoped-transaction.repository';
-import { IAccountRepository } from '../../../accounts/domain/repository/accounts.repository';
-import { IBudgetRepository } from '../../../budgets/domain/repository/budgets.repository';
 import { Transaction } from '../../domain/entities/transaction.entity';
 import { TransactionOrmEntity } from './transaction.orm.entity';
 import { TransactionMapper } from './transaction.mapper';
@@ -15,6 +13,7 @@ import { createScopedAccountRepository } from '../../../accounts/infrastructure/
 import { BudgetMapper } from '../../../budgets/infrastructure/persistence/budget.mapper';
 import { createScopedBudgetRepository } from '../../../budgets/infrastructure/persistence/scoped-budget.repository';
 import { monthPeriod } from '../../../../shared/domain/month-period';
+import { TypeOrmTransactionRunner } from '../../../../shared/infrastructure/persistence/typeorm-transaction-runner';
 
 // ── Scoped repositories — private to this file; only the UoW constructs them ──
 //
@@ -107,87 +106,41 @@ class ScopedTransactionRepository extends IScopedTransactionRepository {
  * genuinely needs a multi-aggregate transaction: `CreateTransaction` writes
  * the transaction, account and budget rows atomically.
  *
- * It still exposes `getScopedBudgetRepository()` — CreateTransaction locks
- * the budget row before summing period expenses — but that getter now goes
- * through `createScopedBudgetRepository()`, the same factory
- * `BudgetUnitOfWorkImpl` uses on its own QueryRunner. Two independent
+ * The lifecycle (QueryRunner creation, begin/commit/rollback/release, the
+ * anti-leak Proxy, nested-`run()` detection) lives entirely in
+ * `TypeOrmTransactionRunner` — this class contributes only `createContext()`,
+ * which builds the three scoped resources on the active QueryRunner. Since
+ * there is no `QueryRunner` field anymore, this provider is a plain
+ * singleton, no request scoping: the `QueryRunner` lives on the call stack
+ * of `run()`.
+ *
+ * `ctx.budgets` — CreateTransaction locks the budget row before summing
+ * period expenses — goes through `createScopedBudgetRepository()`, the same
+ * factory `BudgetUnitOfWorkImpl` uses on its own QueryRunner. Two independent
  * consumers, two independent transactions, same lock semantics.
  */
-@Injectable({ scope: Scope.REQUEST })
-export class TypeOrmUnitOfWorkImpl extends ITransactionUnitOfWork {
-  private queryRunner: QueryRunner | null = null;
-
+@Injectable()
+export class TypeOrmUnitOfWorkImpl
+  extends TypeOrmTransactionRunner<TransactionTxContext>
+  implements ITransactionUnitOfWork
+{
   constructor(
-    private readonly dataSource: DataSource,
+    dataSource: DataSource,
     private readonly transactionMapper: TransactionMapper,
     private readonly accountMapper: AccountMapper,
     private readonly budgetMapper: BudgetMapper,
   ) {
-    super();
-  }
-  // uow methods — begin, commit, rollback, release, isConnected
-  async begin(): Promise<void> {
-    //reserves a connection
-    this.queryRunner = this.dataSource.createQueryRunner();
-    await this.queryRunner.connect();
-    await this.queryRunner.startTransaction();
+    super(dataSource);
   }
 
-  async commit(): Promise<void> {
-    await this.queryRunner?.commitTransaction();
-  }
-
-  async rollback(): Promise<void> {
-    // No-op si no hay transacción abierta: un commit previo ya la cerró (typeorm
-    // pone isTransactionActive=false en commitTransaction()). Sin este guard,
-    // rollbackTransaction() lanza TransactionNotStartedError y enmascara la
-    // excepción original que llevó al catch del use case.
-    if (!this.queryRunner?.isTransactionActive) return;
-    await this.queryRunner.rollbackTransaction();
-  }
-
-  async release(): Promise<void> {
-    await this.queryRunner?.release();
-    this.queryRunner = null;
-  }
-
-  isConnected(): boolean {
-    return this.queryRunner !== null;
-  }
-  // repository getters — return SCOPED repositories that share the same Conection/Transaction via the QueryRunner.
-  getScopedTransactionRepository(): IScopedTransactionRepository {
-    return new ScopedTransactionRepository(
-      this.queryRunner!.manager,
-      this.transactionMapper,
-    );
-  }
-
-  getScopedAccountRepository(): IAccountRepository {
-    return createScopedAccountRepository(this.queryRunner!, this.accountMapper);
-  }
-
-  getScopedBudgetRepository(): IBudgetRepository {
-    return createScopedBudgetRepository(this.queryRunner!, this.budgetMapper);
-  }
-
-  // Transicional: reusa el ciclo de vida manual de arriba. Todavía no usa el
-  // AsyncLocalStorage/Proxy de TypeOrmTransactionRunner — ver el comentario
-  // equivalente en account-unit-of-work.impl.ts.
-  async run<T>(work: (ctx: TransactionTxContext) => Promise<T>): Promise<T> {
-    await this.begin();
-    try {
-      const result = await work({
-        transactions: this.getScopedTransactionRepository(),
-        accounts: this.getScopedAccountRepository(),
-        budgets: this.getScopedBudgetRepository(),
-      });
-      await this.commit();
-      return result;
-    } catch (err) {
-      await this.rollback();
-      throw err;
-    } finally {
-      await this.release();
-    }
+  protected createContext(queryRunner: QueryRunner): TransactionTxContext {
+    return {
+      transactions: new ScopedTransactionRepository(
+        queryRunner.manager,
+        this.transactionMapper,
+      ),
+      accounts: createScopedAccountRepository(queryRunner, this.accountMapper),
+      budgets: createScopedBudgetRepository(queryRunner, this.budgetMapper),
+    };
   }
 }

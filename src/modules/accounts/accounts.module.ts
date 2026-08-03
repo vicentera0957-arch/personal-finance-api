@@ -1,4 +1,4 @@
-import { Module, Scope } from '@nestjs/common';
+import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 // ORM Entity
@@ -46,7 +46,6 @@ import { DeleteAccountUseCase } from './application/use-cases/delete-account.use
     {
       provide: IAccountUnitOfWork,
       useClass: AccountUnitOfWorkImpl,
-      scope: Scope.REQUEST,
     },
   ],
   exports: [AccountMapper, GetAccountByIdUseCase],

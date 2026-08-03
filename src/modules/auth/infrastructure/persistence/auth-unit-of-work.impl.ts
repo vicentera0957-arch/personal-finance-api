@@ -1,10 +1,11 @@
-import { Injectable, Scope } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { DataSource, EntityManager, QueryRunner } from 'typeorm';
 import { AuthTxContext, IAuthUnitOfWork } from '../../domain/IAuthUnitOfWork';
 import { IRefreshTokenRepository } from '../../domain/repository/refresh-token.repository';
 import { RefreshToken } from '../../domain/entities/refresh-token.entity';
 import { RefreshTokenOrmEntity } from './refresh-token.orm.entity';
 import { RefreshTokenMapper } from './refresh-token.mapper';
+import { TypeOrmTransactionRunner } from '../../../../shared/infrastructure/persistence/typeorm-transaction-runner';
 
 // ── Repo escopado — usa el EntityManager del QueryRunner activo ───────────────
 
@@ -57,68 +58,24 @@ class ScopedRefreshTokenRepository extends IRefreshTokenRepository {
 
 // ── Implementación del UoW ─────────────────────────────────────────────────────
 
-@Injectable({ scope: Scope.REQUEST })
-export class AuthUnitOfWorkImpl extends IAuthUnitOfWork {
-  private queryRunner: QueryRunner | null = null;
-
+@Injectable()
+export class AuthUnitOfWorkImpl
+  extends TypeOrmTransactionRunner<AuthTxContext>
+  implements IAuthUnitOfWork
+{
   constructor(
-    private readonly dataSource: DataSource,
+    dataSource: DataSource,
     private readonly mapper: RefreshTokenMapper,
   ) {
-    super();
+    super(dataSource);
   }
 
-  async begin(): Promise<void> {
-    this.queryRunner = this.dataSource.createQueryRunner();
-    await this.queryRunner.connect();
-    await this.queryRunner.startTransaction();
-  }
-
-  async commit(): Promise<void> {
-    await this.queryRunner?.commitTransaction();
-  }
-
-  async rollback(): Promise<void> {
-    // No-op si no hay transacción abierta: un commit previo ya la cerró (typeorm
-    // pone isTransactionActive=false en commitTransaction()). Sin este guard,
-    // rollbackTransaction() lanza TransactionNotStartedError y enmascara la
-    // excepción original que llevó al catch del use case.
-    if (!this.queryRunner?.isTransactionActive) return;
-    await this.queryRunner.rollbackTransaction();
-  }
-
-  async release(): Promise<void> {
-    await this.queryRunner?.release();
-    this.queryRunner = null;
-  }
-
-  isConnected(): boolean {
-    return this.queryRunner !== null;
-  }
-
-  getRefreshTokenRepository(): IRefreshTokenRepository {
-    return new ScopedRefreshTokenRepository(
-      this.queryRunner!.manager,
-      this.mapper,
-    );
-  }
-
-  // Transicional: reusa el ciclo de vida manual de arriba. Todavía no usa el
-  // AsyncLocalStorage/Proxy de TypeOrmTransactionRunner — ver el comentario
-  // equivalente en account-unit-of-work.impl.ts.
-  async run<T>(work: (ctx: AuthTxContext) => Promise<T>): Promise<T> {
-    await this.begin();
-    try {
-      const result = await work({
-        refreshTokens: this.getRefreshTokenRepository(),
-      });
-      await this.commit();
-      return result;
-    } catch (err) {
-      await this.rollback();
-      throw err;
-    } finally {
-      await this.release();
-    }
+  protected createContext(queryRunner: QueryRunner): AuthTxContext {
+    return {
+      refreshTokens: new ScopedRefreshTokenRepository(
+        queryRunner.manager,
+        this.mapper,
+      ),
+    };
   }
 }

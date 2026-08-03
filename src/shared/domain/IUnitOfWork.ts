@@ -13,25 +13,18 @@
  * rule — that rule exists because DI tokens must survive erasure, and
  * `TCtx` is never a token.
  *
- * `run<T>` is the stateless runner (closes P3 + P4): it opens the
- * transaction, builds the scoped-resource context (`TCtx`) exactly once,
- * runs `work`, and commits/rolls back/releases without the use case ever
- * touching the lifecycle by hand. It coexists with the five manual methods
- * below (`begin`/`commit`/`rollback`/`release`/`isConnected`) for the
- * duration of the module-by-module migration — each impl still implements
- * them and `run()` reuses them internally. The five disappear once every
- * use case has moved off them.
+ * `run<T>` is the ONLY method (closes P3 + P4): it opens the transaction,
+ * builds the scoped-resource context (`TCtx`) exactly once, runs `work`,
+ * and commits/rolls back/releases without the use case ever touching the
+ * lifecycle by hand. The five manual methods that used to coexist with
+ * `run()` during the module-by-module migration —
+ * `begin`/`commit`/`rollback`/`release`/`isConnected` — are gone: every
+ * impl now extends `TypeOrmTransactionRunner<TCtx>`
+ * (shared/infrastructure/persistence/typeorm-transaction-runner.ts), which
+ * owns that lifecycle in one place and keeps the `QueryRunner` on the call
+ * stack of `run()` rather than in an instance field. No field, no request
+ * scoping: every UoW provider is a plain singleton.
  */
 export abstract class IUnitOfWork<TCtx> {
-  abstract begin(): Promise<void>;
-  abstract commit(): Promise<void>;
-  abstract rollback(): Promise<void>;
-  abstract release(): Promise<void>;
-  /**
-   * ¿Hay una conexión reservada? True entre begin() y release(), INCLUIDO
-   * después del commit. Para saber si hay transacción abierta es
-   * `queryRunner.isTransactionActive`.
-   */
-  abstract isConnected(): boolean;
   abstract run<T>(work: (ctx: TCtx) => Promise<T>): Promise<T>;
 }

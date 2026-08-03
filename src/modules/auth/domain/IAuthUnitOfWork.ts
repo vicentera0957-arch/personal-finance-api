@@ -11,10 +11,10 @@ export interface AuthTxContext {
 }
 
 /**
- * Puerto UoW propio del módulo auth.
- * Extiende IUnitOfWork genérico y expone el repo de refresh tokens
- * para que RefreshTokenUseCase pueda revocar + crear en una transacción atómica.
+ * Puerto UoW propio del módulo auth. Extiende IUnitOfWork genérico; no
+ * declara miembros propios más allá de `run()` — `ctx.refreshTokens` (una
+ * propiedad de `AuthTxContext`) es lo que `RefreshTokenUseCase` usa para
+ * revocar + crear en una transacción atómica, reemplazando lo que antes era
+ * un getter `getRefreshTokenRepository()` en este puerto.
  */
-export abstract class IAuthUnitOfWork extends IUnitOfWork<AuthTxContext> {
-  abstract getRefreshTokenRepository(): IRefreshTokenRepository;
-}
+export abstract class IAuthUnitOfWork extends IUnitOfWork<AuthTxContext> {}

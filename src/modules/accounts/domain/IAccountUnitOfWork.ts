@@ -10,6 +10,9 @@ export interface AccountTxContext {
   readonly accounts: IAccountRepository;
 }
 
-export abstract class IAccountUnitOfWork extends IUnitOfWork<AccountTxContext> {
-  abstract getScopedAccountRepository(): IAccountRepository;
-}
+/**
+ * No members beyond the inherited `run()`: `ctx.accounts` (a property of
+ * `AccountTxContext`) replaces what used to be a
+ * `getScopedAccountRepository()` getter on this port.
+ */
+export abstract class IAccountUnitOfWork extends IUnitOfWork<AccountTxContext> {}

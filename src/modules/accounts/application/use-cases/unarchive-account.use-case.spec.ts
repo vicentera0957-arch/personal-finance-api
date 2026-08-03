@@ -19,10 +19,6 @@ const makeMockUow = (repo: InMemoryAccountRepository) => {
     commit,
     rollback,
     release,
-    // El puerto sigue declarando isConnected() durante la migración (nadie
-    // lo llama desde run(), pero el mock lo conserva para no adelantar el
-    // recorte del ciclo de vida manual, que es trabajo de un commit futuro).
-    isConnected: jest.fn().mockReturnValue(true),
     run: jest.fn(async (work: (ctx: AccountTxContext) => Promise<unknown>) => {
       try {
         const result = await work({ accounts: repo });

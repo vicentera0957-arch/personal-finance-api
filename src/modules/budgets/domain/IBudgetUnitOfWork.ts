@@ -12,7 +12,10 @@ export interface BudgetTxContext {
   readonly expenses: IExpenseChecker;
 }
 
-export abstract class IBudgetUnitOfWork extends IUnitOfWork<BudgetTxContext> {
-  abstract getScopedBudgetRepository(): IBudgetRepository;
-  abstract getScopedExpenseChecker(): IExpenseChecker;
-}
+/**
+ * No members beyond the inherited `run()`: `ctx.budgets` / `ctx.expenses`
+ * (properties of `BudgetTxContext`) replace what used to be
+ * `getScopedBudgetRepository()` / `getScopedExpenseChecker()` getters on
+ * this port.
+ */
+export abstract class IBudgetUnitOfWork extends IUnitOfWork<BudgetTxContext> {}

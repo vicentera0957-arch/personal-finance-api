@@ -24,13 +24,12 @@ export interface TransactionTxContext {
  * need to atomically coordinate writes across the `transactions`, `accounts`
  * and `budgets` aggregates inside a single PostgreSQL transaction.
  *
- * The repository getters return SCOPED repositories that all share the same
- * `EntityManager` (and therefore the same QueryRunner / DB connection),
- * which is what makes pessimistic locks (`FOR UPDATE`) effective across
- * the full sequence of reads + writes.
+ * No members beyond the inherited `run()`: the scoped repositories used to
+ * be exposed as getters (`getScopedTransactionRepository()`, etc.) on the
+ * port itself; now they are properties of `TransactionTxContext`, handed to
+ * `run()`'s callback. All three share the same `EntityManager` (and
+ * therefore the same QueryRunner / DB connection), which is what makes
+ * pessimistic locks (`FOR UPDATE`) effective across the full sequence of
+ * reads + writes.
  */
-export abstract class ITransactionUnitOfWork extends IUnitOfWork<TransactionTxContext> {
-  abstract getScopedTransactionRepository(): IScopedTransactionRepository;
-  abstract getScopedAccountRepository(): IAccountRepository;
-  abstract getScopedBudgetRepository(): IBudgetRepository;
-}
+export abstract class ITransactionUnitOfWork extends IUnitOfWork<TransactionTxContext> {}

@@ -14,38 +14,12 @@ import { IRefreshTokenRepository } from '../../../domain/repository/refresh-toke
 export class InMemoryAuthUnitOfWork extends IAuthUnitOfWork {
   private _commits = 0;
   private _rollbacks = 0;
-  private connected = false;
 
   constructor(private readonly refreshTokenRepo: IRefreshTokenRepository) {
     super();
   }
 
-  async begin(): Promise<void> {
-    this.connected = true;
-  }
-
-  async commit(): Promise<void> {
-    this._commits++;
-  }
-
-  async rollback(): Promise<void> {
-    this._rollbacks++;
-  }
-
-  async release(): Promise<void> {
-    this.connected = false;
-  }
-
-  isConnected(): boolean {
-    return this.connected;
-  }
-
-  getRefreshTokenRepository(): IRefreshTokenRepository {
-    return this.refreshTokenRepo;
-  }
-
   async run<T>(work: (ctx: AuthTxContext) => Promise<T>): Promise<T> {
-    this.connected = true;
     try {
       const result = await work({ refreshTokens: this.refreshTokenRepo });
       this._commits++;
@@ -53,8 +27,6 @@ export class InMemoryAuthUnitOfWork extends IAuthUnitOfWork {
     } catch (err) {
       this._rollbacks++;
       throw err;
-    } finally {
-      this.connected = false;
     }
   }
 

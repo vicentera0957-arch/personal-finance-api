@@ -1,4 +1,4 @@
-import { Module, Scope } from '@nestjs/common';
+import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 // ORM Entity
@@ -48,23 +48,18 @@ import { BudgetsModule } from '../budgets/budgets.module';
       provide: ITransactionRepository,
       useClass: TransactionRepositoryImpl,
     },
-    // The concrete UoW is provided as request-scoped, then aliased to its
-    // port via `useExisting`. It used to also alias IBudgetUnitOfWork here
-    // (via a second `useExisting`, sharing this same instance/QueryRunner
-    // with UpdateBudgetLimit/DeleteBudget) — that alias is gone now that
-    // budgets owns its own BudgetUnitOfWorkImpl. This impl serves only
+    // The concrete UoW used to be provided request-scoped, then aliased to
+    // its port via `useExisting` — it also used to alias IBudgetUnitOfWork
+    // here (via a second `useExisting`, sharing this same instance/
+    // QueryRunner with UpdateBudgetLimit/DeleteBudget), an alias gone now
+    // that budgets owns its own BudgetUnitOfWorkImpl. This impl serves only
     // ITransactionUnitOfWork; CreateTransaction/DeleteTransaction are the
-    // only flows that need its multi-aggregate QueryRunner.
-    {
-      provide: TypeOrmUnitOfWorkImpl, //This token is never used directly — only the module-specific interface (ITransactionUnitOfWork) is injected into the use cases.
-      useClass: TypeOrmUnitOfWorkImpl, //But we still need to provide the concrete class itself here so Nest can instantiate it and manage its lifecycle.
-      scope: Scope.REQUEST,
-    },
-    // This token is the one
-    // actually injected into the use cases
+    // only flows that need its multi-aggregate QueryRunner. It has no
+    // QueryRunner field (lives on run()'s call stack), so a single
+    // `useClass` binding is enough — no request scoping, no second token.
     {
       provide: ITransactionUnitOfWork,
-      useExisting: TypeOrmUnitOfWorkImpl,
+      useClass: TypeOrmUnitOfWorkImpl,
     },
   ],
 })

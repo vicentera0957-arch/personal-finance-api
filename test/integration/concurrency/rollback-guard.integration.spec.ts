@@ -1,5 +1,5 @@
 import { INestApplication } from '@nestjs/common';
-import { DataSource } from 'typeorm';
+import { DataSource, QueryRunner } from 'typeorm';
 import { createTestApp } from '../../helpers/app-bootstrap';
 import { IUnitOfWork } from '../../../src/shared/domain/IUnitOfWork';
 import { TypeOrmUnitOfWorkImpl } from '../../../src/modules/transactions/infrastructure/persistence/unit-of-work.impl';
@@ -12,14 +12,41 @@ import { BudgetMapper } from '../../../src/modules/budgets/infrastructure/persis
 import { RefreshTokenMapper } from '../../../src/modules/auth/infrastructure/persistence/refresh-token.mapper';
 
 /**
- * PLAN-P7 §6.6 (Cambio B) — the rollback() guard added to the four UoW impls
- * depends on real TypeORM semantics that no mock can reproduce:
- * commitTransaction() flips QueryRunner.isTransactionActive to false, and
- * rollbackTransaction() reads that flag to decide whether to throw
- * TransactionNotStartedError. This suite exercises that behavior against a
- * real QueryRunner for each of the four concrete impls, so a silent change in
- * a future TypeORM major version fails here instead of masking a real error
- * in production — exactly the bug P7 closes.
+ * REPLACES the pre-PLAN-P3P4 version of this file, which exercised
+ * `begin()` → `commit()` → `rollback()` → `release()` called by hand on the
+ * four UoW impls. That public surface is gone: the impls no longer expose a
+ * manual lifecycle, only `run()`. This is a deliberate replacement, not an
+ * adaptation — the contract under test changed shape, but the reason the
+ * suite exists has not: real TypeORM semantics that no mocked QueryRunner
+ * can reproduce.
+ *
+ * What used to need proving by hand (commit flips `isTransactionActive` to
+ * false; a rollback on an inactive transaction throws
+ * `TransactionNotStartedError` unless guarded) is now impossible to trigger
+ * through the public API — `run()`'s own try/catch guarantees commit and
+ * rollback are mutually exclusive per invocation (see
+ * `typeorm-transaction-runner.spec.ts`, tested there with a mocked
+ * QueryRunner). What is NOT covered by that unit suite is whether the real
+ * TypeORM flag semantics it assumes actually hold, and whether the four
+ * REAL impls (not a toy `TestRunner`) wire `createContext()` correctly
+ * against a real `DataSource`. That is what this file proves:
+ *
+ *  1. The raw-QueryRunner flag semantics the runner's guard depends on
+ *     (`commitTransaction()` → `isTransactionActive` false;
+ *     `rollbackTransaction()` on an inactive transaction throws) — same
+ *     scenario the old suite tested, kept verbatim because it is still the
+ *     only place proving the assumption baked into
+ *     `typeorm-transaction-runner.ts`'s catch block.
+ *  2. Each of the four real impls' `run()`, happy path and error path,
+ *     against a real `DataSource` — proving `createContext()` plus the
+ *     shared runner produce a working, cleanly-released transaction, and
+ *     that a thrown domain error survives real commit/rollback/release
+ *     intact (no `TransactionNotStartedError` leaking out, no wrapping).
+ *  3. Two sequential (non-nested) `run()` calls on the SAME impl instance —
+ *     the direct behavioral consequence of dropping `Scope.REQUEST` (P3):
+ *     a singleton UoW provider must be safe to reuse across requests
+ *     against a real connection pool, not just against a mocked
+ *     `DataSource.createQueryRunner()`.
  *
  * Deliberately a separate file, not a new `describe` inside
  * concurrency.integration.spec.ts: CLAUDE.md forbids modifying that file's
@@ -27,7 +54,7 @@ import { RefreshTokenMapper } from '../../../src/modules/auth/infrastructure/per
  * this suite is unrelated to any of them — it tests UoW lifecycle in
  * isolation, with no HTTP requests and no cross-aggregate invariant.
  */
-describe('rollback() guard: post-commit and double-rollback are safe (real QueryRunner)', () => {
+describe('run(): commit/rollback/release against a real QueryRunner', () => {
   let app: INestApplication;
   let dataSource: DataSource;
 
@@ -38,6 +65,47 @@ describe('rollback() guard: post-commit and double-rollback are safe (real Query
 
   afterAll(async () => {
     await app.close();
+  });
+
+  describe('raw QueryRunner: the flag semantics the runner guard depends on', () => {
+    it('commitTransaction() flips isTransactionActive to false, and a further rollbackTransaction() throws TransactionNotStartedError', async () => {
+      const queryRunner: QueryRunner = dataSource.createQueryRunner();
+      await queryRunner.connect();
+      await queryRunner.startTransaction();
+      await queryRunner.commitTransaction();
+
+      expect(queryRunner.isTransactionActive).toBe(false);
+
+      // This is exactly why typeorm-transaction-runner.ts's catch block
+      // guards with `if (qr.isTransactionActive) await qr.rollbackTransaction()`
+      // instead of calling it unconditionally.
+      await expect(queryRunner.rollbackTransaction()).rejects.toThrow();
+
+      await queryRunner.release();
+    });
+
+    it('a second rollbackTransaction() after the first is also unsafe without a guard (double rollback)', async () => {
+      const queryRunner: QueryRunner = dataSource.createQueryRunner();
+      await queryRunner.connect();
+      await queryRunner.startTransaction();
+      await queryRunner.rollbackTransaction();
+
+      expect(queryRunner.isTransactionActive).toBe(false);
+      await expect(queryRunner.rollbackTransaction()).rejects.toThrow();
+
+      await queryRunner.release();
+    });
+
+    it('release() returns the connection to the pool (isReleased flips)', async () => {
+      const queryRunner: QueryRunner = dataSource.createQueryRunner();
+      await queryRunner.connect();
+      await queryRunner.startTransaction();
+      await queryRunner.commitTransaction();
+
+      expect(queryRunner.isReleased).toBe(false);
+      await queryRunner.release();
+      expect(queryRunner.isReleased).toBe(true);
+    });
   });
 
   const impls: Array<[string, () => IUnitOfWork<unknown>]> = [
@@ -66,44 +134,33 @@ describe('rollback() guard: post-commit and double-rollback are safe (real Query
   ];
 
   describe.each(impls)('%s', (_name, makeUow) => {
-    it('begin() -> commit() -> rollback() does not throw', async () => {
+    it('run() happy path resolves with the callback result and releases cleanly', async () => {
       const uow = makeUow();
-      await uow.begin();
-      await uow.commit();
 
-      // Before the guard: rollbackTransaction() on an already-committed
-      // QueryRunner throws TransactionNotStartedError here.
-      await expect(uow.rollback()).resolves.toBeUndefined();
+      const result = await uow.run(async () => 'ok');
 
-      await uow.release();
+      expect(result).toBe('ok');
     });
 
-    it('begin() -> rollback() -> rollback() does not throw (double rollback, no release in between)', async () => {
+    it('run() error path rejects with the ORIGINAL error, real commit/rollback/release included', async () => {
       const uow = makeUow();
-      await uow.begin();
-      await uow.rollback();
+      class MarkerError extends Error {}
 
-      // Same guard, same reasoning: the first rollback already closed the
-      // transaction (isTransactionActive=false), so the second is a no-op.
-      await expect(uow.rollback()).resolves.toBeUndefined();
-
-      await uow.release();
+      await expect(
+        uow.run(async () => {
+          throw new MarkerError('boom');
+        }),
+      ).rejects.toBeInstanceOf(MarkerError);
     });
-  });
 
-  it('begin() -> commit() -> release() returns the connection to the pool', async () => {
-    // Raw QueryRunner, mirroring what every impl's begin()/commit()/release()
-    // do internally — isReleased is TypeORM's own signal that release() gave
-    // the connection back. No UoW impl exposes its private QueryRunner, and
-    // this fact is identical across the four impls (same three lines of
-    // code), so testing it once here is representative.
-    const queryRunner = dataSource.createQueryRunner();
-    await queryRunner.connect();
-    await queryRunner.startTransaction();
-    await queryRunner.commitTransaction();
+    it('two sequential run() calls on the same (singleton) instance both succeed', async () => {
+      const uow = makeUow();
 
-    expect(queryRunner.isReleased).toBe(false);
-    await queryRunner.release();
-    expect(queryRunner.isReleased).toBe(true);
+      const first = await uow.run(async () => 1);
+      const second = await uow.run(async () => 2);
+
+      expect(first).toBe(1);
+      expect(second).toBe(2);
+    });
   });
 });
