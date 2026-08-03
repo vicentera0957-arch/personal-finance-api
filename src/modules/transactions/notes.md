@@ -42,7 +42,7 @@ Abstract class (required for DI in NestJS). Methods:
 
 **File:** `domain/ITransactionUnitOfWork.ts`
 
-Abstract class that **extends `IUnitOfWork`** (`shared/domain`). The lifecycle contract (`begin`, `commit`, `rollback`, `release`, `isActive`) is cross-cutting, inherited from that abstraction and documented there — **it is not re-documented here**.
+Abstract class that **extends `IUnitOfWork`** (`shared/domain`). The lifecycle contract (`begin`, `commit`, `rollback`, `release`, `isConnected`) is cross-cutting, inherited from that abstraction and documented there — **it is not re-documented here**.
 
 What this port **adds** are the getters for the repositories that `CreateTransactionUseCase` and `DeleteTransactionUseCase` need to coordinate writes across the three aggregates within a single transaction:
 
@@ -134,7 +134,7 @@ The class keeps a single mutable field: `queryRunner: QueryRunner | null` (start
 | `commit()` | `queryRunner?.commitTransaction()` — confirms everything written in the tx. |
 | `rollback()` | `queryRunner?.rollbackTransaction()` — discards everything. |
 | `release()` | `queryRunner?.release()` and sets `queryRunner` back to `null` — **returns the connection to the pool**. Always goes in the use case's `finally`; omitting it leaks connections. |
-| `isActive()` | `queryRunner !== null` — true between `begin()` and `release()`. |
+| `isConnected()` | `queryRunner !== null` — true between `begin()` and `release()` — incluido después del commit. |
 
 The optional chaining (`?.`) in commit/rollback/release makes calling them without an open tx a no-op instead of a crash.
 

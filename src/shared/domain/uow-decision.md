@@ -1,7 +1,7 @@
 # Unit of Work — design decisions
 
 Level 1 - Generic contract (shared/domain/IUnitOfWork.ts)
-Defines only the transactional lifecycle (begin, commit, rollback, release, isActive). It knows nothing about repos. It lives in shared because "having a DB transaction" is cross-cutting; it belongs to no bounded context.
+Defines only the transactional lifecycle (begin, commit, rollback, release, isConnected). It knows nothing about repos. It lives in shared because "having a DB transaction" is cross-cutting; it belongs to no bounded context.
 
 Level 2 - Per-module port (<module>/domain/I<Module>UnitOfWork.ts)
 Each module that needs atomicity defines its own port that extends IUnitOfWork and adds getters for the repos that flow needs - including repos of other modules it consumes (not just its own).

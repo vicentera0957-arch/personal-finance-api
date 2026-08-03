@@ -79,7 +79,12 @@ export class AuthUnitOfWorkImpl extends IAuthUnitOfWork {
   }
 
   async rollback(): Promise<void> {
-    await this.queryRunner?.rollbackTransaction();
+    // No-op si no hay transacción abierta: un commit previo ya la cerró (typeorm
+    // pone isTransactionActive=false en commitTransaction()). Sin este guard,
+    // rollbackTransaction() lanza TransactionNotStartedError y enmascara la
+    // excepción original que llevó al catch del use case.
+    if (!this.queryRunner?.isTransactionActive) return;
+    await this.queryRunner.rollbackTransaction();
   }
 
   async release(): Promise<void> {
@@ -87,7 +92,7 @@ export class AuthUnitOfWorkImpl extends IAuthUnitOfWork {
     this.queryRunner = null;
   }
 
-  isActive(): boolean {
+  isConnected(): boolean {
     return this.queryRunner !== null;
   }
 

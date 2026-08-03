@@ -1,403 +1,128 @@
-# PLAN P7 — Reacción secundaria (invalidación de caché) dentro del alcance de error de la transacción
+# PLAN P7 — Reacción secundaria dentro del alcance de error de la transacción
 
-> Alcance: **solo P7** (`src/PROBLEMS.md:294-329`). No toca P1/P2/P3/P4/P5/P6.
-> Estado: plan. Ningún archivo fuente modificado.
-
----
-
-## 0. Estado actual vs. propuesta
-
-### 0.1 Lo que YA está implementado hoy (estado anterior, nada de esto es propuesta)
-
-| Pieza | Dónde | Cómo está hoy |
-| --- | --- | --- |
-| Invalidación de caché en `DeleteBudget` | `delete-budget.use-case.ts:50-59` | Corre **después** del `commit()` pero **dentro del `try`** |
-| Invalidación de caché en `UpdateBudgetLimit` | `update-budget-limit.use-case.ts:62-71` | Igual |
-| `catch` de ambos | mismos archivos | Llama `await this.uow.rollback()` sin verificar si la transacción sigue abierta |
-| `rollback()` de los UoW | `unit-of-work.impl.ts`, `auth-unit-of-work.impl.ts` | `await this.queryRunner?.rollbackTransaction()` — **sin guard** de estado transaccional |
-| `isActive()` | ambos impls | Existe, devuelve `queryRunner !== null`, y **no se usa en ningún lado** |
-| TTL de la caché de budgets | `budgets-cache.impl.ts:8` | 600 s |
-| Protección equivalente en auth | `refresh-token.use-case.ts:28,87` | **Ya resuelto** ahí con un flag `committed` — precedente vivo, no se toca |
-| Cobertura del fallo de caché post-commit | — | **No existe ningún test.** Por eso el defecto pasó inadvertido |
-
-**Consecuencia del estado actual:** si Redis está caído, la invalidación lanza → cae al `catch` → `rollback()` sobre una transacción ya commiteada → TypeORM lanza `TransactionNotStartedError`, que enmascara el error original. El budget quedó borrado, pero el cliente recibe un 500.
-
-### 0.2 Lo que este plan PROPONE cambiar
-
-| # | Propuesta | Estado |
-| --- | --- | --- |
-| **A** | Invalidación en su propio `try/catch` inmediatamente tras el `commit()`, con `logger.warn` | ✅ **Recomendada** — §3 |
-| **C** | Endurecer `rollback()` en **ambos** impls con `queryRunner.isTransactionActive` | ✅ **Recomendada como complemento** — §3 |
-| **B** | Mover la invalidación después del `finally` | ❌ Descartada — §3 |
-| **D** | Flag `committed` replicando el de auth | ❌ Descartada — §3 |
-| **E** | Fire-and-forget | ❌ Descartada — §3 |
-| **F** | Reintentos / outbox | ❌ Descartada — §3 |
-| — | Dos tests unitarios nuevos con un doble de caché que explota | ✅ Parte de la propuesta — §4 |
-
-**Por qué A + C y no solo una:** C sola **no arregla P7** — el error de Redis seguiría propagando y el cliente seguiría viendo un 500, solo que con el error correcto en lugar del enmascarado. A sola arregla el síntoma pero deja `rollback()` sin protección para el próximo llamador que se equivoque.
-
-**Corrección respecto del enunciado original del problema:** `isActive()` **no sirve** como guard para C. Devuelve `queryRunner !== null`, o sea verdadero desde `begin()` hasta `release()`, **incluido después del `commit()`**. El guard correcto es `queryRunner.isTransactionActive`. Además `isActive()` debe conservar su semántica actual porque P4 la necesita para el guard de reentrada en `begin()`.
+> **Problema:** `src/PROBLEMS.md:237-272`.
+> **Alcance:** el defecto de P7 + el renombre de `isActive()` → `isConnected()`.
+> **Estado:** plan. Ningún archivo fuente modificado.
+> **Verificado contra:** `d83bd3e`. Todos los números de línea de este documento fueron
+> leídos en ese commit; si el árbol se movió, revalidar antes de aplicar.
+> **Reemplaza** la versión anterior de este plan, escrita cuando P1/P2 estaban abiertos.
+> Equivalencia de nomenclatura con esa versión: `A(v1) = A`, `C(v1) = B`; el resto de las
+> letras de v1 (B/D/E/F) eran alternativas descartadas y están en §2.2.
 
 ---
 
-## 1. Alcance real, verificado
+## 0. Tabla maestra de cambios
 
-### 1.1 Método de barrido
-
-Tres barridos independientes, todos sobre `src/**/*.ts`:
-
-1. `grep -n "\.commit\(\)" -A 12` sobre todo `src/` → localiza **todos** los `commit()` y muestra qué se ejecuta después de cada uno hasta el `catch`.
-2. `grep -n "this\.cache\." --glob "*.use-case.ts"` → localiza **todos** los consumidores de un puerto de caché en la capa de aplicación.
-3. `grep -n "uow\.|unitOfWork\.|\.rollback\(\)"` → localiza los archivos con ciclo de vida transaccional manual.
-
-La intersección (1)∩(2) es el conjunto de defectos. Resultado: **son exactamente los dos conocidos**. Abajo la evidencia completa, no la conclusión.
-
-### 1.2 Los 8 use cases con UoW — qué hay entre `commit()` y el `catch`
-
-| # | Archivo:línea del `commit()` | Qué se ejecuta después, dentro del `try` | ¿Puede lanzar? | Veredicto |
+| # | Archivo | Líneas (estado `d83bd3e`) | Cambio | Commit |
 |---|---|---|---|---|
-| 1 | `src/modules/transactions/application/use-cases/create-transaction.use-case.ts:153` | `:154 return saved;` | No | OK |
-| 2 | `src/modules/transactions/application/use-cases/delete-transaction.use-case.ts:45` | nada (`:46` es el `catch`) | — | OK |
-| 3 | `src/modules/accounts/application/use-cases/archive-account.use-case.ts:32` | `:33 return saved;` | No | OK |
-| 4 | `src/modules/accounts/application/use-cases/unarchive-account.use-case.ts:32` | `:33 return saved;` | No | OK |
-| 5 | `src/modules/accounts/application/use-cases/rename-account.use-case.ts:33` | `:34 return saved;` | No | OK |
-| 6 | `src/modules/auth/application/use-cases/refresh-token.use-case.ts:45` y `:83` | `:46`/`:84 committed = true;` y luego `throw`/`return` | No | OK — **ya protegido** con flag (ver 1.4) |
-| 7 | **`src/modules/budgets/application/use-cases/update-budget-limit.use-case.ts:63`** | **`:65-68` `Promise.all([cache.invalidateUser, cache.invalidateById])`** | **Sí** | **DEFECTO** |
-| 8 | **`src/modules/budgets/application/use-cases/delete-budget.use-case.ts:51`** | **`:53-56` `Promise.all([cache.invalidateUser, cache.invalidateById])`** | **Sí** | **DEFECTO** |
+| A1 | `src/modules/budgets/application/use-cases/delete-budget.use-case.ts` | `1`, tras `11`, `53-56` | import `Logger` + campo + `try/catch` propio | 1 |
+| A2 | `src/modules/budgets/application/use-cases/update-budget-limit.use-case.ts` | `1`, tras `19`, `65-68` | ídem | 1 |
+| A3 | `src/modules/budgets/application/use-cases/delete-budget.use-case.spec.ts` | tras `23`, tras `103` | doble + test nuevo | 1 |
+| A4 | `src/modules/budgets/application/use-cases/update-budget-limit.use-case.spec.ts` | tras `26`, `87-98`, tras `106` | doble + test nuevo + aserción inversa | 1 |
+| B1 | `src/modules/transactions/infrastructure/persistence/unit-of-work.impl.ts` | `137-139` | guard en `rollback()` | 2 |
+| B2 | `src/modules/budgets/infrastructure/persistence/budget-unit-of-work.impl.ts` | `33-35` | ídem | 2 |
+| B3 | `src/modules/accounts/infrastructure/persistence/account-unit-of-work.impl.ts` | `31-33` | ídem | 2 |
+| B4 | `src/modules/auth/infrastructure/persistence/auth-unit-of-work.impl.ts` | `81-83` | ídem | 2 |
+| B5 | `test/integration/` (archivo nuevo o dentro de `concurrency.integration.spec.ts`) | — | 3 aserciones de ciclo de vida | 2 |
+| C1–C17 | puerto + 4 impls + 2 fakes + 5 mocks + 5 docs | ver §5.3 | `isActive()` → `isConnected()` | 3 |
+| D1 | `src/PROBLEMS.md`, `src/modules/budgets/notes.md`, `src/shared/domain/cache-decision.md`, `CLAUDE.md` | ver §7 | cierre de P7 + regla nueva | 4 |
 
-`return <expr>` donde `<expr>` es una variable ya evaluada no puede lanzar: no hay getters, no hay `toJSON`, no hay `await`. Los casos 1-5 son estructuralmente seguros, no seguros por suerte.
-
-### 1.3 Los 12 puntos de caché en la capa de aplicación — cuáles están bajo un `catch` con `rollback()`
-
-| Archivo:línea | Módulo | ¿Dentro de un `try` con `rollback()`? |
-|---|---|---|
-| `src/modules/budgets/application/use-cases/delete-budget.use-case.ts:54-55` | budgets | **SÍ** ← defecto |
-| `src/modules/budgets/application/use-cases/update-budget-limit.use-case.ts:66-67` | budgets | **SÍ** ← defecto |
-| `src/modules/budgets/application/use-cases/create-budget.use-case.ts:70` | budgets | No (sin UoW: usa `IBudgetRepository` global, `:24`) |
-| `src/modules/budgets/application/use-cases/get-budget-by-id.use-case.ts:16,23` | budgets | No (lectura, sin UoW) |
-| `src/modules/budgets/application/use-cases/get-budgets-by-user-id.use-case.ts:20,24` | budgets | No (lectura, sin UoW) |
-| `src/modules/categories/application/use-cases/create-category.use-case.ts:36` | categories | No (sin UoW) |
-| `src/modules/categories/application/use-cases/update-category.use-case.ts:35-36` | categories | No (sin UoW) |
-| `src/modules/categories/application/use-cases/delete-category.use-case.ts:21-22` | categories | No (sin UoW) |
-| `src/modules/categories/application/use-cases/get-category-by-id.use-case.ts:16,23` | categories | No (lectura) |
-| `src/modules/categories/application/use-cases/get-categories-by-user-id.use-case.ts:14,18` | categories | No (lectura) |
-| `src/modules/users/application/use-cases/update-user-profile.use-case.ts:33` | users | No (sin UoW) |
-| `src/modules/users/application/use-cases/delete-user.use-case.ts:27` | users | No (sin UoW) |
-| `src/modules/users/application/use-cases/get-user-by-id.use-case.ts:25,30` | users | No (lectura) |
-
-Puertos de caché existentes en el repo: `IBudgetsCache` (`src/modules/budgets/domain/ports/cache/budgets-cache.port.ts`), `ICategoriesCache` (`src/modules/categories/domain/ports/cache/categories-cache.port.ts`), `IUsersCache` (`src/modules/users/domain/ports/cache/users-cache.port.ts`). No hay otros: `src/shared/domain/cache-decision.md:43` lo confirma (`<m>` ∈ { budgets, categories, users }) y el barrido (2) no encuentra ninguno más.
-
-**Conclusión del alcance: son exactamente `delete-budget.use-case.ts` y `update-budget-limit.use-case.ts`. Ningún otro archivo.**
-
-### 1.4 Precedente ya existente en el repo (relevante para el diseño del arreglo)
-
-`RefreshTokenUseCase` resolvió el mismo problema con un flag:
-
-```ts
-// src/modules/auth/application/use-cases/refresh-token.use-case.ts:28,45-46,83-84,86-87
-let committed = false;                       // :28
-...
-  await this.uow.commit(); committed = true; // :45-46 (rama de replay)
-  throw new RefreshTokenReplayDetectedException();
-...
-  await this.uow.commit(); committed = true; // :83-84 (rama feliz)
-  return { ... };
-} catch (err) {
-  if (!committed) await this.uow.rollback(); // :87
-```
-
-Es decir: **el repo ya sabía que hacer `rollback()` después de un `commit()` es incorrecto** — lo resolvió en `auth` y no propagó el criterio a `budgets`. Esto no es un descubrimiento nuevo, es una deriva.
-
-### 1.5 Hallazgo adyacente — NO es P7, no se toca
-
-Los 6 use cases de escritura **sin** UoW (`create-budget:70`, `create-category:36`, `update-category:34-37`, `delete-category:20-23`, `update-user-profile:33`, `delete-user:27`) también propagan un fallo de Redis como 500 sobre una escritura que **ya se persistió**. No hay enmascaramiento (no hay `rollback()` que llamar), pero el síntoma para el cliente es el mismo: 500 sobre una operación exitosa.
-
-Lo dejo fuera del alcance porque P7 está definido como "reacción secundaria dentro del alcance de error de la transacción" y ahí no hay transacción. Pero conviene registrarlo: **si se acepta la política de la sección 2, aplicarla a estos 6 es el paso lógico siguiente** (issue separado, sin dependencia con este).
+**Nada más se toca.** El cuerpo transaccional de los dos use cases, los locks, los constructores,
+los `.module.ts` y el orden `commit → invalidación` quedan intactos (§10).
 
 ---
 
-## 2. Análisis del comportamiento correcto
+## 1. El defecto
 
-### 2.1 ¿Qué debe recibir el cliente si el commit tuvo éxito y la invalidación falla?
+`delete-budget.use-case.ts:50-62` (idéntico en `update-budget-limit.use-case.ts:62-75`):
 
-**El código de éxito de la operación: `204` para `DELETE /budgets/:id`, `200` para `PATCH /budgets/:id/limit`** (`src/modules/budgets/notes.md:100-101`).
+```ts
+50      await budgetRepo.delete(id);
+51      await this.uow.commit();          // ← el borrado ya es durable
+52
+53      await Promise.all([               // ← si esto lanza (Redis caído)…
+54        this.cache.invalidateUser(budget.userId),
+55        this.cache.invalidateById(id),
+56      ]);
+57    } catch (error) {
+58      await this.uow.rollback();        // ← …rollback sobre una tx CERRADA
+59      throw error;                      // ← TransactionNotStartedError, no el de Redis
+60    } finally {
+```
 
-Argumento, no asunción:
+**Cadena de fallo:** Redis abajo → `invalidateUser` lanza → `catch` → `rollback()` sobre transacción
+commiteada → TypeORM lanza `TransactionNotStartedError` → **enmascara el error real** → el cliente
+recibe `500` sobre una operación que tuvo éxito.
 
-1. **El status HTTP describe el resultado de la operación de negocio, no el de las reacciones secundarias.** El commit ya ocurrió y es durable. Devolver 500 es una afirmación falsa sobre el estado del sistema.
-2. **Un 500 induce un reintento incorrecto.** El cliente que ve 500 en `DELETE /budgets/:id` reintenta y recibe **404** (`BudgetNotFoundException`, `delete-budget.use-case.ts:27` → 404 por la tabla de `CLAUDE.md` §"Exception → HTTP mapping"). El cliente queda sin forma de saber si el borrado ocurrió. En `PATCH .../limit` el reintento es idempotente y "arregla" el síntoma, lo que es peor: el bug se vuelve intermitente e irreproducible.
-3. **La invalidación no protege ningún invariante.** Es la línea divisoria que `src/PROBLEMS.md:326-329` ya establece: "lo que protege un invariante va adentro, lo que tolera latencia y fallo va afuera". Verificado abajo (2.2).
-4. **Una caída de Redis no debe convertir un módulo de escritura en un módulo caído.** Hoy sí lo hace: `RedisCacheStore` usa `maxRetriesPerRequest: 3` (`src/shared/infrastructure/cache/redis-cache-store.ts:22`), o sea que cada `del`/`delByPrefix` falla rápido y de forma determinista mientras Redis esté abajo — el 500 sería el 100 % de los `DELETE`/`PATCH` de budgets, no un caso raro.
+**No es un caso raro.** `RedisCacheStore` usa `maxRetriesPerRequest: 3`
+(`src/shared/infrastructure/cache/redis-cache-store.ts:22`): con Redis caído, `del`/`delByPrefix`
+fallan rápido y de forma determinista. Serían el **100 %** de los `DELETE /budgets/:id` y
+`PATCH /budgets/:id/limit`, no un porcentaje.
 
-### 2.2 ¿La caché stale es tolerable? — ventana real de inconsistencia
-
-**Sí, y la ventana está acotada por TTL.**
-
-- **TTL = 600 s (10 min).** `const TTL_SECONDS = 600;` en `src/modules/budgets/infrastructure/cache/budgets-cache.impl.ts:8`, aplicado en `setListByUser` (`:83`) y `setById` (`:94`). Documentado como convención en `src/shared/domain/cache-decision.md:49` ("TTL: 600 s (10 min) by default in each impl").
-- El TTL se aplica en el `SET ... EX` del store (`src/shared/infrastructure/cache/redis-cache-store.ts:49-56`), o sea que es un TTL real de Redis, no una convención de aplicación.
-
-**Qué queda stale exactamente:**
-
-| Clave | Quién la puebla | Qué se ve stale |
-|---|---|---|
-| `budgets:item:<id>` (`budgets-cache.impl.ts:60-62`) | `GetBudgetByIdUseCase` (`get-budget-by-id.use-case.ts:23`) | `GET /budgets/:id` devuelve un budget borrado, o el límite viejo |
-| `budgets:user:<id>:list*` (`budgets-cache.impl.ts:53-58`) | `GetBudgetsByUserIdUseCase` (`get-budgets-by-user-id.use-case.ts:24`) | `GET /budgets` lista un budget borrado, o el límite viejo |
-
-**Por qué esto NO puede romper el invariante `Σ gastos ≤ límite`:**
-
-`CreateTransactionUseCase` lee el budget por dos caminos y **ninguno pasa por la caché**:
-- el fail-fast fuera de la transacción usa `GetBudgetByUserCategoryPeriodUseCase` (`create-transaction.use-case.ts:61`), que **no aparece en el barrido de `this.cache.`** — no tiene caché;
-- la lectura autoritativa la hace el repo scoped bajo `FOR UPDATE` (`create-transaction.use-case.ts:106`, `findByUserIdAndCategoryIdAndPeriod`).
-
-Igual `UpdateBudgetLimit` y `DeleteBudget`: ambos leen con `budgetRepo.findById()` del repo scoped (`update-budget-limit.use-case.ts:34`, `delete-budget.use-case.ts:26`), nunca de la caché.
-
-**Conclusión rigurosa: la caché de budgets está exclusivamente en el camino de lectura HTTP. Está fuera del camino de escritura y fuera del camino del invariante. Un valor stale produce una respuesta desactualizada, jamás una violación de `Σ ≤ límite` ni un balance incorrecto.** Techo de la inconsistencia: 600 s desde el último `setById`/`setListByUser`, y en la práctica menos, porque cualquier otra escritura del mismo usuario (`create-budget.use-case.ts:70`) invalida la lista.
-
-**Matiz honesto:** si Redis está *completamente* caído, el camino de lectura también falla (`get` lanza igual que `del`), así que el escenario "stale" real es el de **fallo parcial** (timeout en `DEL`, `SCAN` interrumpido en `delByPrefix`, `redis-cache-store.ts:62-71`), no el de caída total. En caída total, lo que este arreglo compra es que las **escrituras** sigan funcionando — el hallazgo más valioso.
-
-### 2.3 ¿Debe loguearse? Sí — `warn`, con el patrón que ya usa el repo
-
-**Nivel `warn`, no `error`:** la operación de negocio tuvo éxito. `error` reservaría el mismo nivel para "el borrado falló" y "el borrado funcionó pero la caché no", que son incidentes de severidad distinta.
-
-**Cómo loguea este proyecto (verificado, no de memoria):**
-
-- pino global vía `nestjs-pino`: `LoggerModule.forRootAsync` en `src/app.module.ts:43-71`, con `genReqId` (correlation id `x-request-id`) en `:56-57` y `redact` en `:59-68`.
-- `app.useLogger(app.get(Logger))` en `src/main.ts:30` — reemplaza el logger de Nest por el de pino.
-- **El único precedente de logging en código de aplicación** es `src/modules/auth/application/schedulers/cleanup-expired-tokens.scheduler.ts`:
-  ```ts
-  import { Injectable, Logger } from '@nestjs/common';   // :1
-  private readonly logger = new Logger(CleanupExpiredTokensScheduler.name);  // :7
-  this.logger.log(`Cleanup: ${deleted} refresh tokens expirados eliminados`); // :15
-  ```
-
-**Seguir ese patrón exacto. Razones concretas:**
-
-1. **Conserva el correlation id.** `app.useLogger()` hace que `new Logger(ctx)` de `@nestjs/common` delegue en el `Logger` de nestjs-pino, y éste resuelve el logger por request desde el `AsyncLocalStorage`: `node_modules/nestjs-pino/PinoLogger.js:60-63` → `storage.getStore()?.logger || outOfContext`. Como el use case corre dentro del contexto del request, el log lleva el `reqId` generado en `app.module.ts:56-57`. No hace falta inyectar `PinoLogger`.
-2. **No toca el constructor.** Inyectar `PinoLogger` con `@InjectPinoLogger` agregaría un tercer parámetro y rompería **5 construcciones directas** en los specs (`delete-budget.use-case.spec.ts:51,66,81,95` y `update-budget-limit.use-case.spec.ts:46`), además de colisionar con el agente de P1/P2, que sí toca el constructor. Un campo privado no colisiona con nada.
-3. **No viola ninguna regla de capas.** `CLAUDE.md` prohíbe NestJS en `domain/`, no en `application/`. Ambos archivos ya importan `@nestjs/common` (`delete-budget.use-case.ts:1`, `update-budget-limit.use-case.ts:1`) y existe el precedente de `application/schedulers/`.
-
-**Formato del mensaje: string interpolado, un solo argumento.** No usar la forma `logger.warn(obj, 'mensaje')`: `@nestjs/common` añade su `context` como último `optionalParam` (`node_modules/@nestjs/common/services/logger.service.js:59-64`) y nestjs-pino interpreta el **último** `optionalParam` como nombre de contexto (`node_modules/nestjs-pino/Logger.js`, método `call`), así que un segundo argumento se perdería como mensaje. Con un solo string funciona correctamente y queda idéntico al precedente del scheduler.
-
-> Alternativa estructurada, si más adelante se quiere: `this.logger.warn({ msg: '…', err: cacheError, budgetId: id })` — pino honra la clave `msg` del objeto. La dejo documentada pero **no la propongo**: introduce una forma de llamada distinta de la única que existe hoy en el repo.
+**Consecuencia peor que el 500:** un cliente que ve `500` en un `DELETE` reintenta y recibe `404`
+(`BudgetNotFoundException`, `delete-budget.use-case.ts:27`), sin forma de saber si el borrado
+ocurrió. En `PATCH` el reintento es idempotente y "arregla" el síntoma — el bug se vuelve
+intermitente e irreproducible.
 
 ---
 
-## 3. Opciones de arreglo
+## 2. Decisiones
 
-### Opción A — Invalidación en su propio `try/catch`, inmediatamente después del `commit()` ✅ RECOMENDADA
+### 2.1 Las tres que se aplican
 
-```ts
-await this.uow.commit();
+| | Cambio | Qué resuelve | Por qué no alcanza sin las otras |
+|---|---|---|---|
+| **A** | Invalidación en su propio `try/catch` que solo loguea (`warn`) | **Es el arreglo.** El error de Redis no llega al `catch` externo → no hay rollback indebido → el cliente recibe 204/200 | Deja `rollback()` sin protección para el próximo llamador que se equivoque |
+| **B** | `rollback()` no-op si no hay transacción abierta, en los **4** impls | Red estructural. Cubre el camino que A no alcanza: si el broadcast `AfterTransactionCommit` de TypeORM lanza *después* del `COMMIT`, el `catch` vuelve a llamar `rollback()` — existe en los **8** use cases transaccionales | **B sola no arregla P7:** el error de Redis sigue propagando y el cliente sigue viendo 500, solo que con el error correcto |
+| **C** | `isActive()` → `isConnected()` | Cierra la trampa de nombres que produjo este defecto (§5.1) | Ninguna — es independiente y severable |
 
-try {
-  await Promise.all([...]);
-} catch (cacheError) {
-  this.logger.warn(`…`);
-}
-```
+**Si hubiera que aplicar una sola: A.**
 
-- **Cierra el defecto completo:** el error de caché nunca llega al `catch` externo → no hay `rollback()` sobre una transacción cerrada → no hay `TransactionNotStartedError` → el cliente recibe 204/200.
-- **Diff mínimo:** ~10 líneas por archivo, todas dentro del cuerpo de `execute()`.
-- **Sin hoisting de variables.** `budget` (`delete-budget.use-case.ts:26`) y `updated` (`update-budget-limit.use-case.ts:62`) siguen siendo `const` dentro del `try`.
-- **Robusta ante un `release()` que lance:** la invalidación ya corrió antes del `finally`.
-- Explícitamente sancionada por `src/PROBLEMS.md:326-329` ("en su propio `try/catch` que solo loguee").
+### 2.2 Las descartadas, con el motivo en una línea
 
-**Contra:** la invalidación queda *léxicamente* dentro del `try` externo. La garantía es "no puede lanzar", no "está fuera del alcance". Un futuro `await` agregado después del `commit()` y fuera del `try` interno reabre el agujero. Mitigación: el comentario explicativo + el test de la sección 4 (que falla si alguien lo reabre) + la Opción C como red estructural.
+| Alternativa | Motivo del descarte |
+|---|---|
+| Mover la invalidación después del `finally` | Obliga a hoistear `budget`/`updated` fuera del `try`, mueve el `return`, y **si `release()` lanza la invalidación no corre** — regresión respecto de A |
+| Flag `committed` por use case (como `refresh-token.use-case.ts:28,45-46,83-84,87`) | Evita el rollback indebido pero **el error de Redis sigue propagando** → sigue habiendo 500 sobre un borrado exitoso |
+| Fire-and-forget (`void cache.invalidate().catch(log)`) | La respuesta HTTP puede salir antes de que la invalidación aterrice: cambia un bug determinista por una carrera, **incluso con Redis sano** |
+| Reintentos / outbox | Sobre-ingeniería: el TTL de 600 s ya acota el daño y la caché no está en el camino del invariante (§2.3) |
+| Invalidar **antes** del `commit()` | Estrictamente peor: ver §10.1 |
 
-### Opción B — Mover la invalidación después del `finally`
+### 2.3 Por qué es correcto devolver 204/200 con la caché stale
 
-```ts
-} finally {
-  await this.uow.release();
-}
+Tres hechos verificados, no supuestos:
 
-try { await Promise.all([...]); } catch (e) { this.logger.warn(...); }
-```
+1. **La caché de budgets está solo en el camino de lectura HTTP.** `CreateTransaction` lee el budget
+   por `GetBudgetByUserCategoryPeriodUseCase` (`create-transaction.use-case.ts:61`, sin caché) y por
+   el repo scoped bajo `FOR UPDATE` (`:106`). `UpdateBudgetLimit` y `DeleteBudget` leen con
+   `budgetRepo.findById()` del repo scoped (`update-budget-limit.use-case.ts:34`,
+   `delete-budget.use-case.ts:26`). **Ninguno lee de la caché** → un valor stale jamás puede violar
+   `Σ gastos ≤ límite` ni producir un balance incorrecto.
+2. **La ventana está acotada por TTL real de Redis:** 600 s (`budgets-cache.impl.ts:8`, aplicado en
+   `setListByUser` y `setById`), y en la práctica menos, porque cualquier otra escritura del mismo
+   usuario invalida la lista (`create-budget.use-case.ts:70`).
+3. **El status HTTP describe la operación de negocio, no sus reacciones secundarias.** El commit
+   ocurrió y es durable; devolver 500 es una afirmación falsa sobre el estado del sistema.
 
-- **A favor:** la estructura afirma "zona post-transaccional". Señal más fuerte.
-- **En contra (tres, concretas):**
-  1. **Obliga a hoistear estado fuera del `try`.** En `DeleteBudget` hay que sacar `budget.userId`; en `UpdateBudgetLimit` hay que sacar `updated` **y** mover el `return`. Con `strictNullChecks: true` (`tsconfig.json`, `"strictNullChecks": true`, sin `strict`) eso entra en el análisis de asignación definida de TS sobre `try/catch/finally`. Creo que TS lo acepta porque el `catch` termina en `throw`, **pero no lo compilé — no lo afirmo**. Es riesgo evitable.
-  2. **Si `release()` lanza, la invalidación no corre.** Regresión respecto de A.
-  3. **Diff mayor** → más superficie de conflicto con el agente de P1/P2.
-
-### Opción C — Endurecer `rollback()` en los impls del UoW ✅ RECOMENDADA COMO COMPLEMENTO
-
-**Hallazgo importante: `isActive()` NO sirve para esto.**
-
-```ts
-// src/modules/transactions/infrastructure/persistence/unit-of-work.impl.ts:290-292
-isActive(): boolean { return this.queryRunner !== null; }
-// src/modules/auth/infrastructure/persistence/auth-unit-of-work.impl.ts:90-92  (idéntico)
-```
-
-`isActive()` responde "¿tengo una conexión reservada?", verdadero desde `begin()` (`:270-275`) hasta `release()` (`:285-288`) — **incluido el intervalo posterior a `commit()`**. Un `if (!this.isActive()) return;` dentro de `rollback()` **no evitaría el bug**: devolvería `true` justo en el escenario de P7.
-
-Confirmado además que `isActive()` no se usa en producción: las únicas apariciones fuera de los impls son mocks de tests (`delete-budget.use-case.spec.ts:33`, `update-budget-limit.use-case.spec.ts:40`, `archive/unarchive/rename-account.use-case.spec.ts:16`) y los fakes in-memory (`in-memory-unit-of-work.ts:41`, `in-memory-auth-unit-of-work.ts:36`). Coincide con `src/PROBLEMS.md:232`.
-
-**El guard correcto es `queryRunner.isTransactionActive`**, propiedad de TypeORM (`node_modules/typeorm/query-runner/QueryRunner.d.ts:42`), que `commitTransaction()` pone en `false` (`node_modules/typeorm/driver/postgres/PostgresQueryRunner.js:145-146`) y que `rollbackTransaction()` consulta para lanzar `TransactionNotStartedError` (`ídem:156-157`).
-
-```ts
-async rollback(): Promise<void> {
-  // No-op si no hay transacción abierta (p. ej. un commit ya cerró la tx).
-  // Sin esto, TransactionNotStartedError enmascara el error real del catch.
-  if (!this.queryRunner?.isTransactionActive) return;
-  await this.queryRunner.rollbackTransaction();
-}
-```
-
-**¿Es defensa en profundidad legítima o esconde bugs?** Legítima, con este razonamiento:
-
-- La semántica correcta de `rollback()` es "deshacé si hay algo que deshacer". Un `rollback()` sin transacción abierta no tiene nada que deshacer; no hay estado que se corrompa por no actuar.
-- Lo único que "esconde" es un doble-rollback o un rollback-sin-begin. Pero hoy ese error se manifiesta como un `TransactionNotStartedError` que **enmascara la excepción original** — la peor señal posible. El guard cambia una señal engañosa por ninguna señal; el log de la Opción A aporta la señal buena.
-- **No repurposear `isActive()`.** Su semántica actual (`queryRunner !== null`) es exactamente la que P4 necesita para el guard de reentrada en `begin()` (`src/PROBLEMS.md:246`). Son dos preguntas distintas: "¿tengo conexión?" vs "¿hay transacción abierta?". Mantenerlas separadas.
-
-**Cubre un caso que A no cubre:** si `commit()` falla *después* de que `COMMIT` ya se ejecutó — TypeORM pone `isTransactionActive = false` en `PostgresQueryRunner.js:146` y luego emite el broadcast `AfterTransactionCommit` en `:148`; si ese broadcast lanza, el `catch` llama `rollback()` sobre una transacción ya cerrada. Este camino existe en **los 8 use cases**, no solo en budgets.
-
-**Pero C sola NO arregla P7:** sin A, el error de Redis sigue propagándose y el cliente sigue recibiendo un 500 sobre un borrado exitoso — solo que con el error correcto (`Error: connect ECONNREFUSED`) en lugar del enmascarado. **A es el arreglo; C es la red.**
-
-### Opción D — Flag `committed`, replicando `refresh-token.use-case.ts:28,87` ❌
-
-Isomorfa a C pero por use case y a mano. Evita el `rollback()` indebido, pero **el error de caché sigue propagando → sigue habiendo 500 sobre un borrado exitoso**. Insuficiente. Además replica ciclo de vida manual, justo lo que P4 quiere eliminar.
-
-> Nota para el futuro: una vez adoptada C, el flag `committed` de `refresh-token.use-case.ts` queda redundante. **No lo toco en este plan** (auth está fuera del alcance de P7); anotarlo para P3/P4.
-
-### Opción E — Fire-and-forget (`void this.cache.invalidateUser(...).catch(log)`) ❌
-
-La respuesta HTTP podría salir antes de que la invalidación aterrice: un cliente que relee inmediatamente vería datos stale **incluso con Redis sano**. Cambia un bug determinista por una carrera. Rechazada.
-
-### Opción F — Reintentos / outbox para la invalidación ❌
-
-Sobre-ingeniería. El TTL de 600 s ya acota el daño y la caché no está en el camino del invariante (2.2). `CLAUDE.md` §"reports" ya sentó el criterio: nada de infraestructura de caché sin evidencia de monitoreo.
-
-### Recomendación
-
-**A + C.** A es obligatoria (es el arreglo). C es barata (4 líneas en 2 archivos), cubre los 8 use cases y cierra el camino `commit()`-parcialmente-exitoso que A no puede alcanzar desde la capa de aplicación.
-
-Si hubiera que elegir una sola: **A**.
+> **Matiz honesto:** con Redis *completamente* caído el camino de lectura también falla (`get` lanza
+> igual que `del`), así que el escenario "stale" real es el de **fallo parcial** (timeout en `DEL`,
+> `SCAN` interrumpido en `delByPrefix`). En caída total, lo que este arreglo compra es que las
+> **escrituras sigan funcionando** — el valor principal del cambio.
 
 ---
 
-## 4. El test que falta
+## 3. Cambio A — la invalidación fuera del alcance de error
 
-### 4.1 Estilo existente (leído, no supuesto)
+### 3.1 `src/modules/budgets/application/use-cases/delete-budget.use-case.ts`
 
-- `delete-budget.use-case.spec.ts`: factory `makeMockUow(budgetRepo, hasExpenses)` (`:25-38`) que devuelve un objeto literal con `begin/commit/rollback/release/isActive` como `jest.fn()`; el use case se construye **por test** con `new DeleteBudgetUseCase(uow as unknown as IBudgetUnitOfWork, new NullBudgetsCache())` (`:51-54`); repo real in-memory (`InMemoryBudgetRepository`); aserciones sobre `repo.size()` y sobre los contadores del UoW (`:56-58`).
-- `update-budget-limit.use-case.spec.ts`: `mockUow: Partial<IBudgetUnitOfWork>` construido en `beforeEach` (`:33-45`), `useCase` construido una vez en `beforeEach` (`:46-49`) con `new NullBudgetsCache()`.
-- La caché en tests se moquea con el **Null Object** `NullBudgetsCache` (`src/modules/budgets/infrastructure/cache/__fakes__/null-budgets-cache.ts`), convención documentada en `src/shared/domain/cache-decision.md:41`.
-
-### 4.2 Doble de test nuevo
-
-Extender el Null Object en vez de escribir un mock nuevo — respeta la convención y solo sobreescribe lo que debe fallar. Definirlo **local a cada spec** (no en `__fakes__/`): es un doble de un solo caso de prueba, no un fake reutilizable del módulo.
-
-```ts
-class ExplodingBudgetsCache extends NullBudgetsCache {
-  override async invalidateUser(): Promise<void> {
-    throw new Error('redis down');
-  }
-}
-```
-
-(Un solo método basta: `Promise.all` rechaza con el primer rechazo.)
-
-### 4.3 Test en `src/modules/budgets/application/use-cases/delete-budget.use-case.spec.ts`
-
-Agregar al final del `describe` existente (después de `:103`):
-
-```ts
-it('should NOT roll back nor propagate when cache invalidation fails after commit', async () => {
-  repo.seed([makeBudget({ id: 'b1', userId: 'user-1' })]);
-  const uow = makeMockUow(repo, false);
-  const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
-
-  await expect(
-    new DeleteBudgetUseCase(
-      uow as unknown as IBudgetUnitOfWork,
-      new ExplodingBudgetsCache(),
-    ).execute('b1', 'user-1'),
-  ).resolves.toBeUndefined();          // SÍ: la operación reporta éxito
-
-  expect(repo.size()).toBe(0);          // SÍ: la operación de negocio ocurrió
-  expect(uow.commit).toHaveBeenCalledTimes(1);
-  expect(uow.rollback).not.toHaveBeenCalled();   // NO: rollback sobre tx commiteada
-  expect(uow.release).toHaveBeenCalledTimes(1);  // el finally sigue corriendo
-  expect(warn).toHaveBeenCalledTimes(1);         // el fallo queda registrado
-
-  warn.mockRestore();
-});
-```
-
-`Logger` se importa de `@nestjs/common` en el spec. El `spyOn(Logger.prototype, 'warn')` evita ruido en la salida de jest y convierte "se loguea" en una aserción.
-
-### 4.4 Test en `src/modules/budgets/application/use-cases/update-budget-limit.use-case.spec.ts`
-
-Este spec construye `useCase` en `beforeEach` con `NullBudgetsCache` (`:46-49`), así que el test nuevo construye su propia instancia:
-
-```ts
-it('should NOT roll back nor propagate when cache invalidation fails after commit', async () => {
-  budgetRepo.seed([makeBudget({ id: 'b1', userId: 'user-1', limit: 300 })]);
-  const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
-
-  const result = await new UpdateBudgetLimitUseCase(
-    mockUow as IBudgetUnitOfWork,
-    new ExplodingBudgetsCache(),
-  ).execute({ id: 'b1', requestUserId: 'user-1', limit: 800 });
-
-  expect(result.getLimit().getValue()).toBe(800);   // SÍ: devuelve el resultado
-  expect(mockUow.commit).toHaveBeenCalledTimes(1);
-  expect(mockUow.rollback).not.toHaveBeenCalled();  // NO
-  expect(mockUow.release).toHaveBeenCalledTimes(1);
-  expect(warn).toHaveBeenCalledTimes(1);
-
-  warn.mockRestore();
-});
-```
-
-### 4.5 Test de regresión inversa (1 línea, opcional pero barato)
-
-Impedir que alguien "arregle" esto moviendo la invalidación **antes** del commit. En el test existente `'should throw BudgetLimitBelowSpentException when limit is below spent'` (`update-budget-limit.use-case.spec.ts:87-98`), inyectar un `IBudgetsCache` espiado y agregar:
-
-```ts
-expect(cacheSpy.invalidateUser).not.toHaveBeenCalled();
-```
-
-Fija la regla: **si la transacción aborta, la caché no se toca.**
-
-### 4.6 Rojo antes de verde — qué falla hoy exactamente
-
-Con el código actual, el test de 4.3 falla en **dos** aserciones: `resolves` (la promesa rechaza con `Error('redis down')`) y `rollback` (se llama una vez, `delete-budget.use-case.ts:58`).
-
-**Limitación honesta del test unitario:** no reproduce el `TransactionNotStartedError`. El mock `rollback: jest.fn().mockResolvedValue(undefined)` (`delete-budget.use-case.spec.ts:31`) resuelve sin error, así que en el unitario el error que se propaga es el de Redis, no el enmascarado. El enmascaramiento requiere un `QueryRunner` real de TypeORM.
-
-Lo que el unitario **sí** fija son las dos propiedades que están bajo nuestro control y de las cuales el enmascaramiento es una consecuencia: (a) no se llama `rollback()` después de un `commit()` exitoso, (b) el fallo de caché no llega al llamador. Con (a) garantizada, el `TransactionNotStartedError` es inalcanzable por construcción.
-
-### 4.7 ¿Hace falta test de integración?
-
-**Para la Opción A: no.** El unitario cubre el contrato completo de la capa de aplicación. Un test de integración equivalente (levantar el app con `createTestApp()` — `test/helpers/app-bootstrap.ts:20-45` — sobreescribiendo `IBudgetsCache` por un doble que lanza, y verificar `204` + fila borrada) exigiría **agregar un hook de `overrideProvider` al helper compartido**, que hoy no lo acepta (`:29-31` compila `AppModule` sin overrides). Cambiar un helper que usan las 9 suites de `test/integration/` a cambio de valor marginal sobre el unitario: mal negocio, y aumenta la superficie de conflicto.
-
-**Para la Opción C: sí, uno pequeño, y es el que realmente importa.** La corrección de C depende de una semántica de TypeORM (`commitTransaction()` pone `isTransactionActive=false`, `PostgresQueryRunner.js:145-146`) que ningún mock puede verificar y que un bump mayor de TypeORM podría cambiar en silencio. Test propuesto, con Postgres real, natural en `test/integration/concurrency/concurrency.integration.spec.ts` o en un archivo nuevo:
-
-```
-begin() → commit() → rollback()  ⇒  no lanza
-begin() → rollback() → (sin release) → rollback()  ⇒  no lanza
-begin() → commit() → release()  ⇒  la conexión vuelve al pool
-```
-
-Sin C, este test no aplica y el unitario basta.
-
----
-
-## 5. Cambios archivo por archivo
-
-### 5.1 `src/modules/budgets/application/use-cases/delete-budget.use-case.ts`
-
-**Cambio 1 — línea 1 (import).**
+**A1.a — línea `1`:**
 
 ```diff
 -import { Injectable } from '@nestjs/common';
 +import { Injectable, Logger } from '@nestjs/common';
 ```
 
-**Cambio 2 — insertar 2 líneas tras la línea 11 (`export class DeleteBudgetUseCase {`), antes del constructor.**
+**A1.b — insertar 2 líneas tras `11` (`export class DeleteBudgetUseCase {`):**
 
 ```diff
  export class DeleteBudgetUseCase {
@@ -406,38 +131,18 @@ Sin C, este test no aplica y el unitario basta.
    constructor(
 ```
 
-**Cambio 3 — bloque `53-56` (antes) → `try/catch` propio.**
-
-Antes (`:50-62`):
-
-```ts
-50      await budgetRepo.delete(id);
-51      await this.uow.commit();
-52
-53      await Promise.all([
-54        this.cache.invalidateUser(budget.userId),
-55        this.cache.invalidateById(id),
-56      ]);
-57    } catch (error) {
-58      await this.uow.rollback();
-59      throw error;
-60    } finally {
-61      await this.uow.release();
-62    }
-```
-
-Después (numeración resultante ≈ `52-75`, con los cambios 1-2 aplicados):
+**A1.c — bloque `53-56` → `try/catch` propio:**
 
 ```ts
       await budgetRepo.delete(id);
       await this.uow.commit();
 
-      // POST-COMMIT: la transacción ya está cerrada y es durable. La invalidación
-      // de caché es una reacción secundaria y va en su PROPIO try/catch: si cayera
-      // al catch de abajo, dispararía rollback() sobre una transacción commiteada
-      // → TransactionNotStartedError, que enmascara el error real y convierte un
+      // POST-COMMIT: la transacción está cerrada y es durable. La invalidación de
+      // caché es una reacción secundaria y va en su PROPIO try/catch: si cayera al
+      // catch de abajo dispararía rollback() sobre una tx commiteada →
+      // TransactionNotStartedError, que enmascara el error real y convierte un
       // borrado exitoso en un 500. La caché stale es tolerable (TTL 600 s,
-      // budgets-cache.impl.ts) y no participa de ningún invariante.
+      // budgets-cache.impl.ts:8) y no participa de ningún invariante.
       try {
         await Promise.all([
           this.cache.invalidateUser(budget.userId),
@@ -451,20 +156,16 @@ Después (numeración resultante ≈ `52-75`, con los cambios 1-2 aplicados):
         );
       }
     } catch (error) {
-      await this.uow.rollback();
-      throw error;
-    } finally {
-      await this.uow.release();
-    }
 ```
 
-**No se toca:** líneas 17-51 (todo el cuerpo transaccional, los locks, las validaciones de ownership y el `delete`), ni el `catch`/`finally` externos, ni el constructor, ni las líneas 2-8 de imports.
+**Efecto en anclas:** el constructor pasa de `12-15` a `14-17`. Los imports de puertos (`2-8`)
+conservan su numeración: la única línea modificada arriba es la `1`, y no cambia de altura.
 
-### 5.2 `src/modules/budgets/application/use-cases/update-budget-limit.use-case.ts`
+### 3.2 `src/modules/budgets/application/use-cases/update-budget-limit.use-case.ts`
 
-**Cambio 1 — línea 1.** Idéntico a 5.1.
+**A2.a — línea `1`:** idéntico a A1.a.
 
-**Cambio 2 — insertar 2 líneas tras la línea 19 (`export class UpdateBudgetLimitUseCase {`).**
+**A2.b — insertar 2 líneas tras `19` (`export class UpdateBudgetLimitUseCase {`):**
 
 ```diff
  export class UpdateBudgetLimitUseCase {
@@ -473,28 +174,7 @@ Después (numeración resultante ≈ `52-75`, con los cambios 1-2 aplicados):
    constructor(
 ```
 
-**Cambio 3 — bloque `65-68` (antes).**
-
-Antes (`:62-75`):
-
-```ts
-62      const updated = await budgetRepo.save(budget);
-63      await this.uow.commit();
-64
-65      await Promise.all([
-66        this.cache.invalidateUser(updated.userId),
-67        this.cache.invalidateById(updated.id),
-68      ]);
-69      return updated;
-70    } catch (error) {
-71      await this.uow.rollback();
-72      throw error;
-73    } finally {
-74      await this.uow.release();
-75    }
-```
-
-Después (numeración resultante ≈ `64-88`):
+**A2.c — bloque `65-68`. El `return updated;` de `:69` queda DESPUÉS del `catch` interno:**
 
 ```ts
       const updated = await budgetRepo.save(budget);
@@ -516,149 +196,452 @@ Después (numeración resultante ≈ `64-88`):
       }
       return updated;
     } catch (error) {
-      await this.uow.rollback();
-      throw error;
-    } finally {
-      await this.uow.release();
-    }
 ```
 
-**No se toca:** líneas 12-16 (`UpdateBudgetLimitCommand`), 25-63 (cuerpo transaccional), el `catch`/`finally` externos ni el constructor.
+**Efecto en anclas:** constructor `20-23` → `22-25`; imports `2-10` sin mover.
 
-### 5.3 `src/modules/transactions/infrastructure/persistence/unit-of-work.impl.ts` (Opción C)
+### 3.3 Por qué `new Logger(...)` de `@nestjs/common` y no `PinoLogger` inyectado
 
-Antes (`:281-283`):
+| Criterio | Verificación |
+|---|---|
+| **Conserva el correlation id** | `app.useLogger(app.get(Logger))` (`src/main.ts:30`) hace que `new Logger(ctx)` delegue en nestjs-pino, que resuelve el logger por request desde `AsyncLocalStorage`. El `reqId` de `app.module.ts:56-57` va en la línea |
+| **No toca el constructor** | Inyectar `PinoLogger` agregaría un 3.º parámetro y rompería **5 construcciones directas** en los specs (`delete-budget.use-case.spec.ts:51,66,81,95`, `update-budget-limit.use-case.spec.ts:46`) |
+| **No viola capas** | `CLAUDE.md` prohíbe NestJS en `domain/`, no en `application/`. Ambos archivos ya importan `@nestjs/common` en `:1` |
+| **Hay precedente exacto** | `src/modules/auth/application/schedulers/cleanup-expired-tokens.scheduler.ts:1,7,15` — mismo import, mismo campo, mismo formato |
 
-```ts
-281  async rollback(): Promise<void> {
-282    await this.queryRunner?.rollbackTransaction();
-283  }
-```
+**Formato del mensaje: un solo string interpolado.** No usar `logger.warn(obj, 'msg')`:
+`@nestjs/common` añade su `context` como último `optionalParam` y nestjs-pino interpreta el último
+`optionalParam` como nombre de contexto, así que el segundo argumento se perdería.
 
-Después:
-
-```ts
-  async rollback(): Promise<void> {
-    // No-op si no hay transacción abierta: un commit previo ya la cerró
-    // (typeorm pone isTransactionActive=false en commitTransaction()).
-    // Sin este guard, rollbackTransaction() lanza TransactionNotStartedError
-    // y enmascara la excepción original que llevó al catch del use case.
-    if (!this.queryRunner?.isTransactionActive) return;
-    await this.queryRunner.rollbackTransaction();
-  }
-```
-
-**No se toca:** `begin()` (`:270-275`), `commit()` (`:277-279`), `release()` (`:285-288`), `isActive()` (`:290-292`) ni ninguno de los getters scoped (`:294+`). En particular **`isActive()` conserva su semántica** (`queryRunner !== null`), porque P4 la necesita así para el guard de reentrada en `begin()`.
-
-### 5.4 `src/modules/auth/infrastructure/persistence/auth-unit-of-work.impl.ts` (Opción C)
-
-Antes (`:81-83`):
-
-```ts
-81  async rollback(): Promise<void> {
-82    await this.queryRunner?.rollbackTransaction();
-83  }
-```
-
-Después: idéntico a 5.3.
-
-Efecto colateral positivo: `RefreshTokenUseCase` deja de depender del flag `committed` (`refresh-token.use-case.ts:28,87`) para su corrección. **El flag no se elimina en este PR** (auth está fuera del alcance de P7); anotarlo como limpieza para P3/P4.
-
-### 5.5 Specs
-
-- `src/modules/budgets/application/use-cases/delete-budget.use-case.spec.ts` — añadir el import de `Logger`, la clase `ExplodingBudgetsCache` (junto a `FakeExpenseChecker`, `:13-23`) y el `it(...)` de 4.3 al final del `describe` (tras `:103`).
-- `src/modules/budgets/application/use-cases/update-budget-limit.use-case.spec.ts` — ídem: `Logger`, `ExplodingBudgetsCache` (junto a `FakeExpenseChecker`, `:14-26`) y el `it(...)` de 4.4 tras `:106`.
-- Si se adopta C: test de integración de 4.7 en `test/integration/concurrency/concurrency.integration.spec.ts` o archivo nuevo bajo `test/integration/`.
-
-### 5.6 Documentación (mismo PR, regla de `CLAUDE.md`)
-
-- `src/PROBLEMS.md:294-329` — marcar P7 como resuelto (o mover a un apartado de "cerrados"), y actualizar la fila de la tabla `:396` y el orden sugerido `:404`.
-- `src/modules/budgets/notes.md:68-69` — las descripciones de `UpdateBudgetLimitUseCase` / `DeleteBudgetUseCase` terminan en "commit" y no mencionan la invalidación. Añadir media línea: "…→ commit → invalidación de caché best-effort (fuera del alcance de error de la tx)".
-- `src/shared/domain/cache-decision.md` §5 ("Rules for anyone touching the module", `:261-269`) — añadir una regla: **la invalidación va después del commit y su fallo se loguea, nunca se propaga ni dispara rollback.**
-- `CLAUDE.md` §"Anti-patterns — do not do" — añadir: *"**Do not** put cache invalidation (or any secondary reaction) inside the `try` that a `rollback()` catches. It runs after `commit()`, in its own `try/catch` that only logs."*
-
-**No hace falta tocar** la tabla de mapeo excepción→HTTP de `CLAUDE.md`: no se agrega ni se quita ninguna excepción de dominio.
+**Nivel `warn`, no `error`:** la operación de negocio tuvo éxito. `error` daría la misma severidad a
+"el borrado falló" y a "el borrado funcionó pero la caché no".
 
 ---
 
-## 6. Riesgos y qué NO tocar
+## 4. Cambio B — `rollback()` con guard, en los cuatro impls
 
-### 6.1 Prohibido: invalidar antes del `commit()`
+### 4.1 Las dos preguntas — no confundirlas nunca más
 
-Sería estrictamente peor y por una razón que no es obvia. Entre la invalidación y el commit se abre una ventana en la que un `GET /budgets/:id` concurrente encuentra la clave vacía, lee de la DB el estado **pre-commit** y lo repuebla con `setById` (`get-budget-by-id.use-case.ts:23`) y TTL 600 s (`budgets-cache.impl.ts:94`). Resultado: la caché queda envenenada con el valor viejo **y el TTL arranca en ese momento**, así que la inconsistencia dura hasta 600 s *contados desde el GET*, no desde el commit. Y si la transacción aborta, se pagó una invalidación inútil. El orden `commit → invalidación` es correcto y **no se toca**.
+| Pregunta | Cómo se responde | Quién la usa |
+|---|---|---|
+| ¿Tengo una conexión reservada? | `this.queryRunner !== null` → `isConnected()` tras §5 | guard de reentrada de `begin()` (P4, diferido) |
+| ¿Hay una transacción **abierta**? | `queryRunner.isTransactionActive` (propiedad de TypeORM) | **el guard de este cambio** |
 
-### 6.2 Prohibido: alterar la semántica transaccional
+`commitTransaction()` pone `isTransactionActive = false`
+(`node_modules/typeorm/driver/postgres/PostgresQueryRunner.js:145-146`) y `rollbackTransaction()`
+la consulta para lanzar `TransactionNotStartedError` (`ídem:156-157`). Por eso el guard correcto es
+la propiedad de TypeORM, **no** el método del puerto.
+
+### 4.2 El diff, idéntico en los cuatro archivos
+
+```diff
+   async rollback(): Promise<void> {
+-    await this.queryRunner?.rollbackTransaction();
++    // No-op si no hay transacción abierta: un commit previo ya la cerró (typeorm
++    // pone isTransactionActive=false en commitTransaction()). Sin este guard,
++    // rollbackTransaction() lanza TransactionNotStartedError y enmascara la
++    // excepción original que llevó al catch del use case.
++    if (!this.queryRunner?.isTransactionActive) return;
++    await this.queryRunner.rollbackTransaction();
+   }
+```
+
+| # | Archivo | Líneas |
+|---|---|---|
+| B1 | `src/modules/transactions/infrastructure/persistence/unit-of-work.impl.ts` | `137-139` |
+| B2 | `src/modules/budgets/infrastructure/persistence/budget-unit-of-work.impl.ts` | `33-35` |
+| B3 | `src/modules/accounts/infrastructure/persistence/account-unit-of-work.impl.ts` | `31-33` |
+| B4 | `src/modules/auth/infrastructure/persistence/auth-unit-of-work.impl.ts` | `81-83` |
+
+> **Por qué son cuatro y no dos (corrección respecto de la v1 de este plan):** la v1 asumía que P7
+> se aplicaba **antes** que P1/P2 y avisaba que los impls nuevos debían copiar el `rollback()` ya
+> endurecido. Se ejecutó al revés: `budget-unit-of-work.impl.ts:33-35` y
+> `account-unit-of-work.impl.ts:31-33` copiaron la versión sin guard. No es grave —P7 no se aplicó
+> en ningún lado todavía— pero el alcance de B ahora son los cuatro.
+
+**Los fakes no cambian.** `InMemoryUnitOfWork.rollback()` y `InMemoryAuthUnitOfWork.rollback()` no
+tocan TypeORM; solo incrementan `_rollbacks`. Con A aplicado, el use case ya no los llama después
+de un commit.
+
+### 4.3 ¿Es defensa en profundidad legítima o esconde bugs?
+
+Legítima. La semántica correcta de `rollback()` es *"deshacé si hay algo que deshacer"*; sin
+transacción abierta no hay estado que se corrompa por no actuar. Lo único que "esconde" es un
+doble-rollback o un rollback-sin-begin — que **hoy** se manifiestan como un
+`TransactionNotStartedError` que enmascara la excepción original, o sea la peor señal posible. El
+guard cambia una señal engañosa por ninguna; el `warn` de A aporta la señal buena.
+
+---
+
+## 5. Cambio C — `isActive()` → `isConnected()`
+
+### 5.1 La evidencia de que el nombre miente
+
+Las dos familias de implementaciones del mismo método abstracto **ya no significan lo mismo**:
+
+| Implementación | Cuándo devuelve `false` | Semántica real |
+|---|---|---|
+| Los 4 impls reales (`unit-of-work.impl.ts:146-148` y hermanos) | solo tras `release()` | "hay conexión reservada" |
+| Los 2 fakes (`in-memory-unit-of-work.ts:41-43`, `in-memory-auth-unit-of-work.ts:36-38`) | tras `commit()` **y** tras `rollback()` (`this.active = false` en ambos) | "hay transacción abierta" |
+
+Nadie lo notó porque **el método no se llama desde ningún lado en producción** — sus únicas
+apariciones fuera de impls y fakes son 5 mocks de specs que nunca lo asertan (§5.3, puntos 8-12).
+
+El nombre ya indujo un segundo error: `src/PROBLEMS.md:174` propone `if (this.isActive()) throw` al
+inicio de `begin()` —correcto para *ese* uso— y el enunciado original de P7 dio a entender que el
+mismo método servía como guard de `rollback()`, donde es un **no-op**: devuelve `true` justo en el
+escenario del defecto. Renombrar convierte esa ambigüedad en imposible de escribir.
+
+### 5.2 Por qué `isConnected()` y no otro nombre
+
+| Candidato | Veredicto |
+|---|---|
+| **`isConnected()`** | ✅ Describe el hecho real (`queryRunner !== null` ⇔ conexión reservada). No colisiona con ningún miembro de `QueryRunner` de TypeORM (`isReleased`, `isTransactionActive`) ni con `DataSource.isInitialized` |
+| `hasOpenTransaction()` | ❌ Sería **mentira** con la implementación actual: devuelve `true` después del commit |
+| `isTransactionActive()` | ❌ Reintroduce la confusión: mismo nombre que la propiedad de TypeORM, semántica distinta |
+| `hasReservedConnection()` | Correcto pero verboso; `isConnected()` dice lo mismo junto a `connect()`, que es lo que `begin()` llama |
+
+### 5.3 Los 17 puntos a tocar
+
+**Renombre puro** (el compilador encuentra todos los usos; ningún cambio de comportamiento):
+
+| # | Archivo | Línea(s) | Nota |
+|---|---|---|---|
+| C1 | `src/shared/domain/IUnitOfWork.ts` | `20` | `abstract isConnected(): boolean;` + jsdoc de una línea: *"¿hay una conexión reservada? True entre begin() y release(), INCLUIDO después del commit. Para saber si hay transacción abierta es `queryRunner.isTransactionActive`."* |
+| C2 | `src/modules/transactions/infrastructure/persistence/unit-of-work.impl.ts` | `146-148` y el comentario `125` | el comentario lista los métodos del ciclo de vida |
+| C3 | `src/modules/budgets/infrastructure/persistence/budget-unit-of-work.impl.ts` | `42-44` | |
+| C4 | `src/modules/accounts/infrastructure/persistence/account-unit-of-work.impl.ts` | `40-42` | |
+| C5 | `src/modules/auth/infrastructure/persistence/auth-unit-of-work.impl.ts` | `90-92` | |
+| C6 | `src/modules/transactions/infrastructure/persistence/__fakes__/in-memory-unit-of-work.ts` | `14`, `25-43` | **también alinea la semántica** — ver §5.4 |
+| C7 | `src/modules/auth/infrastructure/persistence/__fakes__/in-memory-auth-unit-of-work.ts` | `14`, `20-38` | ídem |
+| C8 | `src/modules/accounts/application/use-cases/archive-account.use-case.spec.ts` | `16` | línea del mock |
+| C9 | `src/modules/accounts/application/use-cases/unarchive-account.use-case.spec.ts` | `16` | |
+| C10 | `src/modules/accounts/application/use-cases/rename-account.use-case.spec.ts` | `16` | |
+| C11 | `src/modules/budgets/application/use-cases/delete-budget.use-case.spec.ts` | `33` | |
+| C12 | `src/modules/budgets/application/use-cases/update-budget-limit.use-case.spec.ts` | `40` | |
+
+**Documentación que nombra el método:**
+
+| # | Archivo | Línea(s) |
+|---|---|---|
+| C13 | `src/modules/transactions/notes.md` | `45` (contrato del ciclo de vida), `137` (fila de la tabla: actualizar también la descripción a *"true entre `begin()` y `release()` — incluido después del commit"*) |
+| C14 | `src/shared/domain/uow-decision.md` | `4` |
+| C15 | `src/shared/domain/cache-decision.md` | `139` (transcribe la forma del puerto) |
+| C16 | `src/PROBLEMS.md` | `160`, `174` |
+| C17 | `src/PLAN-P3P4-transactional-runner.md` | **una línea en el encabezado**, no 7 ediciones: *"Nota: `isActive()` se llama `isConnected()` desde P7; todas las menciones de abajo aplican al nombre nuevo."* |
+
+### 5.4 Alineación de los fakes (C6, C7) — el único punto con contenido, no mecánico
+
+Renombrar sin más dejaría a los fakes afirmando `isConnected()` y devolviendo `false` después del
+commit: la misma mentira, con otro nombre. Se alinean con los impls:
+
+```diff
+-  private active = false;
++  private connected = false;
+
+   async begin(): Promise<void> {
+-    this.active = true;
++    this.connected = true;
+   }
+
+   async commit(): Promise<void> {
+     this._commits++;
+-    this.active = false;
+   }
+
+   async rollback(): Promise<void> {
+     this._rollbacks++;
+-    this.active = false;
+   }
+
+-  async release(): Promise<void> {}
++  async release(): Promise<void> {
++    this.connected = false;
++  }
+
+-  isActive(): boolean {
+-    return this.active;
++  isConnected(): boolean {
++    return this.connected;
+   }
+```
+
+**Riesgo: cero, verificado.** Ninguna aserción de ningún spec lee el flag — las únicas apariciones
+de `isActive` en todo `src/` y `test/` son las 12 de C2-C12, y los helpers que los specs sí asertan
+son `commits()` / `rollbacks()`, que no se tocan.
+
+### 5.5 Colisión con P3+P4 — decidida, se documenta
+
+`src/PLAN-P3P4-transactional-runner.md:131-135` **borra** el método (junto con
+`begin/commit/rollback/release`) cuando el UoW pase a runner por callback. Entonces este renombre es
+trabajo que ese plan eventualmente elimina.
+
+**Se hace igual, por tres razones:** P3+P4 va **cuarto** en el orden sugerido
+(`PROBLEMS.md:337`: P7 → P6 → P3+P4 → P5) y es la cirugía más cara y más probable de diferirse; el
+renombre es mecánico y verificado por el compilador (riesgo cero); y mientras tanto el nombre es una
+trampa activa que ya produjo dos errores (§5.1). Si P3+P4 se ejecuta, el renombre se borra con el
+método: costo hundido de una tarde, no rework.
+
+**Lo que este cambio NO hace:** darle un *uso* al método. El guard de reentrada
+(`if (this.isConnected()) throw` al inicio de `begin()`, `PROBLEMS.md:174`) pertenece a P4 y queda
+fuera de alcance — agregarlo acá crearía un consumidor de un método que P3+P4 planea eliminar.
+
+---
+
+## 6. Tests
+
+### 6.1 El doble — extender el Null Object, local a cada spec
+
+Convención documentada en `src/shared/domain/cache-decision.md:41`: la caché se moquea con
+`NullBudgetsCache` (`src/modules/budgets/infrastructure/cache/__fakes__/null-budgets-cache.ts`).
+Se extiende en vez de escribir un mock nuevo, y se define **dentro de cada spec** (es un doble de un
+caso de prueba, no un fake reutilizable del módulo):
+
+```ts
+class ExplodingBudgetsCache extends NullBudgetsCache {
+  override async invalidateUser(): Promise<void> {
+    throw new Error('redis down');
+  }
+}
+```
+
+Un solo método basta: `Promise.all` rechaza con el primer rechazo.
+
+### 6.2 `delete-budget.use-case.spec.ts` — insertar tras `:103`
+
+Ubicación de la clase: junto a `FakeExpenseChecker` (`:13-23`). Import nuevo: `Logger` de
+`@nestjs/common`.
+
+```ts
+it('should NOT roll back nor propagate when cache invalidation fails after commit', async () => {
+  repo.seed([makeBudget({ id: 'b1', userId: 'user-1' })]);
+  const uow = makeMockUow(repo, false);
+  const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+
+  await expect(
+    new DeleteBudgetUseCase(
+      uow as unknown as IBudgetUnitOfWork,
+      new ExplodingBudgetsCache(),
+    ).execute('b1', 'user-1'),
+  ).resolves.toBeUndefined();                    // la operación reporta éxito
+
+  expect(repo.size()).toBe(0);                   // el efecto de negocio ocurrió
+  expect(uow.commit).toHaveBeenCalledTimes(1);
+  expect(uow.rollback).not.toHaveBeenCalled();   // ← la aserción central
+  expect(uow.release).toHaveBeenCalledTimes(1);  // el finally sigue corriendo
+  expect(warn).toHaveBeenCalledTimes(1);         // el fallo queda registrado
+
+  warn.mockRestore();
+});
+```
+
+### 6.3 `update-budget-limit.use-case.spec.ts` — insertar tras `:106`
+
+Este spec construye `useCase` en `beforeEach` (`:46-49`) con `NullBudgetsCache`, así que el test
+nuevo construye su propia instancia:
+
+```ts
+it('should NOT roll back nor propagate when cache invalidation fails after commit', async () => {
+  budgetRepo.seed([makeBudget({ id: 'b1', userId: 'user-1', limit: 300 })]);
+  const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+
+  const result = await new UpdateBudgetLimitUseCase(
+    mockUow as IBudgetUnitOfWork,
+    new ExplodingBudgetsCache(),
+  ).execute({ id: 'b1', requestUserId: 'user-1', limit: 800 });
+
+  expect(result.getLimit().getValue()).toBe(800);
+  expect(mockUow.commit).toHaveBeenCalledTimes(1);
+  expect(mockUow.rollback).not.toHaveBeenCalled();
+  expect(mockUow.release).toHaveBeenCalledTimes(1);
+  expect(warn).toHaveBeenCalledTimes(1);
+
+  warn.mockRestore();
+});
+```
+
+### 6.4 Regresión inversa — 1 línea, barata
+
+En el test existente `'should throw BudgetLimitBelowSpentException when limit is below spent'`
+(`update-budget-limit.use-case.spec.ts:87-98`), inyectar un `IBudgetsCache` espiado y agregar:
+
+```ts
+expect(cacheSpy.invalidateUser).not.toHaveBeenCalled();
+```
+
+Fija la regla que §10.1 explica: **si la transacción aborta, la caché no se toca.**
+
+### 6.5 Rojo antes de verde — y el límite honesto del unitario
+
+Con el código actual, el test de 6.2 falla en **dos** aserciones: `resolves` (la promesa rechaza con
+`Error('redis down')`) y `rollback` (se llama una vez, `delete-budget.use-case.ts:58`).
+
+**Lo que el unitario NO reproduce:** el `TransactionNotStartedError`. El mock
+`rollback: jest.fn().mockResolvedValue(undefined)` (`delete-budget.use-case.spec.ts:31`) resuelve sin
+error, así que el error que se propaga es el de Redis, no el enmascarado. El enmascaramiento requiere
+un `QueryRunner` real.
+
+Lo que sí fija son las dos propiedades bajo nuestro control, de las cuales el enmascaramiento es
+consecuencia: **(a)** no se llama `rollback()` tras un `commit()` exitoso, **(b)** el fallo de caché
+no llega al llamador. Con (a) garantizada, el `TransactionNotStartedError` es inalcanzable por
+construcción.
+
+### 6.6 Test de integración — solo para B, y es el que importa
+
+La corrección de B depende de una semántica de TypeORM que **ningún mock puede verificar** y que un
+bump mayor podría cambiar en silencio. Con Postgres real, en
+`test/integration/concurrency/concurrency.integration.spec.ts` o archivo nuevo:
+
+```
+begin() → commit() → rollback()              ⇒ no lanza
+begin() → rollback() → rollback()            ⇒ no lanza (sin release en el medio)
+begin() → commit() → release()               ⇒ la conexión vuelve al pool
+```
+
+**Para A no hace falta integración.** Un equivalente exigiría agregar un hook de `overrideProvider`
+a `test/helpers/app-bootstrap.ts:20-45`, que hoy compila `AppModule` sin overrides (`:29-31`) y lo
+usan las 9 suites de `test/integration/`. Cambiar un helper compartido por valor marginal sobre el
+unitario: mal negocio.
+
+---
+
+## 7. Documentación (commit 4)
+
+| Archivo | Cambio |
+|---|---|
+| `src/PROBLEMS.md` | P7 → resuelto (o mover a "cerrados"); actualizar la fila de la tabla `:331` y el orden sugerido `:337` |
+| `src/modules/budgets/notes.md:68-69` | las descripciones de `UpdateBudgetLimitUseCase` / `DeleteBudgetUseCase` terminan en "commit". Añadir: *"→ invalidación de caché best-effort (fuera del alcance de error de la tx)"* |
+| `src/shared/domain/cache-decision.md` §5 (`:261-269`) | regla nueva: **la invalidación va después del commit y su fallo se loguea; nunca se propaga ni dispara rollback** |
+| `CLAUDE.md` §"Anti-patterns — do not do" | *"**Do not** put cache invalidation (or any secondary reaction) inside the `try` that a `rollback()` catches. It runs after `commit()`, in its own `try/catch` that only logs."* |
+
+**No hace falta tocar** la tabla excepción→HTTP de `CLAUDE.md`: no se agrega ni se quita ninguna
+excepción de dominio.
+
+---
+
+## 8. Secuencia de commits
+
+| # | Mensaje | Alcance | Verde tras |
+|---|---|---|---|
+| **1** | `fix(budgets): keep cache invalidation out of the transaction's error scope` | A1, A2 + specs A3, A4 | `npm test` — con los 2 tests nuevos **en rojo antes** del cambio |
+| **2** | `refactor(shared): guard rollback() against an already-closed transaction` | B1-B4 + test de §6.6 | `npm test` + `npm run test:integration` |
+| **3** | `refactor(shared): rename IUnitOfWork.isActive() to isConnected()` | C1-C17 | `npm test` + `npm run test:integration` |
+| **4** | `docs: close P7 and record the post-commit rule` | §7 | — |
+
+**Por qué este orden:** el commit 1 es el arreglo y se puede demostrar rojo→verde solo. El 2 es la
+red y necesita Postgres. El 3 es renombre puro sin cambio de comportamiento — va último para que se
+pueda descartar sin bloquear el arreglo. Cada commit deja el árbol verde y es un estado coherente.
+
+**Recordar:** el compose tiene que estar arriba para los commits 2 y 3
+(`test/.env.test` apunta al puerto **5433**; sin él, toda suite de integración falla en el bootstrap
+con un error que no se parece a la causa).
+
+---
+
+## 9. Criterios de aceptación
+
+- [ ] `npm test` verde; los 2 tests de §6.2/§6.3 fallan si se revierte A (verificarlo, no asumirlo).
+- [ ] `npm run test:integration` verde, incluidas las escenas de
+      `concurrency.integration.spec.ts` **sin modificar** (regla de `CLAUDE.md`).
+- [ ] `npm run test:cov` — `branches ≥ 70` en `src/modules/**/application/**/*.ts`. Cada `catch`
+      nuevo agrega una rama; los tests de §6 la cubren. **Sin esos tests, el umbral puede caer.**
+- [ ] `grep -rn "isActive" src/ test/ --include="*.ts"` → **0 resultados**. El filtro por `*.ts` es
+      deliberado: C17 escribe la cadena `isActive()` a propósito dentro de los documentos de
+      planificación (la nota de `PLAN-P3P4-transactional-runner.md` y la prosa histórica de este
+      mismo archivo), que narran el nombre viejo. El criterio es sobre **código**, no sobre prosa.
+- [ ] `grep -rn "rollbackTransaction" src/` → 4 apariciones, **las 4 precedidas del guard**.
+- [ ] Ningún `catch (cacheError)` vacío: los dos loguean (§10.3).
+- [ ] `npm run lint` sin warnings nuevos.
+
+---
+
+## 10. Invariantes — qué NO se toca
+
+### 10.1 Prohibido: invalidar antes del `commit()`
+
+Sería estrictamente peor, por una razón no obvia. Entre la invalidación y el commit se abre una
+ventana en la que un `GET /budgets/:id` concurrente encuentra la clave vacía, lee de la DB el estado
+**pre-commit** y lo repuebla con `setById` (`get-budget-by-id.use-case.ts:23`) y TTL 600 s
+(`budgets-cache.impl.ts:94`). La caché queda envenenada con el valor viejo **y el TTL arranca en ese
+momento**: la inconsistencia dura hasta 600 s contados *desde el GET*, no desde el commit. Y si la
+transacción aborta, se pagó una invalidación inútil. El orden `commit → invalidación` es correcto.
+
+### 10.2 Prohibido: alterar la semántica transaccional
 
 - No mover, agregar ni quitar `begin()`, `commit()` o `release()`.
-- No cambiar el orden de los locks ni las lecturas bajo `FOR UPDATE` (`delete-budget.use-case.ts:26,33-40`; `update-budget-limit.use-case.ts:34,42-49`). El mutex lógico de la fila de budget sigue igual — el arreglo es puramente post-commit.
-- No cambiar la semántica de `isActive()` (ver 5.3).
-- No convertir el `catch` externo en algo que trague errores. Sigue siendo `rollback(); throw error;`.
+- No cambiar el orden de los locks ni las lecturas bajo `FOR UPDATE`
+  (`delete-budget.use-case.ts:26,33-40`; `update-budget-limit.use-case.ts:34,42-49`). El mutex lógico
+  de la fila de budget queda igual — el arreglo es puramente post-commit.
+- No convertir el `catch` externo en algo que trague errores: sigue siendo `rollback(); throw error;`.
+- No darle un consumidor a `isConnected()` en este PR (§5.5).
 
-### 6.3 Riesgo: `catch` vacío por accidente
+### 10.3 Prohibido: `catch (cacheError) {}` silencioso
 
-El `catch (cacheError)` **debe** loguear. Un `catch {}` silencioso convierte P7 en un fallo invisible: la caché quedaría stale sin ninguna señal operativa. El test de 4.3/4.4 asegura con `expect(warn).toHaveBeenCalledTimes(1)` que el log existe.
-
-### 6.4 Riesgo: umbrales de cobertura
-
-`package.json` §`jest.coverageThreshold` exige `branches: 70` en `src/modules/**/application/**/*.ts`. El nuevo `catch` agrega una rama por archivo; los tests de 4.3/4.4 la cubren. Si se omitieran los tests, `npm run test:cov` podría bajar el porcentaje. Los tests no son opcionales.
-
-### 6.5 Riesgo: nivel de log y ruido
-
-`warn` con Redis caído genera una línea por escritura de budget. Es lo deseable (visibilidad del incidente) y el volumen está acotado por el throttler global (`app.module.ts:91-97`, `THROTTLE_LIMIT` por defecto 100/min/IP). No usar `error`: reservado para fallos de la operación de negocio.
-
-### 6.6 Riesgo bajo pero real: `release()` que lanza
-
-Fuera del alcance de P7, pero conviene registrarlo: si `this.uow.release()` en el `finally` lanza, el error se propaga y el cliente ve un 500 aunque el commit haya sido exitoso — en los 8 use cases. La Opción A es robusta ante esto (la invalidación ya corrió). Cerrarlo del todo es trabajo de P3/P4 (runner por callback). **No abrir ese frente acá.**
-
-### 6.7 Lo que este plan NO resuelve, deliberadamente
-
-- Los 6 use cases sin UoW de la sección 1.5.
-- El flag `committed` redundante de `refresh-token.use-case.ts`.
-- La falta de un circuit breaker / degradación explícita de Redis a nivel `ICacheStore`.
+Convertiría P7 en un fallo invisible: caché stale sin ninguna señal operativa. La aserción
+`expect(warn).toHaveBeenCalledTimes(1)` de §6.2/§6.3 es lo que lo impide.
 
 ---
 
-## 7. Coordinación con el plan de P1/P2 (mi cambio va PRIMERO)
+## 11. Fuera de alcance, con destino
 
-### 7.1 Líneas que toco
-
-| Archivo | Líneas (estado ACTUAL) | Naturaleza |
+| Hallazgo | Por qué queda afuera | Destino |
 |---|---|---|
-| `delete-budget.use-case.ts` | `1` (import), inserción tras `11`, bloque `50-56` | import + campo de clase + cuerpo de `execute()` |
-| `update-budget-limit.use-case.ts` | `1` (import), inserción tras `19`, bloque `62-68` | import + campo de clase + cuerpo de `execute()` |
-| `unit-of-work.impl.ts` | `281-283` | solo `rollback()` |
-| `auth-unit-of-work.impl.ts` | `81-83` | solo `rollback()` |
-| `delete-budget.use-case.spec.ts` | import de `Logger`, inserción tras `23`, inserción tras `103` | solo añadidos |
-| `update-budget-limit.use-case.spec.ts` | import de `Logger`, inserción tras `26`, inserción tras `106` | solo añadidos |
+| **Los 6 use cases de escritura sin UoW** (`create-budget:70`, `create-category:36`, `update-category:34-37`, `delete-category:20-23`, `update-user-profile:33`, `delete-user:27`) propagan un fallo de Redis como 500 sobre una escritura ya persistida | No hay transacción, así que no hay enmascaramiento — P7 está definido como *"reacción secundaria dentro del alcance de error de la transacción"*. El síntoma para el cliente **sí** es el mismo | Issue nuevo, sin dependencia con éste. Si se acepta la política de §2.3, aplicarla ahí es el paso lógico siguiente |
+| El flag `committed` de `refresh-token.use-case.ts:28,45-46,83-84,87` queda **redundante** una vez aplicado B | `auth` está fuera del alcance de P7 y el flag no es incorrecto, solo innecesario | Limpieza de P3+P4 |
+| `release()` que lanza en el `finally` → 500 pese a un commit exitoso, en los 8 use cases | Es el ciclo de vida manual, no la reacción secundaria. A es robusta ante esto (la invalidación ya corrió) | P3+P4 (runner por callback) |
+| Circuit breaker / degradación explícita de Redis a nivel `ICacheStore` | No hay evidencia de monitoreo que lo justifique; `CLAUDE.md` §reports ya sentó ese criterio | Diferido |
 
-### 7.2 Líneas que NO toco (las de P1/P2)
+---
 
-- **Los imports de puertos:** `delete-budget.use-case.ts:2-8`, `update-budget-limit.use-case.ts:2-10`. Solo modifico la **línea 1** (`@nestjs/common`), que P1/P2 no necesitan tocar.
-- **Los constructores:** `delete-budget.use-case.ts:12-15` y `update-budget-limit.use-case.ts:20-23`. Intactos — no cambio el tipo ni el orden de los parámetros. El token `IBudgetUnitOfWork` sigue exactamente donde está.
-- **`budgets.module.ts`** — no lo toco en absoluto.
-- **Las clases scoped** (`ScopedBudgetRepository`, `ScopedAccountRepository`, `ScopedExpenseChecker`) dentro de `unit-of-work.impl.ts` — no las toco. Solo modifico el método `rollback()` de `TypeOrmUnitOfWorkImpl`.
-- **`isActive()`** en ambos impls — intacto, y es deliberado: P4 lo necesita con su semántica actual.
+## Apéndice A — Evidencia del barrido de alcance
 
-### 7.3 Cómo quedan los archivos DESPUÉS de mi cambio (para que P1/P2 reanclen)
+Tres barridos independientes sobre `src/**/*.ts`; la intersección (1)∩(2) es el conjunto de defectos.
 
-Tras aplicar 5.1 y 5.2, en cada archivo se insertan **2 líneas antes del constructor** (el campo `logger` + una línea en blanco) y la línea 1 cambia de contenido pero no de posición. Anclas nuevas:
+1. `grep -n "\.commit\(\)" -A 12` → qué se ejecuta entre cada `commit()` y su `catch`.
+2. `grep -n "this\.cache\." --glob "*.use-case.ts"` → consumidores de un puerto de caché en `application/`.
+3. `grep -n "uow\.|unitOfWork\.|\.rollback\(\)"` → archivos con ciclo de vida transaccional manual.
 
-| Archivo | Constructor ANTES | Constructor DESPUÉS |
-|---|---|---|
-| `delete-budget.use-case.ts` | `12-15` | `14-17` |
-| `update-budget-limit.use-case.ts` | `20-23` | `22-25` |
+### A.1 Los 8 use cases con UoW
 
-Los imports de puertos conservan su numeración (`delete-budget.use-case.ts:2-8`, `update-budget-limit.use-case.ts:2-10`), porque la única línea modificada arriba del bloque es la 1 y no cambia de altura.
+| # | `commit()` en | Qué corre después, dentro del `try` | ¿Puede lanzar? | Veredicto |
+|---|---|---|---|---|
+| 1 | `create-transaction.use-case.ts:153` | `:154 return saved;` | No | OK |
+| 2 | `delete-transaction.use-case.ts:45` | nada (`:46` es el `catch`) | — | OK |
+| 3 | `archive-account.use-case.ts:32` | `:33 return saved;` | No | OK |
+| 4 | `unarchive-account.use-case.ts:32` | `:33 return saved;` | No | OK |
+| 5 | `rename-account.use-case.ts:33` | `:34 return saved;` | No | OK |
+| 6 | `refresh-token.use-case.ts:45` y `:83` | `committed = true` + `throw`/`return` | No | OK — ya protegido con flag |
+| 7 | **`update-budget-limit.use-case.ts:63`** | **`:65-68` `Promise.all([invalidateUser, invalidateById])`** | **Sí** | **DEFECTO** |
+| 8 | **`delete-budget.use-case.ts:51`** | **`:53-56` ídem** | **Sí** | **DEFECTO** |
 
-### 7.4 Interacción semántica con P1/P2
+`return <expr>` con `<expr>` ya evaluada no puede lanzar: no hay getters, ni `toJSON`, ni `await`.
+Los casos 1-5 son seguros **por estructura**, no por suerte.
 
-Ninguna. P1/P2 cambia **de dónde viene** la implementación de `IBudgetUnitOfWork` (de `TypeOrmUnitOfWorkImpl` en `transactions/` a un `BudgetUnitOfWorkImpl` en `budgets/`). Mi cambio 5.3 endurece `rollback()` en `TypeOrmUnitOfWorkImpl`.
+### A.2 Los 13 puntos de caché en `application/` — cuáles están bajo un `catch` con `rollback()`
 
-> **Nota explícita para el agente de P1/P2:** el nuevo `BudgetUnitOfWorkImpl` (y el `AccountUnitOfWorkImpl`) deben copiar el `rollback()` **ya endurecido** (5.3), no la versión actual de `unit-of-work.impl.ts:281-283`. Si se copia la vieja, P7 se reabre en el módulo nuevo. Es el único punto de contacto entre los dos planes.
+| Archivo:línea | ¿Bajo `catch` con `rollback()`? |
+|---|---|
+| `budgets/delete-budget.use-case.ts:54-55` | **SÍ** ← defecto |
+| `budgets/update-budget-limit.use-case.ts:66-67` | **SÍ** ← defecto |
+| `budgets/create-budget.use-case.ts:70` | No (sin UoW: repo global, `:24`) |
+| `budgets/get-budget-by-id.use-case.ts:16,23` · `get-budgets-by-user-id.use-case.ts:20,24` | No (lectura) |
+| `categories/create-category:36` · `update-category:35-36` · `delete-category:21-22` | No (sin UoW) |
+| `categories/get-category-by-id:16,23` · `get-categories-by-user-id:14,18` | No (lectura) |
+| `users/update-user-profile:33` · `delete-user:27` | No (sin UoW) |
+| `users/get-user-by-id:25,30` | No (lectura) |
 
-### 7.5 Orden de aplicación sugerido
+Puertos de caché existentes: `IBudgetsCache`, `ICategoriesCache`, `IUsersCache`. No hay otros —
+`src/shared/domain/cache-decision.md:43` lo confirma (`<m>` ∈ { budgets, categories, users }).
 
-1. 5.1 + 5.2 (arreglo puntual) + 5.5 specs → `npm test` verde, con los dos tests nuevos en rojo antes del arreglo.
-2. 5.3 + 5.4 (endurecimiento) + test de integración de 4.7 → `npm run test:integration`.
-3. 5.6 (docs).
-4. Recién entonces, P1/P2.
+**Alcance del defecto: exactamente `delete-budget.use-case.ts` y `update-budget-limit.use-case.ts`.**
+
+### A.3 Apariciones de `isActive` en `src/` y `test/` (12, ninguna en producción)
+
+| Tipo | Ubicaciones |
+|---|---|
+| Puerto | `shared/domain/IUnitOfWork.ts:20` |
+| Impls | `unit-of-work.impl.ts:146` · `budget-unit-of-work.impl.ts:42` · `account-unit-of-work.impl.ts:40` · `auth-unit-of-work.impl.ts:90` |
+| Fakes | `in-memory-unit-of-work.ts:41` · `in-memory-auth-unit-of-work.ts:36` |
+| Mocks de specs | `archive:16` · `unarchive:16` · `rename:16` · `delete-budget:33` · `update-budget-limit:40` |
+| **Llamadas desde código de producción** | **ninguna** |
+| **Aserciones que lo lean** | **ninguna** |

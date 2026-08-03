@@ -11,30 +11,30 @@ import { IRefreshTokenRepository } from '../../../domain/repository/refresh-toke
 export class InMemoryAuthUnitOfWork extends IAuthUnitOfWork {
   private _commits = 0;
   private _rollbacks = 0;
-  private active = false;
+  private connected = false;
 
   constructor(private readonly refreshTokenRepo: IRefreshTokenRepository) {
     super();
   }
 
   async begin(): Promise<void> {
-    this.active = true;
+    this.connected = true;
   }
 
   async commit(): Promise<void> {
     this._commits++;
-    this.active = false;
   }
 
   async rollback(): Promise<void> {
     this._rollbacks++;
-    this.active = false;
   }
 
-  async release(): Promise<void> {}
+  async release(): Promise<void> {
+    this.connected = false;
+  }
 
-  isActive(): boolean {
-    return this.active;
+  isConnected(): boolean {
+    return this.connected;
   }
 
   getRefreshTokenRepository(): IRefreshTokenRepository {

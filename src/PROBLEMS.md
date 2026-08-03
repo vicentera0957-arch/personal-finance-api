@@ -7,10 +7,13 @@
 > Esto **no** es un plan de ejecución. Es el mapa de qué problema específico se está resolviendo
 > con cada movimiento, para no confundir causas con síntomas.
 >
-> **P1 y P2 están cerrados** y se eliminaron de este inventario. Rompían los dos ciclos de módulos
-> dando a `accounts` y a `budgets` su propio UoW; el resultado vive en el código y en la sección
-> de concurrencia de `CLAUDE.md`. Los problemas que quedan son internos al UoW o al ciclo de vida
-> transaccional — ninguno es de composición entre módulos.
+> **P1, P2 y P7 están cerrados** y se eliminaron de este inventario. P1 y P2 rompían los dos ciclos
+> de módulos dando a `accounts` y a `budgets` su propio UoW; el resultado vive en el código y en la
+> sección de concurrencia de `CLAUDE.md`. P7 (la invalidación de caché disparando un `rollback()`
+> sobre una transacción ya commiteada) se cerró con `PLAN-P7-cache-rollback.md`: la invalidación
+> ahora corre en su propio `try/catch` post-commit (ver `CLAUDE.md`, "Anti-patterns"), y `rollback()`
+> es no-op sobre una transacción ya cerrada en los cuatro impls de UoW. Los problemas que quedan son
+> internos al UoW o al ciclo de vida transaccional — ninguno es de composición entre módulos.
 
 ---
 
@@ -75,8 +78,9 @@ son internos al UoW (su forma, su ciclo de vida, la amplitud de sus puertos) o a
 
 **No.** Y conviene decirlo con precisión para no vender el refactor con argumentos falsos.
 
-- **¿Causa un bug hoy?** Solo P7. Los demás no producen ninguna incorrección: la app bootea, los
-  locks funcionan, la suite pasa.
+- **¿Causa un bug hoy?** Ya no — P7 era el único y está cerrado (ver la nota al principio de este
+  documento). Los que quedan no producen ninguna incorrección: la app bootea, los locks funcionan,
+  la suite pasa.
 - **¿Cuesta algo medible?** Poco. Los unit tests mockean los puertos, así que no sufren el
   acoplamiento; los de integración levantan la app entera de todos modos. El único con impacto de
   runtime plausible es P3 — y **no está medido en este repo**, así que el argumento sólido para
@@ -89,8 +93,8 @@ son internos al UoW (su forma, su ciclo de vida, la amplitud de sus puertos) o a
 3. Con P1 y P2 ya cerrados, P3 se puede resolver módulo por módulo en vez de como big-bang: cada
    UoW es ahora una unidad independiente que se puede convertir en runner sin estado por separado.
 
-**Cuándo diferirlo es legítimo:** si el foco está en entregar features. Excepto P7, que es un
-defecto de comportamiento y el más barato de los cinco.
+**Cuándo diferirlo es legítimo:** si el foco está en entregar features — los cuatro que quedan son
+endurecimiento estructural, no defectos de comportamiento (ese, P7, ya está cerrado).
 
 ---
 
@@ -157,7 +161,7 @@ async begin(): Promise<void> {
 }
 ```
 
-`isActive()` existe en ambos impls y **no se usa en ningún lado**.
+`isConnected()` existe en ambos impls y **no se usa en ningún lado**.
 
 **Costo real:** la corrección depende de copiar bien el patrón. Un `release()` olvidado filtra una
 conexión del pool **de forma permanente** — no se recupera hasta reiniciar el proceso. Los 8 están
@@ -171,7 +175,7 @@ vida*.
 `release()` y elimina la reentrada. **Una sola cirugía compra P3 y P4** — ése es el mejor argumento
 a favor de hacerla.
 
-**Endurecimiento inmediato si se difiere:** `if (this.isActive()) throw` al inicio de `begin()`.
+**Endurecimiento inmediato si se difiere:** `if (this.isConnected()) throw` al inicio de `begin()`.
 
 ---
 
@@ -234,45 +238,6 @@ lock.
 
 ---
 
-## P7 — Reacción secundaria dentro del alcance de error de la transacción
-
-> **Único defecto de comportamiento del inventario. Los demás son estructurales.**
-
-**Enunciado:** la invalidación de caché ocurre después del `commit()` pero **dentro del `try`**, así
-que su fallo dispara un `rollback()` sobre una transacción ya commiteada.
-
-**Evidencia:** `delete-budget.use-case.ts:50-59` y `update-budget-limit.use-case.ts:62-71`.
-
-```ts
-await budgetRepo.delete(id);
-await this.uow.commit();
-
-await Promise.all([                      // ← si esto lanza…
-  this.cache.invalidateUser(budget.userId),
-  this.cache.invalidateById(id),
-]);
-} catch (error) {
-await this.uow.rollback();               // ← …rollback sobre una tx cerrada
-throw error;
-}
-```
-
-**Costo real:** si Redis está caído, `invalidateUser` lanza → cae al `catch` → `rollback()` sobre una
-transacción cerrada → TypeORM lanza `TransactionNotStartedError`, que **enmascara el error original**
-y se propaga. Resultado: el budget se borró correctamente, la caché quedó stale, y el cliente recibe
-un 500 con un error engañoso sobre una operación que en realidad tuvo éxito. **Una caída de Redis
-convierte borrados exitosos en 500s.**
-
-**Independencia:** total. Es el arreglo más barato y el único que corrige un comportamiento
-incorrecto.
-
-**Propuesta:** la reacción secundaria va fuera del alcance transaccional — después del `finally`, o
-en su propio `try/catch` que solo loguee. El criterio ya está bien establecido en el resto del
-código: lo que protege un invariante va adentro, lo que tolera latencia y fallo va afuera. Acá quedó
-del lado equivocado de la llave.
-
----
-
 # Candidatos examinados y descartados
 
 Se listan para que nadie los "arregle" después sin entender qué compran.
@@ -316,32 +281,30 @@ explícito por implícito es un retroceso de legibilidad. Y no resuelve el owner
 # Mapa de dependencias entre problemas
 
 ```
-P7  ────────────────────────────  independiente · defecto · arreglo inmediato
 P6  ────────────────────────────  independiente
 P5  ────────────────────────────  independiente
 
 P3 ══ P4       misma solución: una cirugía compra las dos
 ```
 
-Los cuatro restantes son mutuamente independientes salvo P3 ══ P4. Cerrar P1 y P2 dejó cada UoW
+Los tres restantes son mutuamente independientes salvo P3 ══ P4. Cerrar P1 y P2 dejó cada UoW
 como una unidad separada, así que P3 + P4 se puede hacer módulo por módulo en vez de como big-bang.
 
 | Problema | Costo | Riesgo | Naturaleza |
 | -------- | ----- | ------ | ---------- |
-| **P7** Reacción secundaria dentro del `try` | mínimo | nulo | defecto de comportamiento |
 | **P6** Query de gastos duplicada | bajo | nulo | duplicación |
 | **P5** Puerto sobre-expuesto | bajo | nulo | endurecimiento |
 | **P3** Contagio de `Scope.REQUEST` | medio | medio | runtime |
 | **P4** Ciclo de vida manual sin guarda | incluido en P3 | medio | robustez |
 
-**Orden sugerido:** P7 → P6 → P3 + P4 → P5.
+**Orden sugerido:** P6 → P3 + P4 → P5.
 
-P7 primero porque es el único defecto real y el más barato. P6 después, porque el cierre de P1 lo
-encareció y sigue encareciéndose. P5 al final: el tipo de retorno de las factories scoped es el
-punto exacto donde se estrecha el puerto, y conviene tocarlo una sola vez.
+P6 primero, porque el cierre de P1 lo encareció y sigue encareciéndose. P5 al final: el tipo de
+retorno de las factories scoped es el punto exacto donde se estrecha el puerto, y conviene tocarlo
+una sola vez.
 
 > **Discrepancia abierta:** el plan de P5 propone hacerlo *antes* de P3 + P4; el plan de P3 + P4
 > asume que P5 sigue diferido. Hay que resolverla antes de empezar cualquiera de los dos.
 
-**Cada parada es un estado coherente.** Después de P7 el sistema es *más correcto*. Después de
+**Cada parada es un estado coherente.** Con P7 cerrado, el sistema ya es *más correcto*. Después de
 P3 + P4 es *más seguro de extender*.

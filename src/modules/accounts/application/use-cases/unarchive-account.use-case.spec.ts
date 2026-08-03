@@ -13,7 +13,7 @@ const makeMockUow = (repo: InMemoryAccountRepository) => ({
   commit: jest.fn().mockResolvedValue(undefined),
   rollback: jest.fn().mockResolvedValue(undefined),
   release: jest.fn().mockResolvedValue(undefined),
-  isActive: jest.fn().mockReturnValue(true),
+  isConnected: jest.fn().mockReturnValue(true),
   getScopedAccountRepository: jest.fn().mockReturnValue(repo),
 });
 

@@ -136,7 +136,7 @@ export abstract class IUnitOfWork {
   abstract commit(): Promise<void>;
   abstract rollback(): Promise<void>;
   abstract release(): Promise<void>;
-  abstract isActive(): boolean;
+  abstract isConnected(): boolean;
 }
 
 // modules/budgets/domain/IBudgetUnitOfWork.ts
@@ -268,6 +268,7 @@ When in doubt between `extends SharedPort` and `constructor(private dep: SharedP
 - Do **not** mix keys across modules. Each module's prefix (`budgets:`, `categories:`, `users:`) is that module's property; don't build them from elsewhere.
 - Do **not** depend on the global `pf:` prefix inside the semantic caches. `RedisCacheStore` applies it; working against it breaks the invariant that only one file knows the namespacing.
 - Do **not** raise the TTL without a documented reason. Today it is 600 s in all three impls; if you change one, write the why in the commit and consider whether the others should move too.
+- Cache invalidation inside a UoW-backed use case always goes **after** `commit()`, in its own `try/catch` that only logs (`Logger.warn`). Its failure must never propagate to the caller nor trigger `rollback()` — a commit is durable; reacting to its aftermath cannot un-succeed it. See `delete-budget.use-case.ts` / `update-budget-limit.use-case.ts` and `CLAUDE.md`, "Anti-patterns" (P7).
 - **Do** add a cache port for a new module by replicating the template: port in `<module>/domain/ports/cache/`, impl in `<module>/infrastructure/cache/`, null object in `__fakes__/`. Binding in the module's `Module`.
 
 ---

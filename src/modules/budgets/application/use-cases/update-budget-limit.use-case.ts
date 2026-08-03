@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { IBudgetUnitOfWork } from '../../domain/IBudgetUnitOfWork';
 import { IBudgetsCache } from '../../domain/ports/cache/budgets-cache.port';
 import { Budget } from '../../domain/budget.entity';
@@ -17,6 +17,8 @@ interface UpdateBudgetLimitCommand {
 
 @Injectable()
 export class UpdateBudgetLimitUseCase {
+  private readonly logger = new Logger(UpdateBudgetLimitUseCase.name);
+
   constructor(
     private readonly uow: IBudgetUnitOfWork,
     private readonly cache: IBudgetsCache,
@@ -62,10 +64,20 @@ export class UpdateBudgetLimitUseCase {
       const updated = await budgetRepo.save(budget);
       await this.uow.commit();
 
-      await Promise.all([
-        this.cache.invalidateUser(updated.userId),
-        this.cache.invalidateById(updated.id),
-      ]);
+      // POST-COMMIT: ver el comentario equivalente en delete-budget.use-case.ts.
+      // Un fallo de Redis no puede disparar el rollback de una transacción cerrada.
+      try {
+        await Promise.all([
+          this.cache.invalidateUser(updated.userId),
+          this.cache.invalidateById(updated.id),
+        ]);
+      } catch (cacheError) {
+        this.logger.warn(
+          `Budget ${updated.id} actualizado y commiteado, pero falló la invalidación ` +
+            `de caché (user ${updated.userId}). Las lecturas pueden quedar stale hasta ` +
+            `el TTL. Causa: ${(cacheError as Error).message}`,
+        );
+      }
       return updated;
     } catch (error) {
       await this.uow.rollback();

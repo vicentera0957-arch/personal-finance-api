@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { UpdateBudgetLimitUseCase } from './update-budget-limit.use-case';
 import { IBudgetUnitOfWork } from '../../domain/IBudgetUnitOfWork';
 import { IExpenseChecker } from '../../domain/ports/expense-checker.port';
@@ -25,6 +26,12 @@ class FakeExpenseChecker extends IExpenseChecker {
   }
 }
 
+class ExplodingBudgetsCache extends NullBudgetsCache {
+  override async invalidateUser(): Promise<void> {
+    throw new Error('redis down');
+  }
+}
+
 describe('UpdateBudgetLimitUseCase', () => {
   let budgetRepo: InMemoryBudgetRepository;
   let mockUow: Partial<IBudgetUnitOfWork>;
@@ -37,7 +44,7 @@ describe('UpdateBudgetLimitUseCase', () => {
       commit: jest.fn().mockResolvedValue(undefined),
       rollback: jest.fn().mockResolvedValue(undefined),
       release: jest.fn().mockResolvedValue(undefined),
-      isActive: jest.fn().mockReturnValue(true),
+      isConnected: jest.fn().mockReturnValue(true),
       getScopedBudgetRepository: jest.fn().mockReturnValue(budgetRepo),
       getScopedExpenseChecker: jest
         .fn()
@@ -89,12 +96,19 @@ describe('UpdateBudgetLimitUseCase', () => {
     mockUow.getScopedExpenseChecker = jest
       .fn()
       .mockReturnValue(new FakeExpenseChecker(600));
+    const cacheSpy = new NullBudgetsCache();
+    jest.spyOn(cacheSpy, 'invalidateUser');
+    const spiedUseCase = new UpdateBudgetLimitUseCase(
+      mockUow as IBudgetUnitOfWork,
+      cacheSpy,
+    );
 
     await expect(
-      useCase.execute({ id: 'b1', requestUserId: 'user-1', limit: 500 }),
+      spiedUseCase.execute({ id: 'b1', requestUserId: 'user-1', limit: 500 }),
     ).rejects.toThrow(BudgetLimitBelowSpentException);
 
     expect(mockUow.rollback).toHaveBeenCalled();
+    expect(cacheSpy.invalidateUser).not.toHaveBeenCalled();
   });
 
   it('should throw BudgetNotFoundException when missing', async () => {
@@ -103,5 +117,25 @@ describe('UpdateBudgetLimitUseCase', () => {
     ).rejects.toThrow(BudgetNotFoundException);
 
     expect(mockUow.rollback).toHaveBeenCalled();
+  });
+
+  it('should NOT roll back nor propagate when cache invalidation fails after commit', async () => {
+    budgetRepo.seed([makeBudget({ id: 'b1', userId: 'user-1', limit: 300 })]);
+    const warn = jest
+      .spyOn(Logger.prototype, 'warn')
+      .mockImplementation(() => {});
+
+    const result = await new UpdateBudgetLimitUseCase(
+      mockUow as IBudgetUnitOfWork,
+      new ExplodingBudgetsCache(),
+    ).execute({ id: 'b1', requestUserId: 'user-1', limit: 800 });
+
+    expect(result.getLimit().getValue()).toBe(800);
+    expect(mockUow.commit).toHaveBeenCalledTimes(1);
+    expect(mockUow.rollback).not.toHaveBeenCalled();
+    expect(mockUow.release).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledTimes(1);
+
+    warn.mockRestore();
   });
 });

@@ -65,8 +65,8 @@ Methods: `hasExpensesInPeriod(userId, categoryId, month, year): Promise<boolean>
 | `GetBudgetByIdUseCase`                 | Finds → validates ownership → throws `BudgetNotFoundException`                                          |
 | `GetBudgetsByUserIdUseCase`            | Filters by userId (and optionally month/year)                                                      |
 | `GetBudgetByUserCategoryPeriodUseCase` | Internal lookup for `CreateTransactionUseCase`                                                    |
-| `UpdateBudgetLimitUseCase`             | Opens UoW → `findById` budget (FOR UPDATE) → validates ownership → sums the period's expenses (no own lock; serialized by the budget lock) → if `new limit < spent` throws `BudgetLimitBelowSpentException` (409) → commit |
-| `DeleteBudgetUseCase`                  | Opens UoW → `findById` budget (FOR UPDATE) → validates ownership → `hasExpensesInPeriod` (no own lock; serialized by the budget lock) → deletes if there are no expenses |
+| `UpdateBudgetLimitUseCase`             | Opens UoW → `findById` budget (FOR UPDATE) → validates ownership → sums the period's expenses (no own lock; serialized by the budget lock) → if `new limit < spent` throws `BudgetLimitBelowSpentException` (409) → commit → cache invalidation best-effort (outside the tx's error scope) |
+| `DeleteBudgetUseCase`                  | Opens UoW → `findById` budget (FOR UPDATE) → validates ownership → `hasExpensesInPeriod` (no own lock; serialized by the budget lock) → deletes if there are no expenses → cache invalidation best-effort (outside the tx's error scope) |
 
 ---
 

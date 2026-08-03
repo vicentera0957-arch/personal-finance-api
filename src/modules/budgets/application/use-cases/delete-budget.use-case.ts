@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { IBudgetUnitOfWork } from '../../domain/IBudgetUnitOfWork';
 import { IBudgetsCache } from '../../domain/ports/cache/budgets-cache.port';
 import {
@@ -9,6 +9,8 @@ import { ResourceOwnershipException } from '../../../../shared/domain/exceptions
 
 @Injectable()
 export class DeleteBudgetUseCase {
+  private readonly logger = new Logger(DeleteBudgetUseCase.name);
+
   constructor(
     private readonly uow: IBudgetUnitOfWork,
     private readonly cache: IBudgetsCache,
@@ -50,10 +52,24 @@ export class DeleteBudgetUseCase {
       await budgetRepo.delete(id);
       await this.uow.commit();
 
-      await Promise.all([
-        this.cache.invalidateUser(budget.userId),
-        this.cache.invalidateById(id),
-      ]);
+      // POST-COMMIT: la transacción está cerrada y es durable. La invalidación de
+      // caché es una reacción secundaria y va en su PROPIO try/catch: si cayera al
+      // catch de abajo dispararía rollback() sobre una tx commiteada →
+      // TransactionNotStartedError, que enmascara el error real y convierte un
+      // borrado exitoso en un 500. La caché stale es tolerable (TTL 600 s,
+      // budgets-cache.impl.ts:8) y no participa de ningún invariante.
+      try {
+        await Promise.all([
+          this.cache.invalidateUser(budget.userId),
+          this.cache.invalidateById(id),
+        ]);
+      } catch (cacheError) {
+        this.logger.warn(
+          `Budget ${id} borrado y commiteado, pero falló la invalidación de caché ` +
+            `(user ${budget.userId}). Las lecturas pueden quedar stale hasta el TTL. ` +
+            `Causa: ${(cacheError as Error).message}`,
+        );
+      }
     } catch (error) {
       await this.uow.rollback();
       throw error;

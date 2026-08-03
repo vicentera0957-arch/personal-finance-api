@@ -122,7 +122,7 @@ export class TypeOrmUnitOfWorkImpl extends ITransactionUnitOfWork {
   ) {
     super();
   }
-  // uow methods — begin, commit, rollback, release, isActive
+  // uow methods — begin, commit, rollback, release, isConnected
   async begin(): Promise<void> {
     //reserves a connection
     this.queryRunner = this.dataSource.createQueryRunner();
@@ -135,7 +135,12 @@ export class TypeOrmUnitOfWorkImpl extends ITransactionUnitOfWork {
   }
 
   async rollback(): Promise<void> {
-    await this.queryRunner?.rollbackTransaction();
+    // No-op si no hay transacción abierta: un commit previo ya la cerró (typeorm
+    // pone isTransactionActive=false en commitTransaction()). Sin este guard,
+    // rollbackTransaction() lanza TransactionNotStartedError y enmascara la
+    // excepción original que llevó al catch del use case.
+    if (!this.queryRunner?.isTransactionActive) return;
+    await this.queryRunner.rollbackTransaction();
   }
 
   async release(): Promise<void> {
@@ -143,7 +148,7 @@ export class TypeOrmUnitOfWorkImpl extends ITransactionUnitOfWork {
     this.queryRunner = null;
   }
 
-  isActive(): boolean {
+  isConnected(): boolean {
     return this.queryRunner !== null;
   }
   // repository getters — return SCOPED repositories that share the same Conection/Transaction via the QueryRunner.

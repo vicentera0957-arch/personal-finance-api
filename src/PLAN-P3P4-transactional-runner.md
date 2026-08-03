@@ -20,6 +20,9 @@
 > independientes (`TypeOrmUnitOfWorkImpl`, `AccountUnitOfWorkImpl`, `BudgetUnitOfWorkImpl`,
 > `AuthUnitOfWorkImpl`), así que la conversión a runner sin estado es **module-local** — se puede
 > hacer uno por vez en vez de como big-bang, que es justamente lo que este plan esperaba habilitar.
+>
+> Nota: `isActive()` se llama `isConnected()` desde P7; todas las menciones de abajo aplican al
+> nombre nuevo.
 
 ---
 

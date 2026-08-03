@@ -17,5 +17,10 @@ export abstract class IUnitOfWork {
   abstract commit(): Promise<void>;
   abstract rollback(): Promise<void>;
   abstract release(): Promise<void>;
-  abstract isActive(): boolean;
+  /**
+   * ¿Hay una conexión reservada? True entre begin() y release(), INCLUIDO
+   * después del commit. Para saber si hay transacción abierta es
+   * `queryRunner.isTransactionActive`.
+   */
+  abstract isConnected(): boolean;
 }
