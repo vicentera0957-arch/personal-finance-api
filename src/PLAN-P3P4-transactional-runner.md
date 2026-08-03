@@ -4,8 +4,21 @@
 > Este documento no repite los enunciados: aporta **el contrato único**, su aplicación a los cuatro
 > impls, el análisis del auto-deadlock y el impacto exacto sobre los 8 use cases y sus specs.
 >
-> **Supuesto de orden: este plan va DESPUÉS de P1+P2 y DESPUÉS de P7.** La primera mitad ya se
-> cumplió — P1+P2 está implementado (ver la nota de referencias).
+> **Supuesto de orden: este plan va DESPUÉS de P1+P2 y DESPUÉS de P7. Las dos condiciones ya se
+> cumplen** — P1+P2 cerrado (ver la nota de referencias) y P7 cerrado en `0d3f3d5`. Este plan está
+> **desbloqueado**: no espera nada.
+
+> **Decisión de orden respecto de P5 (resuelta, 2026-08-02).** `PROBLEMS.md` registraba una
+> discrepancia abierta: `PLAN-P5-narrow-ports.md` §10.3 proponía ir **antes** que P3+P4, y este plan
+> asume que P5 sigue diferido. **Se resolvió a favor de este plan: P3+P4 → P5.** El argumento de P5
+> §10.3 ("que el contexto del callback nazca con los tipos definitivos") ahorra 3 renglones de firma
+> pero ignora que los 7 llamadores que P5 modifica (`PLAN-P5-narrow-ports.md` §4.2) viven en 7 de los
+> 8 use cases que **este plan reescribe enteros** (§4.1) — se reescriben exista P5 o no. P5 al final
+> toca la forma final una sola vez; P5 al principio ve casi todo su diff re-tocado. P5 §10.3 y la nota
+> de `PROBLEMS.md` deben actualizarse en el PR de este plan.
+>
+> **P6 sigue siendo indiferente a este plan**: sólo decide si `TransactionTxContext` nace con 3 o con
+> 4 recursos (§2.2). No bloquea en ninguna dirección.
 
 > **Nota de referencias.** Este plan cita `PLAN-P1P2-accounts.md` y `PLAN-P1P2-budgets.md` con
 > números de sección y de línea. Esos archivos ya no existen: el trabajo que describían está
@@ -21,8 +34,17 @@
 > `AuthUnitOfWorkImpl`), así que la conversión a runner sin estado es **module-local** — se puede
 > hacer uno por vez en vez de como big-bang, que es justamente lo que este plan esperaba habilitar.
 >
-> Nota: `isActive()` se llama `isConnected()` desde P7; todas las menciones de abajo aplican al
-> nombre nuevo.
+> Nota: `isActive()` se llama `isConnected()` desde P7. Las menciones operativas de abajo ya usan el
+> nombre nuevo; las tres que quedan con el viejo son referencias históricas deliberadas al rename.
+
+> **Pasada de drift — 2026-08-02.** Este plan se escribió cuando había **2** impls; hoy hay **4**, y
+> P7 movió líneas dentro de los use cases de budgets. Se re-verificaron contra el código y se
+> corrigieron: §1.1 (8 apariciones de `Scope.REQUEST`, no 4; las cadenas de contagio ya no cruzan
+> módulos), §1.2 (números de línea de los 8 use cases y de `isConnected()` en los 4 impls), §1.3
+> (la duplicación es un hecho medido, no una proyección), §3.3 (el guard de P7 ya está en los 4
+> impls), §6.2-§6.3 (rangos reales) y §10.1/§10.3 (P1+P2 y P7 cerrados). **Las secciones §2, §4, §5,
+> §7, §8 y §9 no se re-verificaron línea por línea** — su razonamiento no depende de los conteos,
+> pero sus citas `archivo:línea` a use cases de budgets pueden estar corridas ~20 renglones.
 
 ---
 
@@ -30,42 +52,55 @@
 
 ### 1.1 P3 — dónde vive el `Scope.REQUEST` y hasta dónde llega
 
-Sólo **cuatro** apariciones de `Scope.` en todo `src/` (verificado con `grep -rn "Scope\." src --include=*.ts`):
+**Ocho** apariciones de `Scope.REQUEST` en `src/` — dos por módulo transaccional, el decorador del impl
+y el provider (verificado con `grep -rn "Scope.REQUEST" src --include=*.ts`):
 
-| Ubicación | Qué declara |
+| Impl (decorador) | Módulo (provider) |
 | --- | --- |
-| `src/modules/transactions/infrastructure/persistence/unit-of-work.impl.ts:254` | `@Injectable({ scope: Scope.REQUEST })` sobre `TypeOrmUnitOfWorkImpl` |
-| `src/modules/transactions/transactions.module.ts:59` | `scope: Scope.REQUEST` en el provider de la clase concreta |
-| `src/modules/auth/infrastructure/persistence/auth-unit-of-work.impl.ts:60` | ídem sobre `AuthUnitOfWorkImpl` |
-| `src/modules/auth/auth.module.ts:70` | ídem en el provider |
+| `transactions/.../unit-of-work.impl.ts:113` | `transactions.module.ts:61` |
+| `budgets/.../budget-unit-of-work.impl.ts:12` | `budgets.module.ts:41` |
+| `accounts/.../account-unit-of-work.impl.ts:10` | `accounts.module.ts:49` |
+| `auth/.../auth-unit-of-work.impl.ts:60` | `auth.module.ts:70` |
 
-La causa raíz es el campo mutable: `unit-of-work.impl.ts:259` (`private queryRunner: QueryRunner | null = null`) y `auth-unit-of-work.impl.ts:62` (idéntico).
+La causa raíz es el mismo campo mutable en los cuatro:
+`private queryRunner: QueryRunner | null = null` (`unit-of-work.impl.ts:115`,
+`budget-unit-of-work.impl.ts:14`, `account-unit-of-work.impl.ts:12`, `auth-unit-of-work.impl.ts:62`).
 
-**Cadena de contagio** (NestJS propaga el scope a todo consumidor, transitivamente):
+**Cadena de contagio** (NestJS propaga el scope a todo consumidor, transitivamente). Tras P1+P2 hay
+**cuatro cadenas independientes** en vez de dos, y ninguna cruza módulos:
 
 ```
-TypeOrmUnitOfWorkImpl (REQUEST, unit-of-work.impl.ts:254)
- ├─ ITransactionUnitOfWork (useExisting, transactions.module.ts:63-66)
- │    → CreateTransactionUseCase:30, DeleteTransactionUseCase:14  → TransactionsController
- ├─ IBudgetUnitOfWork      (useExisting, transactions.module.ts:67-70)
- │    → DeleteBudgetUseCase:13, UpdateBudgetLimitUseCase:21       → BudgetsController
- └─ IAccountUnitOfWork     (useExisting, transactions.module.ts:71-74)
-      → Archive:14, Unarchive:14, Rename:15                       → AccountsController
+TypeOrmUnitOfWorkImpl (REQUEST, unit-of-work.impl.ts:113)
+ └─ ITransactionUnitOfWork (useExisting, transactions.module.ts:66-67)
+      → CreateTransactionUseCase, DeleteTransactionUseCase        → TransactionsController
+
+BudgetUnitOfWorkImpl (REQUEST, budget-unit-of-work.impl.ts:12)
+ └─ IBudgetUnitOfWork (useExisting, budgets.module.ts:43)
+      → DeleteBudgetUseCase, UpdateBudgetLimitUseCase             → BudgetsController
+
+AccountUnitOfWorkImpl (REQUEST, account-unit-of-work.impl.ts:10)
+ └─ IAccountUnitOfWork (useClass directo, accounts.module.ts:47-49)
+      → Archive, Unarchive, Rename                                → AccountsController
 
 AuthUnitOfWorkImpl (REQUEST, auth-unit-of-work.impl.ts:60)
  └─ IAuthUnitOfWork (useExisting, auth.module.ts:72)
-      → RefreshTokenUseCase:20                                    → AuthController
+      → RefreshTokenUseCase                                       → AuthController
 ```
+
+> **Detalle a no pasar por alto:** `accounts.module.ts:47-49` es el único que ya bindea el puerto
+> **directo** con `useClass` + `scope`, sin el par "clase concreta + `useExisting`". Los otros tres
+> conservan el par, que sólo era necesario cuando varios tokens compartían instancia (§6.3). Accounts
+> ya tiene la forma final; los otros tres la alcanzan en el commit 7.
 
 Controllers de dominio en el repo (7): accounts, auth, budgets, categories, reports, transactions, users
 (+ `app.controller.ts`, `health.controller.ts`, `metrics.controller.ts`). **Cuatro contagiados**
 (accounts, auth, budgets, transactions); tres limpios (categories, reports, users). Coincide con
-`PROBLEMS.md:191-198`.
+`PROBLEMS.md:122-128`.
 
 **No hay durable providers**: `grep -rn "ContextIdFactory|durable" src test` no devuelve ninguna
-ocurrencia de código (sólo prosa en `PROBLEMS.md:196,350` y en `PLAN-P7-cache-rollback.md:92,400`).
+ocurrencia de código (sólo prosa en `PROBLEMS.md:127-128`).
 
-> **No verificado:** el costo en latencia. `PROBLEMS.md:190-198` lo describe cualitativamente y es
+> **No verificado:** el costo en latencia. `PROBLEMS.md:122-128` lo describe cualitativamente y es
 > correcto en el mecanismo (Nest reconstruye el subárbol de DI por request), pero **no hay ninguna
 > medición en el repo** y este plan no la aporta. Si el argumento de venta es rendimiento, hay que
 > medirlo antes: `autocannon` sobre `GET /accounts` antes y después. El argumento sólido no es la
@@ -82,28 +117,50 @@ El mismo bloque literal en 8 use cases:
 | `archive-account.use-case.ts` | `:18` | `:32` | `:35` | `:38` |
 | `unarchive-account.use-case.ts` | `:18` | `:32` | `:35` | `:38` |
 | `rename-account.use-case.ts` | `:19` | `:33` | `:36` | `:39` |
-| `delete-budget.use-case.ts` | `:19` | `:51` | `:58` | `:61` |
-| `update-budget-limit.use-case.ts` | `:27` | `:63` | `:71` | `:74` |
+| `delete-budget.use-case.ts` | `:21` | `:53` | `:74` | `:77` |
+| `update-budget-limit.use-case.ts` | `:29` | `:65` | `:83` | `:86` |
 | `refresh-token.use-case.ts` | `:29` | `:45`, `:83` | `:87` | `:90` |
 
-`begin()` pisa el `QueryRunner` anterior sin avisar (`unit-of-work.impl.ts:270-275`,
-`auth-unit-of-work.impl.ts:71-75`): un doble `begin()` filtra la conexión anterior **permanentemente**
-(nadie la libera). `isActive()` existe (`unit-of-work.impl.ts:290-292`, `auth-unit-of-work.impl.ts:90-92`)
-y **no se usa en producción**: sus únicas apariciones fuera de los impls son mocks de specs
-(`archive/unarchive/rename-account.use-case.spec.ts:16`, `delete-budget.use-case.spec.ts:33`,
-`update-budget-limit.use-case.spec.ts:40`) y los fakes (`in-memory-unit-of-work.ts:41-43`,
-`in-memory-auth-unit-of-work.ts:36-38`).
+> Los dos de budgets se corrieron ~20 líneas al cerrarse P7: la invalidación de caché pasó a su propio
+> `try/catch` post-commit, que se intercala entre el `commit()` y el `rollback()`.
+
+`begin()` pisa el `QueryRunner` anterior sin avisar — mismo cuerpo en los cuatro impls
+(`unit-of-work.impl.ts:126`, `budget-unit-of-work.impl.ts:23`, `account-unit-of-work.impl.ts:21`,
+`auth-unit-of-work.impl.ts:71`): un doble `begin()` filtra la conexión anterior **permanentemente**
+(nadie la libera). Es el único de los cinco métodos que P7 **no** endureció.
+
+`isConnected()` existe en los cuatro impls (`unit-of-work.impl.ts:151`,
+`budget-unit-of-work.impl.ts:47`, `account-unit-of-work.impl.ts:45`, `auth-unit-of-work.impl.ts:95`)
+y **sigue sin usarse en producción**: sus únicas apariciones fuera de los impls son mocks de specs
+(`archive/unarchive/rename-account.use-case.spec.ts:16`, `delete-budget.use-case.spec.ts:40`,
+`update-budget-limit.use-case.spec.ts:47`) y los fakes (`in-memory-unit-of-work.ts:41`,
+`in-memory-auth-unit-of-work.ts:36`). P7 lo renombró desde `isActive()` y le corrigió la semántica en
+los fakes, pero no le dio ningún llamador: este plan lo borra.
 
 **El argumento fuerte de esta cirugía es P4, no P3.** Los 8 bloques son correctos hoy; el noveno es
 el riesgo, y un `release()` olvidado no se recupera hasta reiniciar el proceso.
 
-### 1.3 Los dos impls actuales son el mismo código
+### 1.3 Los cuatro impls actuales son el mismo código
 
-`unit-of-work.impl.ts:270-292` y `auth-unit-of-work.impl.ts:71-92` son **byte a byte idénticos** en
-los cinco métodos del ciclo de vida. La única diferencia entre los dos impls es qué construyen sus
-getters (`unit-of-work.impl.ts:294-317` = 4 getters; `auth-unit-of-work.impl.ts:94-99` = 1).
-Tras P1+P2 habrá **cuatro** copias de esos mismos 22 renglones. Ésa es la duplicación que el runner
-elimina de raíz.
+Ya no es una proyección: **la duplicación existe hoy, cuatro veces**. Verificado con `diff` sobre los
+bloques del ciclo de vida:
+
+| Impl | Bloque `begin`→`isConnected` | Getters |
+| --- | --- | --- |
+| `transactions/.../unit-of-work.impl.ts` | `:126-153` | `:155-169` (3) |
+| `budgets/.../budget-unit-of-work.impl.ts` | `:23-49` | `:57-64` (2) |
+| `accounts/.../account-unit-of-work.impl.ts` | `:21-47` | `:49-52` (1) |
+| `auth/.../auth-unit-of-work.impl.ts` | `:71-97` | `:99-105` (1) |
+
+Los cuatro bloques son **byte a byte idénticos** salvo un comentario suelto (`//reserves a connection`,
+`unit-of-work.impl.ts:127`) que sólo tiene la copia de transactions. Son **27 renglones replicados
+cuatro veces**, y la única diferencia real entre los cuatro impls es qué construyen sus getters.
+
+El cierre de P7 **empeoró** esta métrica de la forma más literal posible: el guard de `rollback()`
+—4 renglones de código y 4 de comentario— se escribió cuatro veces, una por impl, porque no hay
+ningún lugar donde escribirlo una sola vez. Ésa es exactamente la duplicación que el runner elimina
+de raíz, y es el mejor argumento empírico disponible a favor de este plan: la última cirugía sobre
+el ciclo de vida costó 4× lo que debería.
 
 ---
 
@@ -131,12 +188,13 @@ export abstract class IUnitOfWork<TCtx> {
 }
 ```
 
-Cinco métodos → uno. `begin`, `commit`, `rollback`, `release` e `isActive` **desaparecen del
+Cinco métodos → uno. `begin`, `commit`, `rollback`, `release` e `isConnected` **desaparecen del
 puerto**: dejan de ser vocabulario del use case y pasan a ser detalle interno del runner.
 
-> `isActive()` se borra sin reemplazo. Su única razón de ser prevista era el guard de reentrada de
-> `PROBLEMS.md:246` (`if (this.isActive()) throw` al inicio de `begin()`); sin `begin()` no hay nada
-> que guardar. La detección de reentrada se resuelve en §5, y con mejor alcance.
+> `isConnected()` se borra sin reemplazo. Su única razón de ser prevista era el guard de reentrada de
+> `PROBLEMS.md:178` (`if (this.isConnected()) throw` al inicio de `begin()`, listado ahí como
+> "endurecimiento inmediato **si se difiere**"); sin `begin()` no hay nada que guardar. La detección
+> de reentrada se resuelve en §5, y con mejor alcance.
 
 ### 2.2 Cómo se pasan los recursos escopados
 
@@ -161,7 +219,7 @@ export abstract class ITransactionUnitOfWork extends IUnitOfWork<TransactionTxCo
 Decisiones y por qué:
 
 - **Propiedades, no getters.** Hoy cada getter hace `new` en cada llamada
-  (`unit-of-work.impl.ts:294-317`); `create-transaction.use-case.ts:92,93,97` llama tres. Con el
+  (`unit-of-work.impl.ts:155-169`); `create-transaction.use-case.ts:92,93,97` llama tres. Con el
   contexto construido una vez, cada scoped se instancia exactamente una vez por transacción. Efecto
   secundario útil: si los scoped llevan guard de precondición (la factory de
   `PLAN-P1P2-budgets.md:110-122`, o el constructor de `PLAN-P1P2-accounts.md:102-115`), el guard
@@ -454,13 +512,25 @@ con probabilidad no despreciable (caída de red durante el COMMIT). Mantengo `if
 como cortocircuito barato —evita ruido de log en el camino del broadcaster— pero **la garantía la da
 el `catch`, no el flag**.
 
-Economía del cambio: hoy el endurecimiento cuesta 4 duplicaciones (una por impl tras P1/P2); bajo el
-runner cuesta **6 líneas, una sola vez**. La relación costo/beneficio se invierte a favor de aplicarlo
-aunque el camino sea estrecho.
+Economía del cambio: el endurecimiento **ya costó** 4 duplicaciones — P7 escribió el guard
+`if (!this.queryRunner?.isTransactionActive) return;` cuatro veces, una por impl
+(`unit-of-work.impl.ts:137`, `budget-unit-of-work.impl.ts:33`, `account-unit-of-work.impl.ts:31`,
+`auth-unit-of-work.impl.ts:81`), cada una con su bloque de 4 líneas de comentario. Bajo el runner
+cuesta **6 líneas, una sola vez**. La relación costo/beneficio se invierte a favor de aplicarlo aunque
+el camino sea estrecho.
 
-> **Consecuencia para la secuencia:** si P3+P4 se aplica, el punto 5.3/5.4 del plan de P7 (editar
-> `rollback()` en los dos impls) queda **absorbido** — no hay que hacerlo dos veces. Si P7 ya se
-> aplicó, esas ediciones se borran junto con el resto del ciclo de vida manual. Ver §10.
+> **Consecuencia para la secuencia (ya no hipotética):** P7 está aplicado, así que sus ediciones de
+> `rollback()` en los 4 impls **se borran** en el commit 7 junto con el resto del ciclo de vida
+> manual. No hay conflicto y no hay trabajo repetido: lo que P7 dejó es el paso intermedio correcto,
+> y su intención sobrevive mejor implementada en el `try/catch` del runner. Ver §10.
+>
+> **Qué pasa con el spec que P7 agregó.** `test/integration/concurrency/rollback-guard.integration.spec.ts`
+> prueba `begin→commit→rollback` y `begin→rollback→rollback` sobre los 4 impls con un `QueryRunner`
+> real. Ese contrato **deja de existir** cuando se borra el ciclo de vida manual: no hay `rollback()`
+> público que llamar. El spec no se "adapta" — se **reemplaza** por el equivalente sobre `run()`
+> (§7.3), que es donde vive la misma garantía. Borrarlo sin reemplazo sería perder cobertura sobre la
+> semántica de TypeORM que motivó P7; hay que decirlo explícito en el commit 7 para que nadie lo
+> interprete como "el test estorbaba".
 
 ---
 
@@ -651,8 +721,8 @@ Con esto, **las 24 aserciones de los 5 specs pasan sin tocarse**:
 - `delete-budget.use-case.spec.ts:57,58,73,74,87,102`
 - `update-budget-limit.use-case.spec.ts:63,64,74,84,97,105`
 
-Único borrado: la línea `isActive: jest.fn().mockReturnValue(true)` en los 5 mocks
-(`archive:16`, `unarchive:16`, `rename:16`, `delete-budget:33`, `update-budget-limit:40`) — el método
+Único borrado: la línea `isConnected: jest.fn().mockReturnValue(true)` en los 5 mocks
+(`archive:16`, `unarchive:16`, `rename:16`, `delete-budget:40`, `update-budget-limit:47`) — el método
 ya no existe en el puerto. Ninguna aserción la usa.
 
 **Éste es el criterio de corrección del refactor: si hay que reescribir aserciones, algo se salió de
@@ -772,23 +842,34 @@ la propagación implícita que el inventario ya rechazó.
 | `budgets/domain/IBudgetUnitOfWork.ts:5-8` | + `BudgetTxContext`; ídem |
 | `accounts/domain/IAccountUnitOfWork.ts:4-6` | + `AccountTxContext`; ídem |
 | `auth/domain/IAuthUnitOfWork.ts:9-11` | + `AuthTxContext`; ídem |
-| `transactions/.../unit-of-work.impl.ts:254-318` | `extends TypeOrmTransactionRunner<TransactionTxContext>`; borrar `:259` (campo), `:270-292` (ciclo de vida), `:294-317` (getters) → `createContext()` |
-| `auth/.../auth-unit-of-work.impl.ts:60-100` | ídem; borrar `:62`, `:71-92`, `:94-99` |
-| `accounts/.../account-unit-of-work.impl.ts` | creado por P1/P2 con el molde viejo → reescrito con el nuevo |
-| `budgets/.../budget-unit-of-work.impl.ts` | ídem |
+| `transactions/.../unit-of-work.impl.ts:113-169` | `extends TypeOrmTransactionRunner<TransactionTxContext>`; borrar `:115` (campo), `:125-153` (ciclo de vida), `:155-169` (3 getters) → `createContext()` |
+| `budgets/.../budget-unit-of-work.impl.ts:12-64` | ídem; borrar `:14`, `:23-49`, `:57-64` (2 getters) |
+| `accounts/.../account-unit-of-work.impl.ts:10-52` | ídem; borrar `:12`, `:21-47`, `:49-52` (1 getter) |
+| `auth/.../auth-unit-of-work.impl.ts:60-105` | ídem; borrar `:62`, `:71-97`, `:99-105` (1 getter) |
+
+Los cuatro bloques de ciclo de vida son idénticos (§1.3), así que las cuatro ediciones son la misma:
+**borrar 27 renglones y aportar un `createContext()`**. El impl más grande queda en ~12 líneas.
 
 ### 6.3 Módulos (4) — quitar `Scope.REQUEST`
 
 | Archivo | Cambio |
 | --- | --- |
-| `transactions.module.ts:56-60` | borrar `scope: Scope.REQUEST`; colapsar `:56-74` a `{ provide: ITransactionUnitOfWork, useClass: TypeOrmUnitOfWorkImpl }` (tras P1/P2 ya no quedan los otros dos `useExisting`) ; borrar `Scope` del import `:1` |
-| `auth.module.ts:67-72` | ídem → `{ provide: IAuthUnitOfWork, useClass: AuthUnitOfWorkImpl }`; borrar `Scope` de `:1` |
-| `accounts.module.ts` | quitar el `scope: Scope.REQUEST` que introduce `PLAN-P1P2-accounts.md:308` |
-| `budgets.module.ts` | quitar el `scope: Scope.REQUEST` que introduce `PLAN-P1P2-budgets.md:298`; el par `useClass` + `useExisting` se colapsa a un solo `useClass` |
+| `transactions.module.ts:59-67` | borrar `scope: Scope.REQUEST` (`:61`); colapsar el par a `{ provide: ITransactionUnitOfWork, useClass: TypeOrmUnitOfWorkImpl }`; borrar `Scope` del import |
+| `budgets.module.ts:39-43` | ídem → `{ provide: IBudgetUnitOfWork, useClass: BudgetUnitOfWorkImpl }` |
+| `auth.module.ts:68-72` | ídem → `{ provide: IAuthUnitOfWork, useClass: AuthUnitOfWorkImpl }` |
+| `accounts.module.ts:47-49` | **sólo** borrar `scope: Scope.REQUEST` (`:49`) y el import. Ya bindea el puerto directo con `useClass`: no hay par que colapsar |
 
-Nota: el par "clase concreta + `useExisting` al puerto" (`transactions.module.ts:56-66`,
-`auth.module.ts:67-72`) sólo era necesario para que **varios** tokens compartieran instancia. Tras
-P1/P2 cada impl sirve un único token, así que un `useClass` basta.
+Nota: el par "clase concreta + `useExisting` al puerto" sólo era necesario para que **varios** tokens
+compartieran instancia. Tras P1/P2 cada impl sirve un único token, así que un `useClass` basta — y
+`accounts` ya lo hace así, lo que sirve de referencia de la forma final para los otros tres.
+
+> **El token concreto se puede borrar — verificado, no asumido.** En `transactions`, `budgets` y
+> `auth` la clase concreta es hoy un token de DI provisto explícitamente; al colapsar el par,
+> desaparece. `transactions.module.ts:59` **afirma** en un comentario que nunca se usa directo; se
+> comprobó que es cierto para los cuatro:
+> `grep -rn "TypeOrmUnitOfWorkImpl\|BudgetUnitOfWorkImpl\|AuthUnitOfWorkImpl\|AccountUnitOfWorkImpl" src --include=*.ts`
+> devuelve sólo los propios impls, sus módulos y comentarios en prosa. **Ningún use case ni provider
+> inyecta la clase concreta.** Re-correrlo antes del commit 7 igual, por si algo entró en el medio.
 
 ### 6.4 Use cases (8) y specs (8)
 
@@ -799,11 +880,14 @@ Ver §4. Los fakes `in-memory-unit-of-work.ts:8-74` e `in-memory-auth-unit-of-wo
 | Archivo | Qué corregir |
 | --- | --- |
 | `CLAUDE.md` §"Concurrency: Unit of Work + pessimistic locks" | el snippet de `useExisting`, la tabla de puertos, "Scoped resources" (pasan a ser propiedades del contexto) |
-| `CLAUDE.md` §"Anti-patterns" | + "un use case inyecta como máximo un puerto de UoW" (§5.3); + "el store de `activeTransaction` nunca lleva recursos" |
-| `src/shared/domain/uow-decision.md:13-20` | "Level 3 — Single implementation" ya es falso hoy (2 impls) y lo será más (4). El bloque `begin() → … → commit()/rollback() en try/catch → release() en finally` (`:19`) describe la forma que este plan elimina |
-| `src/PROBLEMS.md:172-247` | marcar P3 y P4 como resueltos; actualizar la tabla `:394-402` y el orden `:404` |
-| `src/modules/transactions/notes.md:45,133`, `src/modules/accounts/notes.md`, `src/modules/budgets/notes.md` | el contrato del ciclo de vida y la mención de `isActive()` (`transactions/notes.md:133`) |
-| `docs/architecture.md`, `docs/concurrency-model.md` | los planes hermanos ya listan las líneas (`PLAN-P1P2-accounts.md:372-377`, `PLAN-P1P2-budgets.md:333-347`); se re-tocan las mismas |
+| `CLAUDE.md` §"Anti-patterns" | + "un use case inyecta como máximo un puerto de UoW" (§5.3); + "el store de `activeTransaction` nunca lleva recursos". Y **revisar el anti-patrón que agregó P7** ("no poner invalidación de caché dentro del `try` que cubre un `rollback()`"): bajo el runner ese lugar deja de existir (§3.1), así que la regla pasa de "no lo hagas" a "no podés hacerlo" — reformular, no borrar |
+| `src/shared/domain/uow-decision.md:4,13-21` | `:4` enumera el ciclo de vida (`begin, commit, rollback, release, isConnected`) → pasa a `run`. `:13` ("One implementation per transactional boundary") **ya está correcto** tras P1+P2 y sigue siéndolo; lo que cambia es que las cuatro impls dejan de duplicar el ciclo. `:30` describe el bloque `begin() → … → release() en finally` que este plan elimina |
+| `src/PROBLEMS.md` §P3 (`:103-144`) y §P4 (`:147-179`) | marcar como resueltos siguiendo el patrón de la nota de cabecera (`:10-16`); actualizar la tabla `:293-298`, el mapa `:283-288` y el orden sugerido `:300`; **cerrar la discrepancia `:306-308`** (ver la nota de orden en la cabecera de este plan) |
+| `src/modules/transactions/notes.md:45,137` | `:45` enumera el contrato del ciclo de vida; `:137` documenta `isConnected()` con su semántica — ambas desaparecen |
+| `src/shared/domain/cache-decision.md:139` | cita `abstract isConnected(): boolean` dentro de un snippet del puerto |
+| `src/modules/accounts/notes.md`, `src/modules/budgets/notes.md` | el contrato del ciclo de vida donde lo mencionen |
+| `docs/architecture.md`, `docs/concurrency-model.md` | los planes hermanos ya listaban las líneas (`PLAN-P1P2-accounts.md:372-377`, `PLAN-P1P2-budgets.md:333-347`, hoy sólo accesibles vía `git show`); se re-tocan las mismas |
+| `test/integration/concurrency/rollback-guard.integration.spec.ts` | **se reemplaza**, no se adapta (§3.3) |
 
 ---
 
@@ -991,7 +1075,7 @@ protege justo donde no hace falta).
 | --- | --- |
 | Los cuerpos de los repos escopados y sus comentarios de lock | se mueven de constructor, no de contenido |
 | El orden lock → agregado en los tres flujos (`create-transaction.use-case.ts:106→124`, `delete-budget.use-case.ts:26→33`, `update-budget-limit.use-case.ts:34→42`) | queda idéntico dentro del callback |
-| Los puertos de repositorio (`IAccountRepository`, `IBudgetRepository`, `IScopedTransactionRepository`, `IExpenseChecker`, `IRefreshTokenRepository`) | P5 sigue diferido |
+| Los puertos de repositorio (`IAccountRepository`, `IBudgetRepository`, `IScopedTransactionRepository`, `IExpenseChecker`, `IRefreshTokenRepository`) | P5 va **después** de este plan (decisión de orden, cabecera). Los contextos de §2.2 nacen con los tipos anchos de hoy; P5 los estrecha luego cambiando 3 renglones de interfaz |
 | El mapeo excepción → HTTP | ninguna excepción de dominio se agrega, quita ni envuelve |
 | Los controllers | inyectan use cases; sus constructores no cambian |
 | `test/integration/**` | salvo el archivo **nuevo** de §7.2 |
@@ -1001,23 +1085,25 @@ protege justo donde no hace falta).
 
 ## 10. Orden de commits y coordinación
 
-### 10.1 Por qué después de P1+P2
+### 10.1 Por qué después de P1+P2 — **condición ya cumplida**
 
-Los dos planes hermanos ya están commiteados (`906c494`, `bc5582d`) y uno está en ejecución
-(`accounts.module.ts` aparece modificado). Ambos instruyen copiar el ciclo de vida actual
-(`PLAN-P1P2-accounts.md:287`: *"begin/commit/rollback/release/isActive: idénticos a
-auth-unit-of-work.impl.ts:71-92"*; `PLAN-P1P2-budgets.md:276`: idéntico). Adelantar P3+P4 invalidaría
-esas instrucciones a mitad de ejecución.
+*(Sección histórica: se conserva porque explica por qué el rework era aceptable, pero la decisión ya
+se ejecutó y no hay nada que coordinar.)*
 
-**Costo de ir después:** los dos impls nuevos se reescriben apenas nacen (~30 líneas → ~12 cada uno).
-Es rework mecánico y acotado.
+Los dos planes hermanos están cerrados (accounts: `91de97b` · `b026ac8` · `19eed72`; budgets:
+`83d4c15` · `dc35dc7` · `ac40f03` · `b140cf4`). Ambos instruían **copiar** el ciclo de vida existente
+en vez de rediseñarlo, precisamente para que su diff fuera un movimiento puro y auditable. Adelantar
+P3+P4 habría invalidado esas instrucciones a mitad de ejecución.
 
-**Petición concreta a los agentes hermanos** (una línea en cada plan, no un cambio de diseño):
-*"el bloque `begin/commit/rollback/release/isActive` de este impl es transitorio: P3+P4 lo reemplaza
-por `TypeOrmTransactionRunner`. No agregar lógica ahí."* Y para el plan de accounts:
-`PLAN-P1P2-accounts.md:520-523` recomienda verificar que `release()` ponga `queryRunner = null`
-"porque P4 lo va a usar" — con este diseño **P4 no lo usa** (`isActive()` se borra); la verificación
-deja de aplicar.
+**El costo previsto se pagó y es visible hoy:** los dos impls nuevos nacieron con el molde viejo y se
+reescriben ahora (~30 líneas → ~12 cada uno). Y salió un poco más caro de lo estimado, porque P7 pasó
+en el medio y escribió su guard cuatro veces en vez de dos (§1.3, §3.3). Sigue siendo rework mecánico
+y acotado — pero conviene registrarlo como dato para la próxima decisión de este tipo: **cada ciclo
+que el ciclo de vida manual sobrevive, la siguiente cirugía sobre él cuesta una copia más.**
+
+Consecuencia que sí sigue viva: `PLAN-P1P2-accounts.md:520-523` recomendaba verificar que `release()`
+pusiera `queryRunner = null` *"porque P4 lo va a usar"*. Con este diseño **P4 no lo usa** —
+`isConnected()` se borra entero (§1.2). Esa verificación no aplica.
 
 ### 10.2 Secuencia — siempre verde, el riesgo concentrado en un commit chico
 
@@ -1032,7 +1118,7 @@ migración, de modo que cada módulo se convierta por separado.
 | **4** | `refactor(budgets): move DeleteBudget/UpdateBudgetLimit to uow.run()` | 2 use cases + 2 specs | unit + integración (`:179`, `:224`, `:448`) |
 | **5** | `refactor(transactions): move Create/DeleteTransaction to uow.run()` | 2 use cases + 2 specs + `in-memory-unit-of-work.ts` | unit + integración (`:75`, `:117`, `:293`, `:358`, `:400`) |
 | **6** | `refactor(auth): express replay detection as a committed outcome` | `refresh-token.use-case.ts` + `in-memory-auth-unit-of-work.ts`; el spec **no cambia** | unit + integración (`:490`) — **el commit de mayor riesgo** |
-| **7** | `refactor(shared): drop the manual lifecycle; UoW providers become singletons` | borrar `begin/commit/rollback/release/isActive` del puerto, de los 4 impls y de los 2 fakes; los impls pasan a `extends TypeOrmTransactionRunner`; quitar `Scope.REQUEST` de los 4 módulos; test de §7.2 | **suite completa + el test de scope de DI** |
+| **7** | `refactor(shared): drop the manual lifecycle; UoW providers become singletons` | borrar `begin/commit/rollback/release/isConnected` del puerto, de los 4 impls y de los 2 fakes; los impls pasan a `extends TypeOrmTransactionRunner`; quitar `Scope.REQUEST` de los 4 módulos; **reemplazar `rollback-guard.integration.spec.ts`** (§3.3); test de §7.2 | **suite completa + el test de scope de DI** |
 | **8** | `docs: …` | §6.5 | — |
 
 **Puntos de rollback:**
@@ -1045,13 +1131,22 @@ migración, de modo que cada módulo se convierta por separado.
 - **El 7 es el único commit con riesgo de DI**, y su diff es pequeño porque los 6 anteriores ya
   hicieron el trabajo. Si el boot falla, se revierte solo el 7 y se conserva todo P4.
 
-Esa partición es la respuesta a *"P3 == P4, una cirugía compra las dos"* (`PROBLEMS.md:391`): sí, es
+Esa partición es la respuesta a *"P3 == P4, una cirugía compra las dos"* (`PROBLEMS.md:287`): sí, es
 un solo diseño — pero se puede aterrizar en dos mitades, y la mitad que paga sola (P4) va primero.
 
-### 10.3 Coordinación con P7
+### 10.3 Coordinación con P7 — **cerrado en `0d3f3d5`**
 
-`PLAN-P7-cache-rollback.md` §5.3 y §5.4 endurecen `rollback()` en los dos impls. **Ese cambio queda
-absorbido por el commit 7** (§3.3): el ciclo de vida manual se borra entero. No hay conflicto —
-simplemente esas 6 líneas dejan de existir, y su intención sobrevive mejor implementada en el runner.
-Si P7 aún no se aplicó cuando arranque este plan, aplicarlo igual: sus dos tests unitarios siguen
-siendo válidos tras la conversión (§3.2) y su arreglo del `try` anidado es el paso intermedio correcto.
+P7 endureció `rollback()` en los **cuatro** impls (no dos, como decía este plan cuando se escribió) y
+movió la invalidación de caché a un `try/catch` post-commit en `DeleteBudget` y `UpdateBudgetLimit`.
+Nada de eso entra en conflicto con este plan; todo queda **absorbido por el commit 7**, donde el ciclo
+de vida manual se borra entero.
+
+Qué sobrevive y qué no, explícito para que el commit 7 no se lea como una regresión:
+
+| Artefacto de P7 | Destino bajo el runner |
+| --- | --- |
+| El guard `isTransactionActive` ×4 (§3.3) | **se borra**; su intención vive en el `try/catch` del runner, escrito una vez |
+| La invalidación post-commit en los 2 use cases | **sobrevive y se simplifica**: deja de necesitar el `try` anidado (§3.2) |
+| Los tests unitarios de la invalidación | **siguen válidos** y siguen fallando en rojo si alguien mete la invalidación dentro del callback |
+| `rollback-guard.integration.spec.ts` | **se reemplaza** por el equivalente sobre `run()` (§3.3, §7.3) — el contrato que prueba deja de tener superficie pública |
+| El rename `isActive()` → `isConnected()` | **se borra el método**. El rename no fue trabajo perdido: su valor real fue *diagnóstico* — reveló que los impls y los fakes habían derivado a semánticas opuestas sin que nadie lo notara, que es la evidencia de que el método no tenía llamadores y podía eliminarse |
