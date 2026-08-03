@@ -17,29 +17,24 @@ export class DeleteBudgetUseCase {
   ) {}
 
   async execute(id: string, requestUserId: string): Promise<void> {
-    // Open the transaction: grabs a dedicated connection (QueryRunner) for this request.
-    await this.uow.begin();
-    try {
-      const budgetRepo = this.uow.getScopedBudgetRepository();
-
+    // Todo lo transaccional adentro. El commit lo hace el runner al salir sin excepción.
+    const ownerId = await this.uow.run(async (ctx) => {
       // LOCK (FOR UPDATE): budget row. The lock lives inside the scoped repo's findById().
       // It is the serialization gate for the period invariant: holding it blocks concurrent
       // expense creates until this deletion commits (closes Race 1).
-      const budget = await budgetRepo.findById(id);
+      const budget = await ctx.budgets.findById(id);
       if (!budget) throw new BudgetNotFoundException(id);
       if (budget.userId !== requestUserId)
         throw new ResourceOwnershipException(id);
 
       // NO LOCK: aggregate read (Postgres forbids FOR UPDATE on COUNT). Consistent only
       // because the budget row above is locked, which serializes concurrent expense creates.
-      const hasExpenses = await this.uow
-        .getScopedExpenseChecker()
-        .hasExpensesInPeriod(
-          budget.userId,
-          budget.categoryId,
-          budget.month,
-          budget.year,
-        );
+      const hasExpenses = await ctx.expenses.hasExpensesInPeriod(
+        budget.userId,
+        budget.categoryId,
+        budget.month,
+        budget.year,
+      );
 
       if (hasExpenses) {
         throw new BudgetHasTransactionsInPeriodException(
@@ -49,32 +44,26 @@ export class DeleteBudgetUseCase {
         );
       }
 
-      await budgetRepo.delete(id);
-      await this.uow.commit();
+      await ctx.budgets.delete(id);
+      return budget.userId;
+    });
 
-      // POST-COMMIT: la transacción está cerrada y es durable. La invalidación de
-      // caché es una reacción secundaria y va en su PROPIO try/catch: si cayera al
-      // catch de abajo dispararía rollback() sobre una tx commiteada →
-      // TransactionNotStartedError, que enmascara el error real y convierte un
-      // borrado exitoso en un 500. La caché stale es tolerable (TTL 600 s,
-      // budgets-cache.impl.ts:8) y no participa de ningún invariante.
-      try {
-        await Promise.all([
-          this.cache.invalidateUser(budget.userId),
-          this.cache.invalidateById(id),
-        ]);
-      } catch (cacheError) {
-        this.logger.warn(
-          `Budget ${id} borrado y commiteado, pero falló la invalidación de caché ` +
-            `(user ${budget.userId}). Las lecturas pueden quedar stale hasta el TTL. ` +
-            `Causa: ${(cacheError as Error).message}`,
-        );
-      }
-    } catch (error) {
-      await this.uow.rollback();
-      throw error;
-    } finally {
-      await this.uow.release();
+    // POST-COMMIT por construcción: fuera de run() no hay ningún alcance de rollback.
+    // La invalidación de caché es una reacción secundaria y va en su PROPIO try/catch:
+    // si lanzara acá no hay ningún rollback que la capture y convierta un borrado
+    // exitoso en un 500. La caché stale es tolerable (TTL 600 s, budgets-cache.impl.ts:8)
+    // y no participa de ningún invariante.
+    try {
+      await Promise.all([
+        this.cache.invalidateUser(ownerId),
+        this.cache.invalidateById(id),
+      ]);
+    } catch (cacheError) {
+      this.logger.warn(
+        `Budget ${id} borrado y commiteado, pero falló la invalidación de caché ` +
+          `(user ${ownerId}). Las lecturas pueden quedar stale hasta el TTL. ` +
+          `Causa: ${(cacheError as Error).message}`,
+      );
     }
   }
 }

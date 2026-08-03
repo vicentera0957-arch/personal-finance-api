@@ -9,7 +9,10 @@ import { ResourceOwnershipException } from '../../../../shared/domain/exceptions
 import { IExpenseChecker } from '../../domain/ports/expense-checker.port';
 import { makeBudget } from '../../../../test-support/factories';
 import { NullBudgetsCache } from '../../infrastructure/cache/__fakes__/null-budgets-cache';
-import { IBudgetUnitOfWork } from '../../domain/IBudgetUnitOfWork';
+import {
+  BudgetTxContext,
+  IBudgetUnitOfWork,
+} from '../../domain/IBudgetUnitOfWork';
 
 class FakeExpenseChecker extends IExpenseChecker {
   constructor(private readonly value: boolean) {
@@ -32,17 +35,35 @@ class ExplodingBudgetsCache extends NullBudgetsCache {
 const makeMockUow = (
   budgetRepo: InMemoryBudgetRepository,
   hasExpenses: boolean,
-) => ({
-  begin: jest.fn().mockResolvedValue(undefined),
-  commit: jest.fn().mockResolvedValue(undefined),
-  rollback: jest.fn().mockResolvedValue(undefined),
-  release: jest.fn().mockResolvedValue(undefined),
-  isConnected: jest.fn().mockReturnValue(true),
-  getScopedBudgetRepository: jest.fn().mockReturnValue(budgetRepo),
-  getScopedExpenseChecker: jest
-    .fn()
-    .mockReturnValue(new FakeExpenseChecker(hasExpenses)),
-});
+) => {
+  const commit = jest.fn();
+  const rollback = jest.fn();
+  const release = jest.fn();
+  return {
+    commit,
+    rollback,
+    release,
+    // El puerto sigue declarando isConnected() durante la migración (nadie
+    // lo llama desde run(), pero el mock lo conserva para no adelantar el
+    // recorte del ciclo de vida manual, que es trabajo de un commit futuro).
+    isConnected: jest.fn().mockReturnValue(true),
+    run: jest.fn(async (work: (ctx: BudgetTxContext) => Promise<unknown>) => {
+      try {
+        const result = await work({
+          budgets: budgetRepo,
+          expenses: new FakeExpenseChecker(hasExpenses),
+        });
+        commit();
+        return result;
+      } catch (err) {
+        rollback();
+        throw err;
+      } finally {
+        release();
+      }
+    }),
+  };
+};
 
 describe('DeleteBudgetUseCase', () => {
   let repo: InMemoryBudgetRepository;

@@ -25,15 +25,12 @@ export class UpdateBudgetLimitUseCase {
   ) {}
 
   async execute(command: UpdateBudgetLimitCommand): Promise<Budget> {
-    // Open the transaction: grabs a dedicated connection (QueryRunner) for this request.
-    await this.uow.begin();
-    try {
-      const budgetRepo = this.uow.getScopedBudgetRepository();
-
+    // Todo lo transaccional adentro. El commit lo hace el runner al salir sin excepción.
+    const updated = await this.uow.run(async (ctx) => {
       // LOCK (FOR UPDATE): budget row. The lock lives inside the scoped repo's findById().
       // It is the serialization gate for the period invariant: holding it blocks concurrent
       // expense creates until this limit change commits (closes the B4 write-skew).
-      const budget = await budgetRepo.findById(command.id);
+      const budget = await ctx.budgets.findById(command.id);
       if (!budget) throw new BudgetNotFoundException(command.id);
       if (budget.userId !== command.requestUserId)
         throw new ResourceOwnershipException(command.id);
@@ -41,14 +38,12 @@ export class UpdateBudgetLimitUseCase {
       const limit = AmountLimit.create(command.limit);
       // NO LOCK: aggregate read (Postgres forbids FOR UPDATE on SUM). Consistent only
       // because the budget row above is locked, which serializes concurrent expense creates.
-      const spentInPeriod = await this.uow
-        .getScopedExpenseChecker()
-        .sumExpenseAmountInPeriod(
-          budget.userId,
-          budget.categoryId,
-          budget.month,
-          budget.year,
-        );
+      const spentInPeriod = await ctx.expenses.sumExpenseAmountInPeriod(
+        budget.userId,
+        budget.categoryId,
+        budget.month,
+        budget.year,
+      );
 
       if (limit.getValue() < spentInPeriod) {
         throw new BudgetLimitBelowSpentException(
@@ -61,29 +56,24 @@ export class UpdateBudgetLimitUseCase {
       }
       budget.updateLimit(limit);
 
-      const updated = await budgetRepo.save(budget);
-      await this.uow.commit();
+      const saved = await ctx.budgets.save(budget);
+      return saved;
+    });
 
-      // POST-COMMIT: ver el comentario equivalente en delete-budget.use-case.ts.
-      // Un fallo de Redis no puede disparar el rollback de una transacción cerrada.
-      try {
-        await Promise.all([
-          this.cache.invalidateUser(updated.userId),
-          this.cache.invalidateById(updated.id),
-        ]);
-      } catch (cacheError) {
-        this.logger.warn(
-          `Budget ${updated.id} actualizado y commiteado, pero falló la invalidación ` +
-            `de caché (user ${updated.userId}). Las lecturas pueden quedar stale hasta ` +
-            `el TTL. Causa: ${(cacheError as Error).message}`,
-        );
-      }
-      return updated;
-    } catch (error) {
-      await this.uow.rollback();
-      throw error;
-    } finally {
-      await this.uow.release();
+    // POST-COMMIT: ver el comentario equivalente en delete-budget.use-case.ts.
+    // Fuera de run() no hay ningún alcance de rollback que un fallo de Redis dispare.
+    try {
+      await Promise.all([
+        this.cache.invalidateUser(updated.userId),
+        this.cache.invalidateById(updated.id),
+      ]);
+    } catch (cacheError) {
+      this.logger.warn(
+        `Budget ${updated.id} actualizado y commiteado, pero falló la invalidación ` +
+          `de caché (user ${updated.userId}). Las lecturas pueden quedar stale hasta ` +
+          `el TTL. Causa: ${(cacheError as Error).message}`,
+      );
     }
+    return updated;
   }
 }
