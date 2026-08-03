@@ -120,49 +120,44 @@ The short answer: because the **semantic relationship is different**. UoW is spe
 
 | Shared port       | Who invokes it?                                              | Result      |
 |-------------------|--------------------------------------------------------------|-------------|
-| `IUnitOfWork`     | The **use case** (`uow.begin()`, `uow.commit()`, ...)        | Inheritance |
+| `IUnitOfWork`     | The **use case** (`uow.run(async (ctx) => ...)`)             | Inheritance |
 | `ICacheStore`     | **Only the cache impl** (`this.store.get(...)`). The use case never sees it. | Composition |
 
-The use case that receives `IBudgetUnitOfWork` **needs** to call `begin/commit/rollback`. The use case that receives `IBudgetsCache` must **not** call `get('some-raw-key')` — it must call `getListByUser(userId, options)`. The low-level API is the impl's private property.
+The use case that receives `IBudgetUnitOfWork` **needs** to call `run()` — the one method the port exposes; nothing about the transaction's lifecycle is left for the use case to orchestrate by hand (see §3.2, updated post-`PLAN-P3P4-transactional-runner.md`). The use case that receives `IBudgetsCache` must **not** call `get('some-raw-key')` — it must call `getListByUser(userId, options)`. The low-level API is the impl's private property.
 
 Inheritance **exposes**; composition **hides**. For UoW we want to expose. For cache we want to hide.
 
-### 3.2. UoW — the lifecycle IS part of the public API
+### 3.2. UoW — the transactional boundary IS part of the public API
+
+> **Updated post-`PLAN-P3P4-transactional-runner.md`.** `IUnitOfWork` used to expose the raw
+> lifecycle (`begin`/`commit`/`rollback`/`release`/`isConnected`) and the use case orchestrated it
+> by hand. It now exposes exactly one method, `run<T>()`, and the lifecycle lives entirely inside
+> `TypeOrmTransactionRunner` (`shared/infrastructure/persistence/typeorm-transaction-runner.ts`).
+> The argument below is unchanged in kind — the use case still calls the shared port's method
+> directly, which is the whole test in §3.1 — only the method changed shape.
 
 ```ts
 // shared/domain/IUnitOfWork.ts
-export abstract class IUnitOfWork {
-  abstract begin(): Promise<void>;
-  abstract commit(): Promise<void>;
-  abstract rollback(): Promise<void>;
-  abstract release(): Promise<void>;
-  abstract isConnected(): boolean;
+export abstract class IUnitOfWork<TCtx> {
+  abstract run<T>(work: (ctx: TCtx) => Promise<T>): Promise<T>;
 }
 
-// modules/budgets/domain/IBudgetUnitOfWork.ts
-export abstract class IBudgetUnitOfWork extends IUnitOfWork {
-  abstract getBudgetRepository(): IBudgetRepository;
-  abstract getScopedExpenseChecker(): IExpenseChecker;
-}
+// modules/budgets/domain/IBudgetUnitOfWork.ts — no members beyond the inherited run():
+// BudgetTxContext (the TCtx), not the port, is where ctx.budgets / ctx.expenses live.
+export abstract class IBudgetUnitOfWork extends IUnitOfWork<BudgetTxContext> {}
 ```
 
-The use case literally orchestrates the lifecycle:
+The use case calls the one method the port exposes, and reads its module-specific resources off the callback's `ctx` — it no longer orchestrates commit/rollback/release at all:
 
 ```ts
-await uow.begin();
-try {
-  const repo = uow.getBudgetRepository();   // module-specific contribution
+await uow.run(async (ctx) => {
+  const repo = ctx.budgets;   // module-specific contribution, a property now, not a getter
   // ...
-  await uow.commit();
-} catch (e) {
-  await uow.rollback();
-  throw e;
-} finally {
-  await uow.release();
-}
+});
+// commit on a clean return, rollback on a thrown error, release always — all inside run()
 ```
 
-`begin/commit/rollback` **don't change across modules**. They are universal. The only thing the module adds is typed getters to its repos. The subclass **specializes without replacing**. That is exactly what inheritance models well.
+`run()` **doesn't change across modules**. It is universal. The only thing the module adds is its `TCtx` shape (what properties `createContext()` builds) and its own `IXUnitOfWork extends IUnitOfWork<TCtx>` port. The subclass **specializes without replacing**. That is exactly what inheritance models well — the specialization moved from "which getters the port declares" to "which context type parameterizes it", but the relationship (`IBudgetUnitOfWork` "is-a" `IUnitOfWork`) is the same one being modeled.
 
 ### 3.3. Cache — the transport is NOT part of the public API
 
@@ -205,18 +200,19 @@ This is the rigorous version of the colloquial "is-a vs has-a".
 
 ### 3.5. Cardinality — UoW *can be* N:1, cache is always N:1
 
-**UoW.** The inheritance shape (`abstract class IXUnitOfWork extends IUnitOfWork`) exists precisely so that one concrete class *can* implement several module ports via `useExisting`, when those modules' flows genuinely share the same request-scoped `QueryRunner`. As of the `IBudgetUnitOfWork` split, every module-specific UoW port happens to have its own dedicated impl — the wiring below is 1:1 across the board:
+**UoW.** The inheritance shape (`abstract class IXUnitOfWork extends IUnitOfWork<TCtx>`) exists precisely so that one concrete class *can* implement several module ports via `useExisting`, when those modules' flows genuinely share the same `QueryRunner` within one `run()` call. As of the `IBudgetUnitOfWork` split, every module-specific UoW port happens to have its own dedicated impl — the wiring below is 1:1 across the board:
 
 ```ts
 // transactions.module.ts
-{ provide: TypeOrmUnitOfWorkImpl,  useClass: TypeOrmUnitOfWorkImpl, scope: Scope.REQUEST }
-{ provide: ITransactionUnitOfWork, useExisting: TypeOrmUnitOfWorkImpl }
+{ provide: ITransactionUnitOfWork, useClass: TypeOrmUnitOfWorkImpl }
 
 // budgets.module.ts / accounts.module.ts / auth.module.ts: same pattern,
 // one dedicated impl each (BudgetUnitOfWorkImpl, AccountUnitOfWorkImpl, AuthUnitOfWorkImpl)
 ```
 
-That 1:1 state is a fact about how the domain currently decomposes (every remaining transactional flow touches exactly one aggregate, except `CreateTransaction`/`DeleteTransaction`, which is why `TypeOrmUnitOfWorkImpl` itself still composes the transaction/account/budget scoped repos internally), not a constraint of the pattern. `TypeOrmUnitOfWorkImpl` used to alias both `ITransactionUnitOfWork` and `IBudgetUnitOfWork` (and, earlier still, `IAccountUnitOfWork`) via `useExisting`, precisely the N:1 shape this section is about — see CLAUDE.md's "Why `IBudgetUnitOfWork` is separate" for why that stopped being the case. If a future module's flows ever need to share a `QueryRunner` with another module's, this is still the mechanism: multiple contract inheritance models **different typed views over the same transactional resource**.
+No `Scope.REQUEST` and no `useExisting` two-step left anywhere in this graph — `PLAN-P3P4-transactional-runner.md` (P3+P4) removed the mutable `QueryRunner` field that used to force request scoping, so every impl above is a plain singleton bound directly to its port token.
+
+That 1:1 state is a fact about how the domain currently decomposes (every remaining transactional flow touches exactly one aggregate, except `CreateTransaction`/`DeleteTransaction`, which is why `TypeOrmUnitOfWorkImpl` itself still composes the transaction/account/budget scoped repos internally, inside `createContext()`), not a constraint of the pattern. `TypeOrmUnitOfWorkImpl` used to alias both `ITransactionUnitOfWork` and `IBudgetUnitOfWork` (and, earlier still, `IAccountUnitOfWork`) via `useExisting`, precisely the N:1 shape this section is about — see CLAUDE.md's "Why `IBudgetUnitOfWork` is separate" for why that stopped being the case. If a future module's flows ever need to share a `QueryRunner` with another module's, this is still the mechanism: multiple contract inheritance models **different typed views over the same transactional resource** — now expressed as different `TCtx` shapes over the same `run()` call, rather than different getters over the same instance.
 
 **Cache.** A single resource (`RedisCacheStore`) serves N semantic caches:
 
@@ -268,7 +264,7 @@ When in doubt between `extends SharedPort` and `constructor(private dep: SharedP
 - Do **not** mix keys across modules. Each module's prefix (`budgets:`, `categories:`, `users:`) is that module's property; don't build them from elsewhere.
 - Do **not** depend on the global `pf:` prefix inside the semantic caches. `RedisCacheStore` applies it; working against it breaks the invariant that only one file knows the namespacing.
 - Do **not** raise the TTL without a documented reason. Today it is 600 s in all three impls; if you change one, write the why in the commit and consider whether the others should move too.
-- Cache invalidation inside a UoW-backed use case always goes **after** `commit()`, in its own `try/catch` that only logs (`Logger.warn`). Its failure must never propagate to the caller nor trigger `rollback()` — a commit is durable; reacting to its aftermath cannot un-succeed it. See `delete-budget.use-case.ts` / `update-budget-limit.use-case.ts` and `CLAUDE.md`, "Anti-patterns" (P7).
+- Cache invalidation inside a UoW-backed use case always goes **after** `await uow.run(...)` resolves, in its own `try/catch` that only logs (`Logger.warn`). Its failure must never propagate to the caller nor trigger a rollback — a commit is durable; reacting to its aftermath cannot un-succeed it. Under the stateless runner this is no longer just a discipline: the `try` that a rollback lives in is private to `TypeOrmTransactionRunner.run()`, so there is no surface left inside it for a use case to put anything on. See `delete-budget.use-case.ts` / `update-budget-limit.use-case.ts` and `CLAUDE.md`, "Anti-patterns" (P7, reformulated after P3+P4).
 - **Do** add a cache port for a new module by replicating the template: port in `<module>/domain/ports/cache/`, impl in `<module>/infrastructure/cache/`, null object in `__fakes__/`. Binding in the module's `Module`.
 
 ---

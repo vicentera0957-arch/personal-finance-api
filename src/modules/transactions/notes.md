@@ -42,17 +42,19 @@ Abstract class (required for DI in NestJS). Methods:
 
 **File:** `domain/ITransactionUnitOfWork.ts`
 
-Abstract class that **extends `IUnitOfWork`** (`shared/domain`). The lifecycle contract (`begin`, `commit`, `rollback`, `release`, `isConnected`) is cross-cutting, inherited from that abstraction and documented there — **it is not re-documented here**.
+Abstract class that **extends `IUnitOfWork<TransactionTxContext>`** (`shared/domain`). The contract (`run<T>(work)` — that is the only method) is cross-cutting, inherited from that abstraction and documented there — **it is not re-documented here**. `ITransactionUnitOfWork` itself declares no members beyond the inherited `run()`.
 
-What this port **adds** are the getters for the repositories that `CreateTransactionUseCase` and `DeleteTransactionUseCase` need to coordinate writes across the three aggregates within a single transaction:
+What this port's `TCtx` (`TransactionTxContext`) **adds** are the properties `CreateTransactionUseCase` and `DeleteTransactionUseCase` read off the callback to coordinate writes across the three aggregates within a single transaction:
 
-- `getScopedTransactionRepository()` → scoped `IScopedTransactionRepository`
-- `getScopedAccountRepository()` → scoped `IAccountRepository`
-- `getScopedBudgetRepository()` → scoped `IBudgetRepository`
+- `ctx.transactions` → scoped `IScopedTransactionRepository`
+- `ctx.accounts` → scoped `IAccountRepository`
+- `ctx.budgets` → scoped `IBudgetRepository`
+
+These used to be getter methods on the UoW instance (`getScopedTransactionRepository()`, etc.); since `PLAN-P3P4-transactional-runner.md`, they are properties of the object `run()`'s callback receives, built once per call inside `createContext()`.
 
 The three scoped repos share the active `QueryRunner`'s `EntityManager`, so every read/write runs in the same PostgreSQL transaction. By construction (they are only obtained via the UoW, already inside an open tx) their by-id reads take `FOR UPDATE` — see the *Architectural decision — locks in scoped repos* section below.
 
-> The base `IUnitOfWork` port is not documented in this module: it lives in `shared/domain` and is also consumed by `IBudgetUnitOfWork`, `IAccountUnitOfWork` and `IAuthUnitOfWork`. Documenting its lifecycle here would duplicate the abstraction's contract.
+> The base `IUnitOfWork` port is not documented in this module: it lives in `shared/domain` and is also consumed by `IBudgetUnitOfWork`, `IAccountUnitOfWork` and `IAuthUnitOfWork`. Documenting its contract here would duplicate the abstraction.
 
 ---
 
@@ -66,21 +68,20 @@ The three scoped repos share the active `QueryRunner`'s `EntityManager`, so ever
 3. Validates the category exists, belongs to the user, and its nature matches the transaction's (R7)
 4. If it is an expense: validates a budget exists for the period (fails fast without opening the transaction). The category must be `expense`; "budgetability" is **derived from `nature`**, not from an `isBudgetable` flag (that flag was removed).
 
-**Flow inside the UoW:**
-1. `uow.begin()` — opens the `QueryRunner`, starts the PG transaction
-2. `budgetRepo.findByUserIdAndCategoryIdAndPeriod(...)` (scoped repo, implicit `FOR UPDATE`) — **the invariant's gate**: locks the period's budget row before reading any data that feeds the decision. It is the only object that always exists and that every concurrent writer of the period goes through.
-3. `txRepo.sumExpenseAmountByUserCategoryAndPeriod(...)` (no own lock) — runs post-gate, so under `READ COMMITTED` it sees prior commits. Consistency comes from the budget lock, not from a `FOR UPDATE` over the range (which doesn't prevent phantoms).
-4. `UpdateAccountBalanceUseCase(acctRepo).execute(...)` — updates the balance using the scoped repository (implicit pessimistic lock in `findById`)
-5. `txRepo.save(transaction)` — persists the transaction
-6. `uow.commit()` / `uow.rollback()` in `finally`
+**Flow inside the UoW:** everything below runs inside `uow.run(async (ctx) => { ... })`. `run()` opens the `QueryRunner` and starts the PG transaction before invoking the callback, commits on a clean return, rolls back on a thrown error, and always releases — there is no `begin()`/`commit()`/`rollback()` call in the use case itself.
+1. `ctx.budgets.findByUserIdAndCategoryIdAndPeriod(...)` (scoped repo, implicit `FOR UPDATE`) — **the invariant's gate**: locks the period's budget row before reading any data that feeds the decision. It is the only object that always exists and that every concurrent writer of the period goes through.
+2. `ctx.transactions.sumExpenseAmountByUserCategoryAndPeriod(...)` (no own lock) — runs post-gate, so under `READ COMMITTED` it sees prior commits. Consistency comes from the budget lock, not from a `FOR UPDATE` over the range (which doesn't prevent phantoms).
+3. `UpdateAccountBalanceUseCase(ctx.accounts).execute(...)` — updates the balance using the scoped repository (implicit pessimistic lock in `findById`)
+4. `ctx.transactions.save(transaction)` — persists the transaction
+5. Return the saved transaction — `run()` commits and releases on the way out; nothing left for the use case to call.
 
 ### `DeleteTransactionUseCase`
 
-Similar to create but in reverse:
+Similar to create but in reverse, inside the same `uow.run(async (ctx) => { ... })` shape:
 1. Retrieves the transaction and the account
 2. Verifies the owner matches
-3. `uow.begin()` — balance revert + transaction delete in the same `QueryRunner`
-4. If reverting an income would leave the balance negative → `CannotDeleteTransactionException`
+3. Balance revert + transaction delete in the same callback, on the same `QueryRunner`
+4. If reverting an income would leave the balance negative, `UpdateAccountBalanceUseCase` throws `InsufficientFundsException` — `run()` rolls back and re-throws it as-is (never wraps). The use case catches it **outside** `run()` and translates it to `CannotDeleteTransactionException`; the rollback has already happened by the time that `catch` runs, so the translation is a decision about which exception to surface, not about the transaction's outcome.
 
 ### Read use cases
 
@@ -118,37 +119,39 @@ The third one covers the `sumExpenseAmountByUserCategoryAndPeriod` that runs on 
 
 > The **pattern** (why an impl can satisfy several ports via `useExisting`, why the ports are `abstract class`, why they are counted per *atomic operation* and not per module) lives in [shared/domain/uow-decision.md](../../shared/domain/uow-decision.md) and in CLAUDE.md. This section documents only the **concrete mechanics** of this class — to avoid duplicating the "why" and having it drift again.
 
-A concrete class that satisfies **one** module port today: `ITransactionUnitOfWork` (extends it). Scope: `REQUEST` — NestJS creates a new instance per request, so each request has its own isolated `QueryRunner`.
+A concrete class that satisfies **one** module port today: `ITransactionUnitOfWork`. Since `PLAN-P3P4-transactional-runner.md` it `extends TypeOrmTransactionRunner<TransactionTxContext>` (`shared/infrastructure/persistence/typeorm-transaction-runner.ts`) and separately `implements ITransactionUnitOfWork` — valid because that port declares no members beyond the inherited `run()`. No `Scope.REQUEST`: this class has no `QueryRunner` field, so NestJS provides it as a plain singleton (`{ provide: ITransactionUnitOfWork, useClass: TypeOrmUnitOfWorkImpl }`, no `scope` at all).
 
-It used to also `implement IBudgetUnitOfWork`, aliased via `useExisting` to the same request-scoped instance so `UpdateBudgetLimitUseCase` / `DeleteBudgetUseCase` shared this class's `QueryRunner` whenever they ran in the same request (which they never actually needed to — `CreateTransactionUseCase` is the only flow that genuinely needs a multi-aggregate `QueryRunner`). `IAccountUnitOfWork` was a third alias here before that. Both moved out the same way: `accounts` now owns `AccountUnitOfWorkImpl`, `budgets` now owns `BudgetUnitOfWorkImpl` — neither's use cases ever needed a `QueryRunner` shared with this class, and serving them from here forced their modules to import `TransactionsModule` (via `forwardRef()`, in the budgets case) just to resolve a token this class's own use cases never inject. Note what `useExisting` actually buys — a shared `QueryRunner` **within one request**, which only `CreateTransactionUseCase` needs. Between requests it buys nothing, because `Scope.REQUEST` already yields one instance per request; what serializes concurrent requests is the Postgres row lock.
+It used to also `implement IBudgetUnitOfWork`, aliased via `useExisting` to the same request-scoped instance so `UpdateBudgetLimitUseCase` / `DeleteBudgetUseCase` shared this class's `QueryRunner` whenever they ran in the same request (which they never actually needed to — `CreateTransactionUseCase` is the only flow that genuinely needs a multi-aggregate `QueryRunner`). `IAccountUnitOfWork` was a third alias here before that. Both moved out the same way: `accounts` now owns `AccountUnitOfWorkImpl`, `budgets` now owns `BudgetUnitOfWorkImpl` — neither's use cases ever needed a `QueryRunner` shared with this class, and serving them from here forced their modules to import `TransactionsModule` (via `forwardRef()`, in the budgets case) just to resolve a token this class's own use cases never inject. Note what `useExisting` actually bought, back when `Scope.REQUEST` still existed — a shared `QueryRunner` **within one request**, which only `CreateTransactionUseCase` needed. Between requests it bought nothing, because `Scope.REQUEST` already yielded one instance per request; what serializes concurrent requests is the Postgres row lock, same as today.
 
-This class still exposes `getScopedBudgetRepository()` — `CreateTransactionUseCase` locks the budget row before summing period expenses — but that getter goes through `createScopedBudgetRepository()`, the same factory `BudgetUnitOfWorkImpl` calls on its own `QueryRunner`. Two independent consumers, two independent transactions, same lock semantics; see `budgets/notes.md` → "Why `budgets` does not depend on `transactions`".
+This class still builds a scoped budget repo — `CreateTransactionUseCase` locks the budget row before summing period expenses — exposed as `ctx.budgets` (a property, not a getter, since the run() migration). It goes through `createScopedBudgetRepository()`, the same factory `BudgetUnitOfWorkImpl` calls on its own `QueryRunner`. Two independent consumers, two independent transactions, same lock semantics; see `budgets/notes.md` → "Why `budgets` does not depend on `transactions`".
 
-#### State and lifecycle
+#### Lifecycle: `createContext()` is the only thing this class writes
 
-The class keeps a single mutable field: `queryRunner: QueryRunner | null` (starts at `null`). The five methods inherited from `IUnitOfWork` operate on it:
+There is no mutable `queryRunner` field anymore, and no `begin`/`commit`/`rollback`/`release`/`isConnected` methods to implement — those lived on `IUnitOfWork` only during the P3+P4 migration and are gone now. `TypeOrmTransactionRunner<TransactionTxContext>` (the shared base class) owns the entire lifecycle in one `run()` method: create a `QueryRunner` from the injected `DataSource`, `connect()`, `startTransaction()`, call this class's `createContext(queryRunner)` exactly once, invoke the callback with the result, commit on a clean return, roll back on a thrown error (never masking it), and always release in a `finally`. It also wraps the context in a `Proxy` that throws if touched after `run()` returns, and detects same-chain nested `run()` calls via `AsyncLocalStorage` before opening a second `QueryRunner`.
 
-| Method | What it does |
-|--------|----------|
-| `begin()` | `dataSource.createQueryRunner()` → `connect()` → `startTransaction()`. From here on there is a dedicated connection with an open PG transaction. |
-| `commit()` | `queryRunner?.commitTransaction()` — confirms everything written in the tx. |
-| `rollback()` | `queryRunner?.rollbackTransaction()` — discards everything. |
-| `release()` | `queryRunner?.release()` and sets `queryRunner` back to `null` — **returns the connection to the pool**. Always goes in the use case's `finally`; omitting it leaks connections. |
-| `isConnected()` | `queryRunner !== null` — true between `begin()` and `release()` — incluido después del commit. |
+This class's entire contribution is:
 
-The optional chaining (`?.`) in commit/rollback/release makes calling them without an open tx a no-op instead of a crash.
+```ts
+protected createContext(queryRunner: QueryRunner): TransactionTxContext {
+  return {
+    transactions: new ScopedTransactionRepository(queryRunner.manager, this.transactionMapper),
+    accounts: createScopedAccountRepository(queryRunner, this.accountMapper),
+    budgets: createScopedBudgetRepository(queryRunner, this.budgetMapper),
+  };
+}
+```
 
 #### The three scoped resources
 
-Three getters build the scoped repos, all on `this.queryRunner!.manager` (the active runner's `EntityManager`):
+`createContext()` builds the three scoped repos, all on `queryRunner.manager` (the active runner's `EntityManager`), and exposes them as read-only properties of `TransactionTxContext` — what used to be three getter method calls are now three property reads on `ctx`:
 
-- `getScopedTransactionRepository()` → `ScopedTransactionRepository`
-- `getScopedAccountRepository()` → `ScopedAccountRepository`, built by `createScopedAccountRepository()` from `accounts/infrastructure/persistence/scoped-account.repository.ts`
-- `getScopedBudgetRepository()` → `ScopedBudgetRepository`, built by `createScopedBudgetRepository()` from `budgets/infrastructure/persistence/scoped-budget.repository.ts`
+- `ctx.transactions` → `ScopedTransactionRepository`
+- `ctx.accounts` → `ScopedAccountRepository`, built by `createScopedAccountRepository()` from `accounts/infrastructure/persistence/scoped-account.repository.ts`
+- `ctx.budgets` → `ScopedBudgetRepository`, built by `createScopedBudgetRepository()` from `budgets/infrastructure/persistence/scoped-budget.repository.ts`
 
-(There used to be a fourth, `getScopedExpenseChecker()` → `ScopedExpenseChecker`. It moved to `budgets` along with `IBudgetUnitOfWork` — its only consumers, `DeleteBudgetUseCase` and `UpdateBudgetLimitUseCase`, live there, so keeping it here was serving a port this module no longer implements.)
+(There used to be a fourth, `ctx.expenses` / `getScopedExpenseChecker()` → `ScopedExpenseChecker`. It moved to `budgets` along with `IBudgetUnitOfWork` — its only consumers, `DeleteBudgetUseCase` and `UpdateBudgetLimitUseCase`, live there, so keeping it here was serving a port this module no longer implements.)
 
-`ScopedTransactionRepository` is **private to this file** (not exported). The only way to obtain it is through the UoW, and that only makes sense after `begin()`. That guarantee is what justifies the `!` (non-null assertion) on `queryRunner` in the getters: by contract it is never called with the runner at `null`. Since all scoped repos share the same `manager`, every read and write lands in the same PostgreSQL transaction.
+`ScopedTransactionRepository` is **private to this file** (not exported). The only way to obtain it is through `createContext()`, which only ever runs with an active transaction — `TypeOrmTransactionRunner.run()` guarantees that by construction, so there is no `!` non-null assertion to justify anymore (there was one, on the old `queryRunner` field, before this class stopped holding a field at all). Since all scoped repos share the same `manager`, every read and write lands in the same PostgreSQL transaction.
 
 `ScopedAccountRepository` and `ScopedBudgetRepository` are the exceptions, and deliberately so: `accounts` and `budgets` each also need their own scoped repo for their own single-aggregate UoW (`AccountUnitOfWorkImpl`, `BudgetUnitOfWorkImpl`), so both classes live in their owning module's infrastructure — next to the aggregate whose invariant their `FOR UPDATE` protects — and are still unexported there. Every pair of UoWs that needs one reaches it through the same factory, each passing its own `QueryRunner`. The factory takes a `QueryRunner` rather than an `EntityManager` precisely so that `dataSource.manager` fails to compile; it also throws if the runner has no active transaction. Same guarantee as the private class, enforced by types instead of by file scope.
 

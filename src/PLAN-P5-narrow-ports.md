@@ -649,17 +649,35 @@ Si P6 aterriza (`PLAN-P1P2-budgets.md` §5.3), `IScopedTransactionRepository` pi
 P5 antes que P6 significa estrechar un puerto que P6 va a volver a tocar.
 **Recomendación: P6 antes que P5.** Coincide con `PROBLEMS.md:404`.
 
-### 10.3 Relación con P3/P4 — **desvío propuesto respecto de `PROBLEMS.md:404`**
+### 10.3 Relación con P3/P4 — **resuelto: se ejecutó `PROBLEMS.md`, no el desvío propuesto acá**
 
-`PROBLEMS.md:404` sugiere `P7 → P1+P2 → P6 → P3+P4 → P5`, con P5 al final por ser "endurecimiento"
-independiente. No hay dependencia técnica en ninguna dirección. Pero P3/P4 reescribe la **forma** del
-UoW (de `begin/commit/release` a un runner por callback, `PROBLEMS.md:203-206`): el contexto que ese
-callback recibe va a cargar los repos scoped. Es preferible que nazca ya con los tipos definitivos, en
-lugar de nacer con los anchos y estrecharse después.
+`PROBLEMS.md:404` (ahora reescrito tras el cierre de P3+P4 — ver su "Mapa de dependencias entre
+problemas") sugería `P7 → P1+P2 → P6 → P3+P4 → P5`, con P5 al final por ser "endurecimiento"
+independiente. Esta sección proponía el desvío contrario, `P7 → P1+P2 → P6 → P5 → P3+P4`, con el
+argumento de que P3/P4 reescribe la **forma** del UoW (de `begin/commit/release` a un runner por
+callback) y que el contexto que ese callback recibe convenía que naciera ya con los tipos
+definitivos, en vez de nacer ancho y estrecharse después.
 
-**Orden recomendado: P7 → P1+P2 → P6 → P5 → P3+P4.** El desvío es deliberado y su único argumento es
-"no escribir dos veces la misma firma"; si el equipo prefiere respetar `PROBLEMS.md:404`, P5 igual
-funciona al final, con más churn.
+**Lo que pasó:** se ejecutó el orden de `PROBLEMS.md`, no el desvío de acá — `P3+P4` cerró primero
+(`PLAN-P3P4-transactional-runner.md`, commits 1-8, rama `refactor/p4-transactional-runner`), y P5
+sigue pendiente. El argumento de este §10.3 no era técnicamente incorrecto (evitar escribir la firma
+angosta dos veces sigue siendo una ventaja real), pero P3+P4 era la mitad del problema que **paga
+sola** (cierra P4 — seguridad del ciclo de vida — sin esperar a nada más) y se priorizó por eso, no
+por desacuerdo con este análisis.
+
+**Consecuencia concreta para quien retome P5 ahora:** los puntos donde este plan angostaría el
+puerto ya no son los getters `getScopedAccountRepository()` / `getScopedBudgetRepository()` que el
+resto de este documento describe (§3, §4, §6) — son las propiedades `ctx.accounts` / `ctx.budgets`
+que `TransactionTxContext` expone y que cada impl construye dentro de `createContext()`. El punto de
+entrada real **no se movió**: sigue siendo el tipo de retorno de `createScopedAccountRepository` /
+`createScopedBudgetRepository` (§5), y sigue siendo cierto que estrechar ahí angosta automáticamente
+lo que `ctx.accounts` / `ctx.budgets` exponen, sin tocar el resto del árbol de llamadas. Lo que sí
+cambia es todo lo que este plan describe como "7 llamadores, 7 archivos" (§4.2) y los ejemplos de
+código en §3 y §6: donde decían `this.uow.getScopedAccountRepository()`, el llamador de hoy dice
+`ctx.accounts`, dentro de un callback `uow.run(async (ctx) => { ... })`. Cualquiera que ejecute este
+plan debe releerlo contra el código post-runner, no contra los fragmentos citados aquí — quedaron
+escritos contra el estado pre-P3+P4 y no se reescribieron línea por línea porque P5 sigue sin
+ejecutarse.
 
 ---
 

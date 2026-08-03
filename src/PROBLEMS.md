@@ -7,13 +7,20 @@
 > Esto **no** es un plan de ejecución. Es el mapa de qué problema específico se está resolviendo
 > con cada movimiento, para no confundir causas con síntomas.
 >
-> **P1, P2 y P7 están cerrados** y se eliminaron de este inventario. P1 y P2 rompían los dos ciclos
-> de módulos dando a `accounts` y a `budgets` su propio UoW; el resultado vive en el código y en la
-> sección de concurrencia de `CLAUDE.md`. P7 (la invalidación de caché disparando un `rollback()`
-> sobre una transacción ya commiteada) se cerró con `PLAN-P7-cache-rollback.md`: la invalidación
-> ahora corre en su propio `try/catch` post-commit (ver `CLAUDE.md`, "Anti-patterns"), y `rollback()`
-> es no-op sobre una transacción ya cerrada en los cuatro impls de UoW. Los problemas que quedan son
-> internos al UoW o al ciclo de vida transaccional — ninguno es de composición entre módulos.
+> **P1, P2, P3, P4 y P7 están cerrados** y se eliminaron de este inventario. P1 y P2 rompían los dos
+> ciclos de módulos dando a `accounts` y a `budgets` su propio UoW; el resultado vive en el código y
+> en la sección de concurrencia de `CLAUDE.md`. P7 (la invalidación de caché disparando un
+> `rollback()` sobre una transacción ya commiteada) se cerró con `PLAN-P7-cache-rollback.md`: la
+> invalidación ahora corre en su propio `try/catch` post-commit (ver `CLAUDE.md`, "Anti-patterns").
+> P3 y P4 se cerraron juntos, con la misma cirugía prevista más abajo (ver `Mapa de dependencias`),
+> vía `PLAN-P3P4-transactional-runner.md`: el UoW pasó de máquina de estado (`begin`/`commit`/
+> `rollback`/`release`/`isConnected`, campo `QueryRunner` mutable, `Scope.REQUEST`) a runner sin
+> estado (`run<T>(work)`, `TypeOrmTransactionRunner`, `QueryRunner` en el stack de la llamada). Los
+> 4 impls son singletons; ya no hay ningún provider `Scope.REQUEST` en el grafo, y los 7 controllers
+> de dominio se resuelven una sola vez por proceso (`test/integration/di-scope.integration.spec.ts`
+> lo prueba, no sólo lo asume). El resultado vive en el código y en la sección de concurrencia de
+> `CLAUDE.md`. Los problemas que quedan (P5, P6) son internos a la forma del puerto o una
+> duplicación de query — ninguno es de composición entre módulos ni de ciclo de vida transaccional.
 
 ---
 
@@ -35,16 +42,22 @@ problemas de abajo propone tocarla.
 
 ### 2. Lo que serializa entre requests es el row lock, no la instancia compartida
 
-`Scope.REQUEST` significa **una instancia por request**. Por lo tanto, hoy mismo, un
-`PATCH /accounts/:id/archive` y un `POST /transactions` concurrentes ya tienen instancias de UoW,
-`QueryRunner`s, conexiones y transacciones de DB **distintas**. Lo único que los serializa sobre la
-misma fila de cuenta es el `FOR UPDATE` de Postgres.
+> Punto escrito cuando `Scope.REQUEST` todavía existía (motivó cerrar P1/P2 sin miedo a debilitar
+> concurrencia). P3 eliminó `Scope.REQUEST` del todo — hoy los 4 impls son singletons y cada
+> `run()` abre su propio `QueryRunner` desde el stack de la llamada. La conclusión de este punto
+> sigue siendo válida, sólo cambió el mecanismo: ver "Por qué el impl vive en `transactions/`" en
+> `CLAUDE.md` para la versión vigente del argumento.
 
-El `useExisting` compartido solo garantiza que, **dentro de un mismo request**, los repos scoped
-compartan `QueryRunner`. Eso es obligatorio para `CreateTransaction` (necesita los tres repos en una
-transacción) e irrelevante para todos los demás flujos.
+`Scope.REQUEST` significaba **una instancia por request**. Por lo tanto, en ese momento, un
+`PATCH /accounts/:id/archive` y un `POST /transactions` concurrentes ya tenían instancias de UoW,
+`QueryRunner`s, conexiones y transacciones de DB **distintas**. Lo único que los serializaba sobre la
+misma fila de cuenta era el `FOR UPDATE` de Postgres.
 
-Consecuencia: partir el UoW en varias implementaciones **no puede debilitar ninguna garantía de
+El `useExisting` compartido sólo garantizaba que, **dentro de un mismo request**, los repos scoped
+compartieran `QueryRunner`. Eso era obligatorio para `CreateTransaction` (necesita los tres repos en
+una transacción) e irrelevante para todos los demás flujos.
+
+Consecuencia: partir el UoW en varias implementaciones **no podía debilitar ninguna garantía de
 concurrencia**, porque entre requests nunca estuvo compartido.
 
 ### 3. Cada módulo con frontera transaccional propia es dueño de su UoW
@@ -93,91 +106,17 @@ son internos al UoW (su forma, su ciclo de vida, la amplitud de sus puertos) o a
 3. Con P1 y P2 ya cerrados, P3 se puede resolver módulo por módulo en vez de como big-bang: cada
    UoW es ahora una unidad independiente que se puede convertir en runner sin estado por separado.
 
-**Cuándo diferirlo es legítimo:** si el foco está en entregar features — los cuatro que quedan son
+**Cuándo diferirlo es legítimo:** si el foco está en entregar features — los que quedan son
 endurecimiento estructural, no defectos de comportamiento (ese, P7, ya está cerrado).
 
 ---
 
 # Los problemas
 
-## P3 — UoW como objeto con estado → contagio de `Scope.REQUEST`
-
-**Enunciado:** el UoW guarda el `QueryRunner` en un campo mutable, lo que obliga a `Scope.REQUEST`,
-que burbujea hasta los controllers.
-
-**Evidencia:** `unit-of-work.impl.ts:254` (`@Injectable({ scope: Scope.REQUEST })`) y `:259`
-(`private queryRunner: QueryRunner | null`). Lo mismo en `auth-unit-of-work.impl.ts:60,62` y
-`auth.module.ts:70`.
-
-```
-TypeOrmUnitOfWorkImpl (REQUEST)
-  → IAccountUnitOfWork  → Archive/Unarchive/Rename      → AccountsController     (REQUEST)
-  → IBudgetUnitOfWork   → DeleteBudget/UpdateBudgetLimit → BudgetsController      (REQUEST)
-  → ITransactionUnitOfWork → Create/DeleteTransaction    → TransactionsController (REQUEST)
-
-AuthUnitOfWorkImpl (REQUEST)
-  → IAuthUnitOfWork     → RefreshToken                   → AuthController         (REQUEST)
-```
-
-**Costo real — el único con impacto de runtime medible.** De los 7 controllers de dominio, **4 se
-instancian por request**: auth, accounts, budgets, transactions. Quedan limpios users, categories y
-reports. Un `GET /accounts` o un `POST /auth/login` —operaciones que jamás abren una transacción—
-pagan la resolución del árbol de DI en cada llamada, solo porque comparten controller con un endpoint
-que sí la abre. La granularidad del scope es el controller; la necesidad real son 8 use cases de
-escritura. No hay *durable providers* configurados (no aparece `ContextIdFactory` ni `durable` en
-todo `src/`).
-
-**Independencia: total respecto del ciclo.** No lo causa y no lo arregla. Es el error de atribución
-más fácil de cometer acá — no mezclar los argumentos.
-
-**Propuesta:** convertir el UoW en un runner sin estado: `run(work => …)` que abre la transacción,
-entrega un contexto con los repos scoped, y hace commit o rollback según si el callback lanzó. Si el
-`QueryRunner` vive en el stack de la llamada en vez de en un campo, el provider es stateless y puede
-ser singleton.
-
-**Secuencia:** esto ya es incremental. Con cada módulo dueño de su UoW, convertir uno en runner sin
-estado es trabajo module-local; antes habría sido un big-bang sobre una clase de la que dependían
-tres módulos.
-
-**Prueba de que funcionó:** ningún provider con `Scope.REQUEST` en el grafo; los 4 controllers
-vuelven a instanciarse una sola vez.
-
----
-
-## P4 — Ciclo de vida transaccional manual, replicado 8 veces, sin guarda de reentrada
-
-**Enunciado:** cada use case transaccional repite a mano
-`begin` / `try` / `commit` / `catch` / `rollback` / `finally` / `release`, y `begin()` no verifica si
-ya hay una transacción activa.
-
-**Evidencia:** el mismo bloque en `CreateTransaction`, `DeleteTransaction`, `Archive`, `Unarchive`,
-`Rename`, `DeleteBudget`, `UpdateBudgetLimit`, `RefreshToken`. Y:
-
-```ts
-async begin(): Promise<void> {
-  this.queryRunner = this.dataSource.createQueryRunner();  // pisa el anterior sin avisar
-  await this.queryRunner.connect();
-  await this.queryRunner.startTransaction();
-}
-```
-
-`isConnected()` existe en ambos impls y **no se usa en ningún lado**.
-
-**Costo real:** la corrección depende de copiar bien el patrón. Un `release()` olvidado filtra una
-conexión del pool **de forma permanente** — no se recupera hasta reiniciar el proceso. Los 8 están
-correctos hoy; el noveno es el riesgo. Un doble `begin()` filtra el `QueryRunner` anterior sin
-ninguna señal.
-
-**Por qué es distinto de P3:** P3 es sobre el *scope de DI*; P4 es sobre la *seguridad del ciclo de
-vida*.
-
-**Propuesta:** el mismo runner por callback de P3. Hace estructuralmente imposible olvidar el
-`release()` y elimina la reentrada. **Una sola cirugía compra P3 y P4** — ése es el mejor argumento
-a favor de hacerla.
-
-**Endurecimiento inmediato si se difiere:** `if (this.isConnected()) throw` al inicio de `begin()`.
-
----
+> **P3 y P4 se cerraron juntos** (ver la nota de cabecera). Quedan como referencia histórica en
+> `src/PLAN-P3P4-transactional-runner.md` — enunciado, evidencia, costo y la propuesta que terminó
+> implementándose. Sus secciones dedicadas se retiraron de este inventario, siguiendo el mismo
+> patrón que P1, P2 y P7.
 
 ## P5 — Puerto transaccional sobre-expuesto
 
@@ -276,6 +215,15 @@ Resolvería P3, P4 y P5 de raíz, pero volviendo implícito el mecanismo más de
 En una base cuyo activo documental principal es el mapa explícito de locks y serialización, cambiar
 explícito por implícito es un retroceso de legibilidad. Y no resuelve el ownership: lo esconde.
 
+> **Matiz post-cierre de P3+P4:** el runner que cerró P3 y P4 sí usa `AsyncLocalStorage`
+> (`activeTransaction`, `shared/infrastructure/persistence/active-transaction.storage.ts`) — pero no
+> para esto. Lo rechazado acá es usar el ALS **para propagar** el contexto transaccional (que un
+> caller reciba un `EntityManager`/`QueryRunner` de forma ambiental, sin un parámetro explícito). Lo
+> que el runner hace es distinto: el ALS lleva sólo `{ owner: string }` y su único efecto es detectar
+> un `run()` anidado en la misma cadena async y lanzar antes de abrir un segundo `QueryRunner`. El
+> contexto transaccional (`ctx`) sigue viajando exclusivamente como parámetro explícito del callback
+> de `run()`. Ver CLAUDE.md, "Anti-patterns", para la distinción completa.
+
 ---
 
 # Mapa de dependencias entre problemas
@@ -283,28 +231,34 @@ explícito por implícito es un retroceso de legibilidad. Y no resuelve el owner
 ```
 P6  ────────────────────────────  independiente
 P5  ────────────────────────────  independiente
-
-P3 ══ P4       misma solución: una cirugía compra las dos
 ```
 
-Los tres restantes son mutuamente independientes salvo P3 ══ P4. Cerrar P1 y P2 dejó cada UoW
-como una unidad separada, así que P3 + P4 se puede hacer módulo por módulo en vez de como big-bang.
+P3 y P4 (que eran mutuamente dependientes — "misma solución: una cirugía compra las dos") ya
+cerraron. Los dos que quedan, P5 y P6, son mutuamente independientes y no dependen de nada más.
 
 | Problema | Costo | Riesgo | Naturaleza |
 | -------- | ----- | ------ | ---------- |
 | **P6** Query de gastos duplicada | bajo | nulo | duplicación |
 | **P5** Puerto sobre-expuesto | bajo | nulo | endurecimiento |
-| **P3** Contagio de `Scope.REQUEST` | medio | medio | runtime |
-| **P4** Ciclo de vida manual sin guarda | incluido en P3 | medio | robustez |
 
-**Orden sugerido:** P6 → P3 + P4 → P5.
+**Orden sugerido:** P6 → P5. (El original era P6 → P3 + P4 → P5; con P3 + P4 cerrados, sólo queda
+el tramo final.)
 
 P6 primero, porque el cierre de P1 lo encareció y sigue encareciéndose. P5 al final: el tipo de
 retorno de las factories scoped es el punto exacto donde se estrecha el puerto, y conviene tocarlo
 una sola vez.
 
-> **Discrepancia abierta:** el plan de P5 propone hacerlo *antes* de P3 + P4; el plan de P3 + P4
-> asume que P5 sigue diferido. Hay que resolverla antes de empezar cualquiera de los dos.
+> **Discrepancia de orden con P5 — resuelta.** El plan de P5 (`PLAN-P5-narrow-ports.md`) proponía
+> hacerlo *antes* de P3 + P4; el plan de P3 + P4 asumía que P5 seguía diferido. Se ejecutó **P3 + P4
+> → P5**: P3 + P4 cerró primero (`PLAN-P3P4-transactional-runner.md`, commits 1-8), y P5 sigue
+> pendiente, ahora sobre el estado post-runner. Esto tiene una consecuencia concreta para quien
+> retome P5: los 7 puntos donde acotaría el puerto ya no son los getters `getScopedAccountRepository()`
+> / `getScopedBudgetRepository()` que su plan original describía — son las propiedades `ctx.accounts`
+> / `ctx.budgets` que `createContext()` construye. El punto de entrada (el tipo de retorno de
+> `createScopedAccountRepository` / `createScopedBudgetRepository`) no se movió; sólo cambió quién
+> lo invoca y cómo se expone el resultado. `PLAN-P5-narrow-ports.md` §10.3 registra esto.
 
-**Cada parada es un estado coherente.** Con P7 cerrado, el sistema ya es *más correcto*. Después de
-P3 + P4 es *más seguro de extender*.
+**Cada parada es un estado coherente.** Con P7 cerrado, el sistema ya es *más correcto*. Con P3 + P4
+cerrados, es *más seguro de extender* (menos superficie para un `release()` olvidado, sin contagio
+de `Scope.REQUEST`). Lo que queda (P5, P6) es endurecimiento incremental, no corrección de un
+defecto de comportamiento.

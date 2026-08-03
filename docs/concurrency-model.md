@@ -54,11 +54,24 @@ between the `findById` and the `commit`, the row is locked for everyone else.
 
 ## 3. The transactional boundary — Unit of Work
 
+> **Updated after `PLAN-P3P4-transactional-runner.md` (P3+P4).** The UoW used to be a stateful
+> object (`begin`/`commit`/`rollback`/`release`/`isConnected`, a mutable `QueryRunner` field,
+> `Scope.REQUEST` on every provider). It is now a stateless runner: one method, `run<T>(work)`, with
+> the `QueryRunner` living on the call stack of that call instead of in a field. Every UoW provider
+> is a plain singleton. What follows describes the current shape; the historical `useExisting` /
+> `Scope.REQUEST` discussion is kept because the same reasoning about *what sharing an instance does
+> and doesn't buy* still applies — it just applies to `run()` calls now, not to request-scoped
+> instances.
+
 **Four** concrete implementations, separated by **atomic operation**, not by module — a 1:1 mapping
-onto the four module-specific ports:
+onto the four module-specific ports. Each `extends TypeOrmTransactionRunner<TCtx>`
+(`shared/infrastructure/persistence/typeorm-transaction-runner.ts`, which owns the entire lifecycle:
+create `QueryRunner` → connect → start transaction → build `TCtx` via `createContext()` → run the
+callback → commit/rollback → release) and separately `implements I<Module>UnitOfWork` (valid because
+that port declares nothing beyond the inherited `run()`):
 
 - **`TypeOrmUnitOfWorkImpl`** (`transactions/infrastructure/persistence/unit-of-work.impl.ts`) —
-  satisfies `ITransactionUnitOfWork` only. One `Scope.REQUEST` instance → one `QueryRunner` → one PG
+  satisfies `ITransactionUnitOfWork` only. Every `run()` call opens its own `QueryRunner` → one PG
   transaction, which `CreateTransaction` needs because it writes three aggregates at once. It used
   to also satisfy `IBudgetUnitOfWork` via `useExisting` (and, earlier, `IAccountUnitOfWork`); see
   below for why that stopped.
@@ -73,27 +86,37 @@ onto the four module-specific ports:
 domain is anchored to a `Transaction` mutation** (balance, limit, period sum). Every *single*-aggregate
 invariant now has its own dedicated impl, in its own module.
 
-**What `useExisting` does not do.** Historically, sharing one `QueryRunner` *within a request* was
-required only by a use case taking several scoped repos at once — in this codebase, only
-`CreateTransaction`. It was irrelevant *between* requests: `Scope.REQUEST` already yields one
-instance per request, so two concurrent requests always had separate `QueryRunner`s. Cross-request
-serialization is the Postgres row lock — held until commit and visible on any connection. Hence a
-module whose flows touch one aggregate can own its impl at no cost to concurrency, which is why
-`IAccountUnitOfWork` moved out first, and `IBudgetUnitOfWork` followed the same reasoning: neither
-`UpdateBudgetLimit` nor `DeleteBudget` ever needed a `QueryRunner` shared with `transactions`, so the
-`forwardRef(() => TransactionsModule)` that `budgets.module.ts` used to resolve the token was pure
-DI-graph cost with no concurrency benefit. Pattern details in
-[uow-decision.md](../src/shared/domain/uow-decision.md).
+**What `useExisting` never bought, and what removing `Scope.REQUEST` changed.** Historically,
+sharing one `QueryRunner` *within a request* was required only by a use case taking several scoped
+repos at once — in this codebase, only `CreateTransaction`. It was irrelevant *between* requests:
+`Scope.REQUEST` already yielded one instance per request, so two concurrent requests always had
+separate `QueryRunner`s. Cross-request serialization is the Postgres row lock — held until commit
+and visible on any connection — and that hasn't changed. What P3+P4 changed is the *mechanism*:
+there is no more `Scope.REQUEST` anywhere, every impl is a singleton, and a fresh `QueryRunner` is
+created on every `run()` call regardless of how many concurrent callers share the same instance.
+"One instance per request" was never the axis that mattered; "one `QueryRunner` per invocation" is,
+and `run()` now guarantees that structurally. Hence a module whose flows touch one aggregate can own
+its impl at no cost to concurrency, which is why `IAccountUnitOfWork` moved out first, and
+`IBudgetUnitOfWork` followed the same reasoning: neither `UpdateBudgetLimit` nor `DeleteBudget` ever
+needed a `QueryRunner` shared with `transactions`, so the `forwardRef(() => TransactionsModule)` that
+`budgets.module.ts` used to resolve the token was pure DI-graph cost with no concurrency benefit.
+Pattern details in [uow-decision.md](../src/shared/domain/uow-decision.md).
 
 **Accepted cost of the split.** Before this, `useExisting` made it structurally impossible for a use
 case to open two separate DB transactions by injecting `ITransactionUnitOfWork` and
 `IBudgetUnitOfWork` together — both tokens resolved to the same instance, so there was only ever one
-`QueryRunner`. Now that the two ports have independent impls, that guarantee is gone: a hypothetical
-use case injecting both and calling `begin()` on each would open two transactions and could deadlock
-against itself. Nothing enforces "at most one UoW port per use case" in the type system — see
-CLAUDE.md's anti-patterns list. If a future flow needs to coordinate `transactions` and `budgets`
-atomically, it belongs inside `TypeOrmUnitOfWorkImpl`, composing `budgets`' scoped repos the way
-`CreateTransaction` already does — not by injecting two module-specific UoW ports side by side.
+`QueryRunner`. Now that the two ports have independent impls, that guarantee is gone: a use case
+injecting both and calling `run()` on each **nested in the same async chain** (one callback awaiting
+the other's `run()`) is caught — `activeTransaction`, an `AsyncLocalStorage` nesting detector, throws
+`NestedTransactionError` before the second `QueryRunner` is even created. What is *not* caught is two
+`run()` calls that aren't nested — sequential (`await a.run(...); await b.run(...)`, two ordinary
+unrelated transactions, not a bug) or racing via `Promise.all` (different async chains, invisible to
+the detector; if they need the same row, ordinary Postgres lock contention or a real `40P01`
+deadlock results, instead of a silent hang). Nothing enforces "at most one UoW port per use case" in
+the type system — see CLAUDE.md's anti-patterns list. If a future flow needs to coordinate
+`transactions` and `budgets` atomically, it belongs inside `TypeOrmUnitOfWorkImpl`, composing
+`budgets`' scoped repos the way `CreateTransaction` already does (exposed as extra `ctx` properties)
+— not by injecting two module-specific UoW ports side by side.
 
 ---
 
@@ -138,12 +161,15 @@ would cause a lost update on the balance. Each row protects against a different 
 
 ```
 1. Fail-fast OUTSIDE the UoW (global repo, no lock): cheap 404/403/400, grabs no connection
-2. begin()                          — opens QueryRunner + tx
-3. findById with FOR UPDATE         — takes the guardian-row lock
-4. dependent reads                  — aggregates; inherit the exclusion from the lock in (3)
-5. invariant decision               — with data read AFTER the lock
-6. save() / delete()                — writes, still under the lock
-7. commit() / rollback() in finally — only here are ALL the locks released
+2. uow.run(async (ctx) => {          — opens QueryRunner + tx, builds ctx exactly once
+3.   ctx.x.findById FOR UPDATE       — takes the guardian-row lock
+4.   dependent reads                 — aggregates; inherit the exclusion from the lock in (3)
+5.   invariant decision              — with data read AFTER the lock
+6.   ctx.x.save() / delete()         — writes, still under the lock
+7. })                                — commit on a clean return, rollback on a thrown error,
+                                        release always: ALL of it now lives inside run(), not
+                                        in the use case — there is no commit()/rollback() call
+                                        left to write by hand
 ```
 
 The 3→6 ordering **is** the correctness. Locking the guardian row *before* reading the data that
@@ -158,67 +184,75 @@ feeds the decision is what closes the race window.
 1. **Outside the UoW:** creates `Amount`/`Nature` VOs; validates account exists+owned; validates category
    exists+owned and `nature` matches (R7); if expense, validates a budget exists for the period (global,
    no lock). Fail-fast: 404/403/400 without opening a connection.
-2. `begin()`.
-3. **LOCK budget** (expense only): `budgetRepo.findByUserIdAndCategoryIdAndPeriod` → `FOR UPDATE`.
-4. **Dependent read:** `txRepo.sumExpenseAmountByUserCategoryAndPeriod` (no lock, post-gate).
+2. `uow.run(async (ctx) => {`
+3. **LOCK budget** (expense only): `ctx.budgets.findByUserIdAndCategoryIdAndPeriod` → `FOR UPDATE`.
+4. **Dependent read:** `ctx.transactions.sumExpenseAmountByUserCategoryAndPeriod` (no lock, post-gate).
 5. **Decision:** `spent + amount ≤ limit`? if not → `BudgetLimitExceededException` (422).
-6. **LOCK account** + write: `updateBalance` → `acctRepo.findById FOR UPDATE` → recomputes → `save`.
-   Then `txRepo.save(transaction)`.
-7. `commit` / `rollback` in finally.
+6. **LOCK account** + write: `updateBalance` → `ctx.accounts.findById FOR UPDATE` → recomputes → `save`.
+   Then `ctx.transactions.save(transaction)`.
+7. `})` — commit/rollback/release handled entirely by `run()`.
 
 ### `DeleteTransaction`
 
 1. **Outside the UoW:** `GetTransactionByIdUseCase` (global) → cheap 404/403.
-2. `begin()`.
-3. **LOCK transaction:** `txRepo.findById(id)` → `FOR UPDATE`. If null (someone else deleted it and committed) →
+2. `uow.run(async (ctx) => {`
+3. **LOCK transaction:** `ctx.transactions.findByIdWithLock(id)` → `FOR UPDATE`. If null (someone else deleted it and committed) →
    `TransactionNotFoundException`.
 4. —
-5. **Decision:** reversing an income would leave a negative balance → `CannotDeleteTransactionException` (409).
-6. **LOCK account** + write: `updateBalance` (reverse) → `acctRepo.findById FOR UPDATE`; `txRepo.delete`.
-7. `commit` / `rollback`.
+5. **Decision:** reversing an income would leave a negative balance → `InsufficientFundsException`, thrown by
+   `UpdateAccountBalanceUseCase`. `run()` rolls back and re-throws it unwrapped; the use case catches it
+   **outside** `run()` and translates it to `CannotDeleteTransactionException` (409) — the rollback has
+   already happened by then, so the translation only changes which exception the controller sees.
+6. **LOCK account** + write: `updateBalance` (reverse) → `ctx.accounts.findById FOR UPDATE`; `ctx.transactions.delete`.
+7. `})` — commit/rollback/release handled entirely by `run()`.
 
 ### `UpdateBudgetLimit`
 
 1. — (inline ownership).
-2. `begin()`.
-3. **LOCK budget:** `budgetRepo.findById FOR UPDATE`; inline ownership.
-4. **Dependent read:** `expenseChecker.sumExpenseAmountInPeriod` (no lock, under the budget lock).
+2. `uow.run(async (ctx) => {`
+3. **LOCK budget:** `ctx.budgets.findById FOR UPDATE`; inline ownership.
+4. **Dependent read:** `ctx.expenses.sumExpenseAmountInPeriod` (no lock, under the budget lock).
 5. **Decision:** `new limit < spent` → `BudgetLimitBelowSpentException` (409) [B4].
-6. `budgetRepo.save`.
-7. `commit` / `rollback`.
+6. `ctx.budgets.save`. Cache invalidation happens **after** `await uow.run(...)` resolves, in its own
+   `try/catch` that only logs — there is no `try` wrapping a `rollback()` left for it to leak into.
+7. `})` — commit/rollback/release handled entirely by `run()`.
 
 ### `DeleteBudget`
 
 1. — (inline ownership).
-2. `begin()`.
-3. **LOCK budget:** `budgetRepo.findById FOR UPDATE`; inline ownership.
-4. **Dependent read:** `expenseChecker.hasExpensesInPeriod` (no lock, under the budget lock).
+2. `uow.run(async (ctx) => {`
+3. **LOCK budget:** `ctx.budgets.findById FOR UPDATE`; inline ownership.
+4. **Dependent read:** `ctx.expenses.hasExpensesInPeriod` (no lock, under the budget lock).
 5. **Decision:** there are expenses in the period → `BudgetHasTransactionsInPeriodException` (409) [Race 1].
-6. `budgetRepo.delete`.
-7. `commit` / `rollback`.
+6. `ctx.budgets.delete`. Cache invalidation after `run()` resolves, same shape as `UpdateBudgetLimit`.
+7. `})` — commit/rollback/release handled entirely by `run()`.
 
 ### `Archive` / `Unarchive` / `Rename` account (all three, identical skeleton)
 
 1. — (inline ownership).
-2. `begin()`.
-3. **LOCK account:** `accountRepo.findById FOR UPDATE`; inline ownership. Competes for the same row as
+2. `uow.run(async (ctx) => {`
+3. **LOCK account:** `ctx.accounts.findById FOR UPDATE`; inline ownership. Competes for the same row as
    Create/DeleteTransaction [Race 2].
 4. —
 5. **Decision:** domain method (`archive()` throws if already archived, etc.).
-6. `accountRepo.save`.
-7. `commit` / `rollback`.
+6. `ctx.accounts.save`.
+7. `})` — commit/rollback/release handled entirely by `run()`.
 
 ### `RefreshToken` (auth — separate UoW)
 
 1. **Outside the UoW:** verifies the token signature (`ITokenProvider`) — fail-fast without touching the DB.
-2. `begin()`.
-3. **LOCK refresh-token:** `findByTokenHashWithLock FOR UPDATE`.
+2. `uow.run(async (ctx) => {`
+3. **LOCK refresh-token:** `ctx.refreshTokens.findByTokenHashWithLock FOR UPDATE`.
 4. —
-5. **Decision:** null → `InvalidRefreshToken`; revoked → replay → `revokeFamily` + **commit** +
-   `RefreshTokenReplayDetected`; expired → `RefreshTokenExpired`.
+5. **Decision:** null → throws `InvalidRefreshTokenException` (rolls back); expired → throws
+   `RefreshTokenExpiredException` (rolls back); revoked → replay → `revokeFamily` then **returns**
+   `{ kind: 'replay' }` — a normal return, so `run()` commits. The use case reads that outcome
+   **after** `run()` resolves and throws `RefreshTokenReplayDetectedException` only then — the family
+   revocation must survive even though the request ends in 401, and by the time the exception is
+   thrown, `run()` has already committed it.
 6. Inserts the new one (same `familyId`), revokes the old one (`replacedById = new jti`). Inserts **before**
-   revoking, because of the self-referential FK.
-7. `commit` / `rollback`.
+   revoking, because of the self-referential FK. Returns `{ kind: 'rotated', pair }`.
+7. `})` — commit/rollback/release handled entirely by `run()`.
 
 > **Latent bug (noted, not active):** the **global** impl `RefreshTokenRepositoryImpl.findByTokenHashWithLock`
 > also requests `pessimistic_write`. Outside a `QueryRunner` (autocommit connection) that would throw
@@ -305,18 +339,20 @@ sequenceDiagram
     participant DB as Postgres
 
     Note over UC: Fail-fast (global repos, no lock): account, category, budget exists
-    UC->>UoW: begin()
+    UC->>UoW: uow.run(async (ctx) => { ... })
     UoW->>DB: createQueryRunner + START TRANSACTION
-    UC->>UoW: budgetRepo.findByUserIdAndCategoryIdAndPeriod()
+    UoW->>UC: ctx (built once by createContext())
+    UC->>UoW: ctx.budgets.findByUserIdAndCategoryIdAndPeriod()
     UoW->>DB: SELECT budget ... FOR UPDATE (lock)
-    UC->>UoW: txRepo.sumExpenseAmountByUserCategoryAndPeriod()
+    UC->>UoW: ctx.transactions.sumExpenseAmountByUserCategoryAndPeriod()
     UoW->>DB: SELECT COALESCE(SUM(amount),0)   (no lock)
     Note over UC: decision: spent + amount <= limit ?
-    UC->>UoW: acctRepo.findById()
+    UC->>UoW: ctx.accounts.findById()
     UoW->>DB: SELECT account ... FOR UPDATE (lock)
-    UC->>UoW: acctRepo.save(account) + txRepo.save(tx)
-    UC->>UoW: commit()
+    UC->>UoW: ctx.accounts.save(account) + ctx.transactions.save(tx)
+    Note over UC,UoW: callback returns cleanly — no explicit commit() call
     UoW->>DB: COMMIT  (releases budget and account locks)
+    UoW->>DB: release()  (connection back to the pool)
 ```
 
 ### Two concurrent expenses in the same period (the lock serializes)

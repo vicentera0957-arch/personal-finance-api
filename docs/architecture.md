@@ -174,11 +174,13 @@ originally received `IAccountUnitOfWork` from `transactions`, on the belief that
 for the *same* lock required the *same* UoW instance. That belief was wrong, and it was
 what closed the cycle.
 
-`Scope.REQUEST` already means **one instance per request**: an `archive` request and a
-`POST /transactions` request always had distinct instances, distinct `QueryRunner`s and
-distinct DB transactions. What serializes them is Postgres holding the row lock until
-commit — visible to any concurrent transaction, on any connection. Sharing the class never
-entered into it.
+Back when `Scope.REQUEST` still existed, it already meant **one instance per request**: an
+`archive` request and a `POST /transactions` request always had distinct instances, distinct
+`QueryRunner`s and distinct DB transactions. Today there is no `Scope.REQUEST` at all — every UoW
+provider is a plain singleton (`PLAN-P3P4-transactional-runner.md`), and a fresh `QueryRunner` is
+created on every `run()` call instead. Either way, what serializes concurrent callers is Postgres
+holding the row lock until commit — visible to any concurrent transaction, on any connection.
+Sharing the class (or, now, the singleton instance) never entered into it.
 
 So `accounts` implements its own `AccountUnitOfWorkImpl` and imports nothing. The single
 `ScopedAccountRepository` — with the `FOR UPDATE` — lives in `accounts/infrastructure` and
@@ -214,8 +216,9 @@ flowchart LR
 
 ## 3. Concurrency: how a transaction is created safely
 
-Cross-aggregate, money-touching invariants run inside a request-scoped Unit of Work
-(one `QueryRunner` = one PostgreSQL transaction) and use `SELECT ... FOR UPDATE` to
+Cross-aggregate, money-touching invariants run inside a Unit of Work whose `run()` opens one
+`QueryRunner` = one PostgreSQL transaction per call (no `Scope.REQUEST` — every UoW provider is a
+plain singleton; see `PLAN-P3P4-transactional-runner.md`), and use `SELECT ... FOR UPDATE` to
 serialize. The budget row is the **logical mutex** for the "Σ period expenses ≤ limit"
 invariant. Full rationale: [ADR-0002](./adr/0002-unit-of-work-pessimistic-locks.md)
 and [`concurrency-model.md`](./concurrency-model.md).
@@ -226,14 +229,14 @@ sequenceDiagram
     participant UoW as Unit of Work
     participant PG as PostgreSQL
 
-    UC->>UoW: begin() (dedicated QueryRunner)
+    UC->>UoW: uow.run(async (ctx) => { ... })  (opens a dedicated QueryRunner)
     UC->>PG: find budget row  ── FOR UPDATE (logical mutex)
     UC->>PG: SUM(expenses in period)  ── no lock, serialized by the row above
     note over UC: reject if projected spend > limit
     UC->>PG: find account row  ── FOR UPDATE
     UC->>PG: update balance (inflow / outflow)
     UC->>PG: insert transaction
-    UC->>UoW: commit()
+    note over UC,UoW: callback returns cleanly — run() commits and releases, no explicit commit() call
 ```
 
 ## 4. Caching & Redis

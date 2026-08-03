@@ -87,13 +87,19 @@ Abstract class. Methods: `findById`, `findByUserId`, `save`, `delete`.
 > **Why Rename/Archive/Unarchive use the UoW and Delete doesn't:** the first three compete for the account row's lock against `CreateTransaction`/`DeleteTransaction` (see Race 2). `Delete` doesn't mutate the balance, so it doesn't need to serialize with the financial mutations.
 
 > **`IAccountUnitOfWork` is served by this module.** `AccountUnitOfWorkImpl`
-> (`infrastructure/persistence/account-unit-of-work.impl.ts`) exposes a single
-> `getScopedAccountRepository()`. It used to come from `transactions`, which forced this module to
-> import `TransactionsModule` and closed a dependency cycle — for no domain reason, since
-> `transactions` never injected that token. Competing for the same row lock never required the same
-> UoW instance: `Scope.REQUEST` already gives one instance per request, so an `archive` and a
-> `POST /transactions` always ran on separate `QueryRunner`s. The serialization is Postgres holding
-> the row until commit. **`accounts` is now a leaf module.**
+> (`infrastructure/persistence/account-unit-of-work.impl.ts`) `extends
+> TypeOrmTransactionRunner<AccountTxContext>` and `implements IAccountUnitOfWork`; its only job is
+> `createContext(queryRunner)`, which builds the single scoped account repo exposed as
+> `ctx.accounts` (a property on the object `run()`'s callback receives — there is no
+> `getScopedAccountRepository()` getter to call anymore). It used to come from `transactions`, which
+> forced this module to import `TransactionsModule` and closed a dependency cycle — for no domain
+> reason, since `transactions` never injected that token. Competing for the same row lock never
+> required the same UoW instance: even back when `Scope.REQUEST` still existed, it already gave one
+> instance per request, so an `archive` and a `POST /transactions` always ran on separate
+> `QueryRunner`s; today, with `Scope.REQUEST` gone entirely (`AccountUnitOfWorkImpl` is a plain
+> singleton — no `QueryRunner` field to protect), the same is true for an even simpler reason: every
+> `run()` call opens its own `QueryRunner` regardless of instance sharing. The serialization is
+> Postgres holding the row until commit, unchanged either way. **`accounts` is now a leaf module.**
 | `UpdateAccountBalanceUseCase` | `repo.findById()` → `account.inflow()` or `account.outflow()` → `repo.save()` |
 
 ### `UpdateAccountBalanceUseCase` — consumed by `transactions`
@@ -103,9 +109,8 @@ Abstract class. Methods: `findById`, `findByUserId`, `save`, `delete`.
 This use case IS consumed by `CreateTransactionUseCase` and `DeleteTransactionUseCase`. The `transactions` module builds an instance directly, injecting the **UoW's scoped repository**:
 
 ```typescript
-// create-transaction.use-case.ts (inside the UoW block)
-const acctRepo = this.uow.getScopedAccountRepository(); // ScopedAccountRepository
-const updateBalance = new UpdateAccountBalanceUseCase(acctRepo);
+// create-transaction.use-case.ts (inside uow.run(async (ctx) => { ... }))
+const updateBalance = new UpdateAccountBalanceUseCase(ctx.accounts); // ScopedAccountRepository
 await updateBalance.execute(command.accountId, amount.getValue(), 'inflow' | 'outflow');
 ```
 
@@ -181,15 +186,15 @@ For "move $X from account A to account B":
 
 ```
 TransferUseCase(fromId, toId, amount):
-  uow.begin()
-    txRepo.save(tx: outflow from A, transferGroupId)
-    txRepo.save(tx: inflow  to B, transferGroupId)
+  uow.run(async (ctx) => {
+    ctx.transactions.save(tx: outflow from A, transferGroupId)
+    ctx.transactions.save(tx: inflow  to B, transferGroupId)
     updateBalance(A, -amount, 'outflow')
     updateBalance(B, +amount, 'inflow')
-  uow.commit()
+  })
 ```
 
-Both transactions must share a `transferGroupId` to reconstruct the logical transfer. The UoW already exists — the extension is adding the field and the use case.
+Both transactions must share a `transferGroupId` to reconstruct the logical transfer. The UoW already exists — the extension is adding the field and the use case. Note this needs `ctx.transactions`, `ctx.accounts` for **both** A and B in one transaction — the same multi-aggregate shape `CreateTransaction` already has, so it belongs on `ITransactionUnitOfWork`'s `TransactionTxContext`, not on `IAccountUnitOfWork`.
 
 ---
 

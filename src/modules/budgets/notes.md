@@ -51,7 +51,7 @@ Business method: `updateLimit(newLimit: AmountLimit)` — replaces the limit.
 
 **File:** `domain/ports/expense-checker.port.ts` (moved out of `domain/repository/`: it answers a derived query about a period — a `boolean`, a `number` — not an aggregate's persistence lifecycle, so it doesn't belong next to `budgets.repository.ts`. Flat under `ports/`, not `ports/query/`: `ports/cache/` groups by adapter technology, and a single domain query port doesn't warrant its own subfolder yet.)
 
-Defined here, and — as of the `IBudgetUnitOfWork` split — implemented here too: `ScopedExpenseChecker` in `infrastructure/persistence/scoped-expense-checker.ts`, unexported, reached only through `createScopedExpenseChecker(queryRunner)`. Served by `BudgetUnitOfWorkImpl.getScopedExpenseChecker()`. `transactions` does not import this port at all.
+Defined here, and — as of the `IBudgetUnitOfWork` split — implemented here too: `ScopedExpenseChecker` in `infrastructure/persistence/scoped-expense-checker.ts`, unexported, reached only through `createScopedExpenseChecker(queryRunner)`. Exposed as `ctx.expenses` — a property of `BudgetTxContext`, built inside `BudgetUnitOfWorkImpl.createContext()` (there is no `getScopedExpenseChecker()` getter since `PLAN-P3P4-transactional-runner.md`). `transactions` does not import this port at all.
 
 Methods: `hasExpensesInPeriod(userId, categoryId, month, year): Promise<boolean>` and `sumExpenseAmountInPeriod(...): Promise<number>`. **Neither takes `FOR UPDATE`** (Postgres forbids pessimistic locks on `COUNT`/`SUM` aggregates); serialization comes from the lock on the budget row that the consumer (`DeleteBudget` / `UpdateBudgetLimit`) acquires first, inside the same `BudgetUnitOfWorkImpl` transaction.
 
@@ -107,9 +107,10 @@ Methods: `hasExpensesInPeriod(userId, categoryId, month, year): Promise<boolean>
 Imports only `CategoriesModule` (itself a leaf) — `budgets` is a leaf module. It owns its own transactional boundary:
 
 ```ts
-{ provide: BudgetUnitOfWorkImpl, useClass: BudgetUnitOfWorkImpl, scope: Scope.REQUEST }
-{ provide: IBudgetUnitOfWork,    useExisting: BudgetUnitOfWorkImpl }
+{ provide: IBudgetUnitOfWork, useClass: BudgetUnitOfWorkImpl }
 ```
+
+No `scope` at all: `BudgetUnitOfWorkImpl` has no `QueryRunner` field to protect (it `extends TypeOrmTransactionRunner<BudgetTxContext>`, so the `QueryRunner` lives on the call stack of `run()`), so it is a plain singleton. Before `PLAN-P3P4-transactional-runner.md`, this was a `useClass`/`useExisting` pair with `scope: Scope.REQUEST` on the concrete token.
 
 Exports: `GetBudgetByUserCategoryPeriodUseCase`, `BudgetMapper` — consumed by `TransactionsModule` (a direct import there now, no `forwardRef`).
 

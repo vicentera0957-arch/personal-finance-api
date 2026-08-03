@@ -98,7 +98,7 @@ The system has **four** concrete UoW implementations, satisfying **four** module
 
 | Port                     | Owner                 | Used by                                  | Implemented by          |
 | ------------------------ | --------------------- | ---------------------------------------- | ----------------------- |
-| `IUnitOfWork`            | `shared/domain`       | (base — lifecycle only)                  | all four impls          |
+| `IUnitOfWork`            | `shared/domain`       | (base — `run()` only)                    | all four impls          |
 | `ITransactionUnitOfWork` | `transactions/domain` | `CreateTransaction`, `DeleteTransaction` | `TypeOrmUnitOfWorkImpl` |
 | `IBudgetUnitOfWork`      | `budgets/domain`      | `UpdateBudgetLimit`, `DeleteBudget`      | `BudgetUnitOfWorkImpl`  |
 | `IAccountUnitOfWork`     | `accounts/domain`     | `Archive`, `Unarchive`, `Rename`         | `AccountUnitOfWorkImpl` |
@@ -106,16 +106,16 @@ The system has **four** concrete UoW implementations, satisfying **four** module
 
 **`TypeOrmUnitOfWorkImpl`** lives in `transactions/infrastructure/` and now serves only `ITransactionUnitOfWork`. It used to also `implement IBudgetUnitOfWork`, aliased via `useExisting` to the same request-scoped instance — that alias is gone; see "Why `IBudgetUnitOfWork` is separate" below.
 
-Historical note on what that old sharing did and did **not** buy (kept because the same reasoning applies to every future decision of this kind). It was required **within one request**, so that a use case taking several scoped repos gets them all on one transaction — only `CreateTransaction` ever needed that. It bought nothing **between** requests: `Scope.REQUEST` already means one instance per request, so two concurrent requests always had distinct `QueryRunner`s. What serializes them is the Postgres row lock, not the shared instance. That is why a module whose flows touch a single aggregate can own its UoW without weakening anything — the same argument that already justified `IAccountUnitOfWork` and `IAuthUnitOfWork`, and now justifies `IBudgetUnitOfWork` too.
+Historical note on what that old sharing did and did **not** buy (kept because the same reasoning applies to every future decision of this kind). It was required **within one request**, so that a use case taking several scoped repos gets them all on one transaction — only `CreateTransaction` ever needed that. It bought nothing **between** requests: `Scope.REQUEST` already meant one instance per request, so two concurrent requests always had distinct `QueryRunner`s. What serializes them is the Postgres row lock, not the shared instance. That is why a module whose flows touch a single aggregate can own its UoW without weakening anything — the same argument that already justified `IAccountUnitOfWork` and `IAuthUnitOfWork`, and now justifies `IBudgetUnitOfWork` too.
+
+That reasoning is now moot in a stronger way: the stateless runner (`TypeOrmTransactionRunner`, `shared/infrastructure/persistence/typeorm-transaction-runner.ts`) removed `Scope.REQUEST` entirely. Every UoW provider is a plain, process-wide singleton — there is no `QueryRunner` field left to protect with per-request isolation. `run()` creates a fresh `QueryRunner` on every call, from the call's own stack frame, regardless of which request (or how many concurrent requests) reach the same singleton instance. "One instance per request" was never actually the axis that mattered; "one `QueryRunner` per invocation" is, and `run()` guarantees that structurally instead of via DI scope.
 
 ```ts
 // transactions.module.ts
-{ provide: TypeOrmUnitOfWorkImpl,  useClass: TypeOrmUnitOfWorkImpl, scope: Scope.REQUEST }
-{ provide: ITransactionUnitOfWork, useExisting: TypeOrmUnitOfWorkImpl }
+{ provide: ITransactionUnitOfWork, useClass: TypeOrmUnitOfWorkImpl }
 
 // budgets.module.ts
-{ provide: BudgetUnitOfWorkImpl,   useClass: BudgetUnitOfWorkImpl, scope: Scope.REQUEST }
-{ provide: IBudgetUnitOfWork,      useExisting: BudgetUnitOfWorkImpl }
+{ provide: IBudgetUnitOfWork, useClass: BudgetUnitOfWorkImpl }
 ```
 
 ### Why the impl lives in `transactions/`
@@ -144,30 +144,32 @@ Auth's transactional boundary is independent: refresh-token rotation only touche
 
 ### Scoped resources
 
-`TypeOrmUnitOfWorkImpl` exposes three scoped resources, all sharing the same `EntityManager`(typeorm):
+Each impl builds its `TCtx` exactly once per `run()` call, inside `createContext(queryRunner)` — the single method every impl overrides on top of `TypeOrmTransactionRunner<TCtx>` (`shared/infrastructure/persistence/typeorm-transaction-runner.ts`), which owns the rest of the lifecycle (connect → start transaction → `work(ctx)` → commit/rollback → release) in one place. There are no `getScopedX()` getters anymore — what used to be a method call on the UoW instance is now a property read on the `ctx` object `run()`'s callback receives.
 
-- `getScopedTransactionRepository()` → `ScopedTransactionRepository`
-- `getScopedAccountRepository()` → `ScopedAccountRepository` (built from `accounts`' factory — see below)
-- `getScopedBudgetRepository()` → `ScopedBudgetRepository` (built from `budgets`' factory — see below)
+`TransactionTxContext` (built by `TypeOrmUnitOfWorkImpl.createContext()`) exposes three scoped resources, all sharing the same `EntityManager` (via the active `QueryRunner`):
 
-`AccountUnitOfWorkImpl` exposes one:
+- `ctx.transactions` → `ScopedTransactionRepository`
+- `ctx.accounts` → `ScopedAccountRepository` (built from `accounts`' factory — see below)
+- `ctx.budgets` → `ScopedBudgetRepository` (built from `budgets`' factory — see below)
 
-- `getScopedAccountRepository()` → `ScopedAccountRepository`
+`AccountTxContext` (built by `AccountUnitOfWorkImpl.createContext()`) exposes one:
 
-`BudgetUnitOfWorkImpl` exposes two:
+- `ctx.accounts` → `ScopedAccountRepository`
 
-- `getScopedBudgetRepository()` → `ScopedBudgetRepository` (same factory `TypeOrmUnitOfWorkImpl` calls, its own `QueryRunner`)
-- `getScopedExpenseChecker()` → `ScopedExpenseChecker`
+`BudgetTxContext` (built by `BudgetUnitOfWorkImpl.createContext()`) exposes two:
 
-The auth UoW exposes:
+- `ctx.budgets` → `ScopedBudgetRepository` (same factory `TypeOrmUnitOfWorkImpl` calls, its own `QueryRunner`)
+- `ctx.expenses` → `ScopedExpenseChecker`
 
-- `getRefreshTokenRepository()` → `ScopedRefreshTokenRepository`
+`AuthTxContext` (built by `AuthUnitOfWorkImpl.createContext()`) exposes:
+
+- `ctx.refreshTokens` → `ScopedRefreshTokenRepository`
 
 These classes take pessimistic locks aggressively because, by construction, they only ever execute inside an active `QueryRunner` — reading by id inside a transaction implies intent to mutate.
 
 **How that "by construction" is enforced.** Two shapes coexist:
 
-- **Private to the impl file** — the class is declared in the same file as the UoW that hands it out, and never exported (`ScopedTransactionRepository`, `ScopedRefreshTokenRepository`). The guarantee is syntactic: it holds only while there is exactly one consumer.
+- **Private to the impl file** — the class is declared in the same file as the `createContext()` that hands it out, and never exported (`ScopedTransactionRepository`, `ScopedRefreshTokenRepository`). The guarantee is syntactic: it holds only while there is exactly one consumer.
 - **Private class + exported factory** — used when a second module legitimately needs the same scoped repo on *its* `QueryRunner`. Two instances of this shape today, both with the same signature (`createScopedX(queryRunner, mapper)`, guard first, `new` last):
   - `ScopedAccountRepository` (`accounts/infrastructure/persistence/scoped-account.repository.ts`) — consumed by both `AccountUnitOfWorkImpl` and `TypeOrmUnitOfWorkImpl`.
   - `ScopedBudgetRepository` (`budgets/infrastructure/persistence/scoped-budget.repository.ts`) — consumed by both `BudgetUnitOfWorkImpl` and `TypeOrmUnitOfWorkImpl`, for the same reason: `CreateTransaction` locks the budget row on its own `QueryRunner`, independent of `UpdateBudgetLimit` / `DeleteBudget` locking it on theirs.
@@ -344,8 +346,9 @@ The two traps that bite outside a deploy:
 - **Do not** take `userId` from the request body or URL. Always `@CurrentUser()`.
 - **Do not** call `VO.create()` in a mapper. Use `VO.reconstitute()` so persisted data isn't re-validated.
 - **Do not** throw `HttpException` from the domain layer. Domain throws domain exceptions; controllers map.
-- **Do not** inject `DataSource` directly in a use case. Use the module's UoW port. If the existing port doesn't expose what you need, extend the port and add a getter to the impl that serves it (`AccountUnitOfWorkImpl`, `AuthUnitOfWorkImpl`, or `TypeOrmUnitOfWorkImpl` for the multi-aggregate boundary).
+- **Do not** inject `DataSource` directly in a use case. Use the module's UoW port. If the existing `TCtx` doesn't expose what you need, extend that context interface (`AccountTxContext`, `AuthTxContext`, `BudgetTxContext`, or `TransactionTxContext` for the multi-aggregate boundary) and add the corresponding line to the impl's `createContext()`. There are no more getters to add — `run()`'s callback context (`ctx`) is the only surface a use case ever touches.
 - **Do not** declare a provider for another module's UoW token. A module that needs a transactional boundary over its own aggregate implements its own UoW; serving it from a neighbour is what created the `accounts ↔ transactions` cycle and, later, the `budgets ↔ transactions` one. As of the `IBudgetUnitOfWork` split, every module-specific UoW port has exactly one impl in its own module — there is no more sharing left to imitate.
 - **Do not** read inside an open UoW with the global (non-scoped) repository. The global repo runs on a different connection — locks won't apply, and you'll think your invariant is protected when it isn't.
-- **Do not** inject more than one UoW port into a single use case. Before the `IBudgetUnitOfWork` split, `useExisting` made this structurally impossible for `ITransactionUnitOfWork` + `IBudgetUnitOfWork` — both tokens resolved to the same instance, so there was only ever one `QueryRunner` to open regardless of how many UoW ports a use case injected. That guarantee is gone now that the two ports have independent impls with independent `QueryRunner`s: a use case that injected both and called `begin()` on each would open two separate DB transactions and could deadlock against itself (e.g. one waiting on a lock the other is holding, or a partial commit if only one side fails). Nothing in the type system stops this — it is an accepted cost of the split, not engineered against. If a use case must coordinate two aggregates in one transaction, that is the definition of a multi-aggregate boundary: it belongs in the UoW that already owns that composition (`TypeOrmUnitOfWorkImpl` in `transactions`, today the only multi-aggregate impl), which exposes the neighbours' scoped repos as additional getters — not by injecting two module-specific UoW ports side by side.
-- **Do not** put cache invalidation (or any secondary reaction) inside the `try` that a `rollback()` catches. It runs after `commit()`, in its own `try/catch` that only logs.
+- **Do not** inject more than one UoW port into a single use case. The architecture has always assumed this — each module-specific port owns exactly one aggregate's transactional boundary, so a use case that needs two is, by definition, coordinating a multi-aggregate invariant and belongs in the UoW that already owns that composition (`TypeOrmUnitOfWorkImpl` in `transactions`, today the only multi-aggregate impl — it exposes the neighbours' scoped repos as additional `ctx` properties, not by injecting two module-specific UoW ports side by side). Before the `IBudgetUnitOfWork` split, `useExisting` made a *violation* of this rule structurally harmless for `ITransactionUnitOfWork` + `IBudgetUnitOfWork` — both tokens resolved to the same instance, so there was only ever one `QueryRunner` regardless of how many UoW ports a use case injected. That safety net is gone now that the two ports have independent impls with independent `QueryRunner`s: a use case that injected both and called `run()` on each **sequentially** (`await a.run(...); await b.run(...)`) would just open two ordinary, unrelated transactions — not a violation of anything, since neither `run()` is nested inside the other's callback. Calling the second **from inside** the first's callback, on the same async chain, *is* caught: `activeTransaction` (see below) throws `NestedTransactionError` before the second `QueryRunner` is even created. What is still not caught — and remains an accepted cost, not engineered against — is two `run()` calls racing via `Promise.all([a.run(...), b.run(...)])`: different async chains, so the nesting detector never sees them, and if they need the same row you get ordinary Postgres lock contention (or a real `40P01` deadlock across backends) instead of a silent hang.
+- **Do not** put anything besides a diagnostic name in the `activeTransaction` `AsyncLocalStorage` store (`shared/infrastructure/persistence/active-transaction.storage.ts`). It carries only `{ owner: string }`, written once per `run()` call, for one purpose: let a second `run()` on the same async chain detect it is nested and throw before opening a second `QueryRunner`. Putting an `EntityManager` or a `QueryRunner` in that store would turn it into exactly the implicit-propagation mechanism `PROBLEMS.md` rejects — a use case reaching into ambient state instead of using the `ctx` it was handed. This does **not** contradict that rejection: the transactional context still travels exclusively through `ctx`, the explicit parameter every `run()` callback receives; the ALS never hands anyone a resource, it only *flags* a second `run()` starting while a first is still live. Test for whether something is "propagation": delete it and ask what data flow changes. Delete `activeTransaction` entirely and the transactional model is byte-for-byte the same — the only loss is the diagnostic (`NestedTransactionError` up front, instead of a silent hang until `lock_timeout` the first time two `FOR UPDATE`s on the same row land in the same async chain).
+- **Cannot** put cache invalidation (or any secondary reaction) inside the `try` that a `rollback()` catches — under the stateless runner, that discipline became a structural fact rather than a rule to remember. The only `try` with a `rollback()` in its `catch` is private to `TypeOrmTransactionRunner.run()` (`shared/infrastructure/persistence/typeorm-transaction-runner.ts`); no use case code runs inside it. Cache invalidation is written after `await uow.run(...)` resolves, in the use case's own `try/catch` that only logs — there is no other place left to put it, which is why this line changed from "don't" to "can't" once P3+P4 landed.
