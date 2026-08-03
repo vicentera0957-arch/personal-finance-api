@@ -85,16 +85,11 @@ export class CreateTransactionUseCase {
       transactionDate: command.transactionDate,
     });
 
-    // Open the transaction: grabs a dedicated connection (QueryRunner) for this request.
-    await this.uow.begin();
-    try {
-      // Scoped repos share the same QueryRunner → same transaction and connection.
-      const txRepo = this.uow.getScopedTransactionRepository();
-      const acctRepo = this.uow.getScopedAccountRepository();
-      const updateBalance = new UpdateAccountBalanceUseCase(acctRepo);
+    // Todo lo transaccional adentro. El commit lo hace el runner al salir sin excepción.
+    return this.uow.run(async (ctx) => {
+      const updateBalance = new UpdateAccountBalanceUseCase(ctx.accounts);
 
       if (nature.isExpense()) {
-        const budgetRepo = this.uow.getScopedBudgetRepository();
         const month = command.transactionDate.getMonth() + 1;
         const year = command.transactionDate.getFullYear();
 
@@ -103,7 +98,7 @@ export class CreateTransactionUseCase {
         // for the period invariant and MUST be taken before the SUM below: FOR UPDATE
         // over a transaction range can't block phantom inserts, so the sum is only
         // consistent while this budget row stays locked.
-        const budget = await budgetRepo.findByUserIdAndCategoryIdAndPeriod(
+        const budget = await ctx.budgets.findByUserIdAndCategoryIdAndPeriod(
           command.userId,
           command.categoryId,
           month,
@@ -121,7 +116,7 @@ export class CreateTransactionUseCase {
         // NO LOCK: aggregate read (Postgres forbids FOR UPDATE on SUM). Consistent only
         // because the budget row above is locked, which serializes concurrent expense creates.
         const spentInPeriod =
-          await txRepo.sumExpenseAmountByUserCategoryAndPeriod(
+          await ctx.transactions.sumExpenseAmountByUserCategoryAndPeriod(
             command.userId,
             command.categoryId,
             month,
@@ -149,14 +144,8 @@ export class CreateTransactionUseCase {
         amount.getValue(),
         nature.isIncome() ? 'inflow' : 'outflow',
       );
-      const saved = await txRepo.save(transaction);
-      await this.uow.commit();
+      const saved = await ctx.transactions.save(transaction);
       return saved;
-    } catch (err) {
-      await this.uow.rollback();
-      throw err;
-    } finally {
-      await this.uow.release();
-    }
+    });
   }
 }

@@ -19,38 +19,36 @@ export class DeleteTransactionUseCase {
     // Fail-fast outside the tx: cheap 404/403 without grabbing a pool connection.
     await this.getTransactionByIdUseCase.execute(id, requestUserId);
 
-    // Open the transaction: grabs a dedicated connection (QueryRunner) for this request.
-    await this.uow.begin();
     try {
-      // Scoped repos share the same QueryRunner → same transaction and connection.
-      const txRepo = this.uow.getScopedTransactionRepository();
-      const acctRepo = this.uow.getScopedAccountRepository();
+      // Todo lo transaccional adentro. El commit lo hace el runner al salir sin excepción.
+      await this.uow.run(async (ctx) => {
+        // LOCK (FOR UPDATE): transaction row. The lock lives inside the scoped repo's
+        // findByIdWithLock(). Serializes concurrent DELETEs on the same row: if another request
+        // already deleted and committed, it returns null here (→ 404, no double reverse).
+        const transaction = await ctx.transactions.findByIdWithLock(id);
+        if (!transaction) throw new TransactionNotFoundException(id);
 
-      // LOCK (FOR UPDATE): transaction row. The lock lives inside the scoped repo's
-      // findByIdWithLock(). Serializes concurrent DELETEs on the same row: if another request
-      // already deleted and committed, it returns null here (→ 404, no double reverse).
-      const transaction = await txRepo.findByIdWithLock(id);
-      if (!transaction) throw new TransactionNotFoundException(id);
-
-      const updateBalance = new UpdateAccountBalanceUseCase(acctRepo);
-      const reverseType = transaction.nature.isIncome() ? 'outflow' : 'inflow';
-      // LOCK (FOR UPDATE): account row. The lock is taken inside UpdateAccountBalanceUseCase
-      // via the scoped acctRepo.findById() — serializes balance mutations on this account.
-      await updateBalance.execute(
-        transaction.accountId,
-        transaction.amount.getValue(),
-        reverseType,
-      );
-      await txRepo.delete(id);
-      await this.uow.commit();
+        const updateBalance = new UpdateAccountBalanceUseCase(ctx.accounts);
+        const reverseType = transaction.nature.isIncome()
+          ? 'outflow'
+          : 'inflow';
+        // LOCK (FOR UPDATE): account row. The lock is taken inside UpdateAccountBalanceUseCase
+        // via the scoped acctRepo.findById() — serializes balance mutations on this account.
+        await updateBalance.execute(
+          transaction.accountId,
+          transaction.amount.getValue(),
+          reverseType,
+        );
+        await ctx.transactions.delete(id);
+      });
     } catch (err) {
-      await this.uow.rollback();
+      // La traducción sale del alcance transaccional: el rollback ya ocurrió
+      // dentro de run() antes de re-lanzar. Es una decisión del use case, no
+      // del ciclo de vida (ver PLAN-P3P4 §2.4.a).
       if (err instanceof InsufficientFundsException) {
         throw new CannotDeleteTransactionException(id);
       }
       throw err;
-    } finally {
-      await this.uow.release();
     }
   }
 }
