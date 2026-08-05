@@ -1,10 +1,21 @@
 import { IAccountRepository } from '../../../domain/repository/accounts.repository';
+import { IScopedAccountRepository } from '../../../domain/repository/scoped-account.repository';
 import { Account } from '../../../domain/entities/account.entity';
 
-export class InMemoryAccountRepository extends IAccountRepository {
+// Test double playing both roles: the query port (global repo) and the
+// command port (scoped repo handed out by the UoW fake). In-memory has no
+// real locks, so findByIdWithLock is the same lookup as findById.
+export class InMemoryAccountRepository
+  extends IAccountRepository
+  implements IScopedAccountRepository
+{
   private readonly store = new Map<string, Account>();
 
   async findById(id: string): Promise<Account | null> {
+    return this.store.get(id) ?? null;
+  }
+
+  async findByIdWithLock(id: string): Promise<Account | null> {
     return this.store.get(id) ?? null;
   }
 

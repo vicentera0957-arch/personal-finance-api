@@ -19,10 +19,10 @@ export class DeleteBudgetUseCase {
   async execute(id: string, requestUserId: string): Promise<void> {
     // Todo lo transaccional adentro. El commit lo hace el runner al salir sin excepción.
     const ownerId = await this.uow.run(async (ctx) => {
-      // LOCK (FOR UPDATE): budget row. The lock lives inside the scoped repo's findById().
+      // LOCK (FOR UPDATE): budget row. The lock lives inside the scoped repo's findByIdWithLock().
       // It is the serialization gate for the period invariant: holding it blocks concurrent
       // expense creates until this deletion commits (closes Race 1).
-      const budget = await ctx.budgets.findById(id);
+      const budget = await ctx.budgets.findByIdWithLock(id);
       if (!budget) throw new BudgetNotFoundException(id);
       if (budget.userId !== requestUserId)
         throw new ResourceOwnershipException(id);

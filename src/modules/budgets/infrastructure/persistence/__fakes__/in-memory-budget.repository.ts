@@ -2,12 +2,25 @@ import {
   BudgetQueryOptions,
   IBudgetRepository,
 } from '../../../domain/repository/budgets.repository';
+import { IScopedBudgetRepository } from '../../../domain/repository/scoped-budget.repository';
+import { IScopedBudgetPeriodReader } from '../../../domain/repository/budget-period-reader.port';
 import { Budget } from '../../../domain/budget.entity';
 
-export class InMemoryBudgetRepository extends IBudgetRepository {
+// Test double playing both roles: the query port (global repo) and the
+// command ports (scoped repo + period reader handed out by the UoW fakes).
+// In-memory has no real locks, so the …WithLock methods are the same lookup
+// as their unlocked counterparts.
+export class InMemoryBudgetRepository
+  extends IBudgetRepository
+  implements IScopedBudgetRepository, IScopedBudgetPeriodReader
+{
   private readonly store = new Map<string, Budget>();
 
   async findById(id: string): Promise<Budget | null> {
+    return this.store.get(id) ?? null;
+  }
+
+  async findByIdWithLock(id: string): Promise<Budget | null> {
     return this.store.get(id) ?? null;
   }
 
@@ -41,6 +54,20 @@ export class InMemoryBudgetRepository extends IBudgetRepository {
       }
     }
     return null;
+  }
+
+  async findByUserIdAndCategoryIdAndPeriodWithLock(
+    userId: string,
+    categoryId: string,
+    month: number,
+    year: number,
+  ): Promise<Budget | null> {
+    return this.findByUserIdAndCategoryIdAndPeriod(
+      userId,
+      categoryId,
+      month,
+      year,
+    );
   }
 
   async save(budget: Budget): Promise<Budget> {

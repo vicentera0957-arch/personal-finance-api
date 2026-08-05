@@ -1,14 +1,18 @@
 import { IUnitOfWork } from '../../../shared/domain/IUnitOfWork';
-import { IBudgetRepository } from './repository/budgets.repository';
+import { IScopedBudgetRepository } from './repository/scoped-budget.repository';
 import { IExpenseChecker } from './ports/expense-checker.port';
 
 /**
  * Recursos escopados que `run()` entrega dentro de una transacción de
  * `IBudgetUnitOfWork`. `interface`, no `abstract class` — ver
  * `TransactionTxContext` / el docblock de `IUnitOfWork` para el porqué.
+ *
+ * `IScopedBudgetRepository`, no `IBudgetRepository` (P5): sigue siendo el
+ * dueño del agregado, así que conserva `save`/`delete`; pierde `findByUserId`
+ * (cero llamadores bajo lock).
  */
 export interface BudgetTxContext {
-  readonly budgets: IBudgetRepository;
+  readonly budgets: IScopedBudgetRepository;
   readonly expenses: IExpenseChecker;
 }
 

@@ -1,4 +1,4 @@
-import { IAccountRepository } from '../../domain/repository/accounts.repository';
+import { IScopedAccountRepository } from '../../domain/repository/scoped-account.repository';
 import { Balance } from '../../domain/value-objects/balance.vo';
 import { Account } from '../../domain/entities/account.entity';
 import { AccountNotFoundException } from '../../domain/exceptions/account.exceptions';
@@ -7,14 +7,14 @@ import { AccountNotFoundException } from '../../domain/exceptions/account.except
 // UoW with a scoped, row-locked repository (FOR UPDATE). Always built via `new(scopedRepo)` by
 // Create/DeleteTransaction; never injected.
 export class UpdateAccountBalanceUseCase {
-  constructor(private readonly accountRepository: IAccountRepository) {}
+  constructor(private readonly accountRepository: IScopedAccountRepository) {}
 
   async execute(
     accountId: string,
     amount: number,
     type: 'inflow' | 'outflow',
   ): Promise<Account> {
-    const account = await this.accountRepository.findById(accountId);
+    const account = await this.accountRepository.findByIdWithLock(accountId);
 
     if (!account) {
       throw new AccountNotFoundException(accountId);

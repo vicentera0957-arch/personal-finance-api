@@ -27,10 +27,10 @@ export class UpdateBudgetLimitUseCase {
   async execute(command: UpdateBudgetLimitCommand): Promise<Budget> {
     // Todo lo transaccional adentro. El commit lo hace el runner al salir sin excepción.
     const updated = await this.uow.run(async (ctx) => {
-      // LOCK (FOR UPDATE): budget row. The lock lives inside the scoped repo's findById().
+      // LOCK (FOR UPDATE): budget row. The lock lives inside the scoped repo's findByIdWithLock().
       // It is the serialization gate for the period invariant: holding it blocks concurrent
       // expense creates until this limit change commits (closes the B4 write-skew).
-      const budget = await ctx.budgets.findById(command.id);
+      const budget = await ctx.budgets.findByIdWithLock(command.id);
       if (!budget) throw new BudgetNotFoundException(command.id);
       if (budget.userId !== command.requestUserId)
         throw new ResourceOwnershipException(command.id);

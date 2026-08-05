@@ -93,17 +93,18 @@ export class CreateTransactionUseCase {
         const month = command.transactionDate.getMonth() + 1;
         const year = command.transactionDate.getFullYear();
 
-        // LOCK (FOR UPDATE): budget row. The lock lives inside the scoped repo's
-        // findByUserIdAndCategoryIdAndPeriod(), not here. It is the serialization gate
-        // for the period invariant and MUST be taken before the SUM below: FOR UPDATE
+        // LOCK (FOR UPDATE): budget row. The lock lives inside the scoped reader's
+        // findByUserIdAndCategoryIdAndPeriodWithLock(), not here. It is the serialization
+        // gate for the period invariant and MUST be taken before the SUM below: FOR UPDATE
         // over a transaction range can't block phantom inserts, so the sum is only
         // consistent while this budget row stays locked.
-        const budget = await ctx.budgets.findByUserIdAndCategoryIdAndPeriod(
-          command.userId,
-          command.categoryId,
-          month,
-          year,
-        );
+        const budget =
+          await ctx.budgetPeriodReader.findByUserIdAndCategoryIdAndPeriodWithLock(
+            command.userId,
+            command.categoryId,
+            month,
+            year,
+          );
 
         if (!budget) {
           throw new BudgetRequiredForExpenseTransactionException(

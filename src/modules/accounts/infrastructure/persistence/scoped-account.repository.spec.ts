@@ -16,7 +16,7 @@ describe('createScopedAccountRepository', () => {
       queryRunner,
       new AccountMapper(),
     );
-    await repo.findById('a1');
+    await repo.findByIdWithLock('a1');
 
     expect(findOne).toHaveBeenCalledWith(AccountOrmEntity, {
       where: { id: 'a1' },

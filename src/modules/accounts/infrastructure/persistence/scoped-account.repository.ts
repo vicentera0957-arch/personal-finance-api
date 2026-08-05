@@ -1,5 +1,5 @@
 import { EntityManager, QueryRunner } from 'typeorm';
-import { IAccountRepository } from '../../domain/repository/accounts.repository';
+import { IScopedAccountRepository } from '../../domain/repository/scoped-account.repository';
 import { Account } from '../../domain/entities/account.entity';
 import { AccountOrmEntity } from './account.orm.entity';
 import { AccountMapper } from './account.mapper';
@@ -15,7 +15,7 @@ import { AccountMapper } from './account.mapper';
 // and would be useless — hence scoped repos only, built from a QueryRunner with an
 // active transaction.)
 
-class ScopedAccountRepository extends IAccountRepository {
+class ScopedAccountRepository extends IScopedAccountRepository {
   constructor(
     private readonly manager: EntityManager,
     private readonly mapper: AccountMapper,
@@ -26,7 +26,7 @@ class ScopedAccountRepository extends IAccountRepository {
   // LOCK (FOR UPDATE): account row, held until commit. Serializes every balance
   // mutation on this account — CreateTransaction, DeleteTransaction, and the
   // Archive/Unarchive/Rename use cases all compete for this same row (Race 2).
-  async findById(id: string): Promise<Account | null> {
+  async findByIdWithLock(id: string): Promise<Account | null> {
     const orm = await this.manager.findOne(AccountOrmEntity, {
       where: { id },
       lock: { mode: 'pessimistic_write' },
@@ -34,21 +34,10 @@ class ScopedAccountRepository extends IAccountRepository {
     return orm ? this.mapper.toDomain(orm) : null;
   }
 
-  async findByUserId(userId: string): Promise<Account[]> {
-    const orms = await this.manager.find(AccountOrmEntity, {
-      where: { userId },
-    });
-    return orms.map((orm) => this.mapper.toDomain(orm));
-  }
-
   async save(account: Account): Promise<Account> {
     const orm = this.mapper.toOrm(account);
     const saved = await this.manager.save(AccountOrmEntity, orm);
     return this.mapper.toDomain(saved);
-  }
-
-  async delete(id: string): Promise<void> {
-    await this.manager.delete(AccountOrmEntity, id);
   }
 }
 
@@ -64,7 +53,7 @@ class ScopedAccountRepository extends IAccountRepository {
 export function createScopedAccountRepository(
   queryRunner: QueryRunner,
   mapper: AccountMapper,
-): IAccountRepository {
+): IScopedAccountRepository {
   if (queryRunner.isReleased || !queryRunner.isTransactionActive) {
     throw new Error(
       'createScopedAccountRepository requires a QueryRunner with an active transaction: ' +

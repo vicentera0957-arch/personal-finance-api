@@ -1,5 +1,8 @@
 import { QueryRunner } from 'typeorm';
-import { createScopedBudgetRepository } from './scoped-budget.repository';
+import {
+  createScopedBudgetRepository,
+  createScopedBudgetPeriodReader,
+} from './scoped-budget.repository';
 import { BudgetOrmEntity } from './budget.orm.entity';
 import { BudgetMapper } from './budget.mapper';
 
@@ -13,7 +16,7 @@ describe('createScopedBudgetRepository', () => {
     } as unknown as QueryRunner;
 
     const repo = createScopedBudgetRepository(queryRunner, new BudgetMapper());
-    await repo.findById('b1');
+    await repo.findByIdWithLock('b1');
 
     expect(findOne).toHaveBeenCalledWith(BudgetOrmEntity, {
       where: { id: 'b1' },
@@ -29,8 +32,11 @@ describe('createScopedBudgetRepository', () => {
       manager: { findOne },
     } as unknown as QueryRunner;
 
-    const repo = createScopedBudgetRepository(queryRunner, new BudgetMapper());
-    await repo.findByUserIdAndCategoryIdAndPeriod('u1', 'c1', 6, 2026);
+    const reader = createScopedBudgetPeriodReader(
+      queryRunner,
+      new BudgetMapper(),
+    );
+    await reader.findByUserIdAndCategoryIdAndPeriodWithLock('u1', 'c1', 6, 2026);
 
     expect(findOne).toHaveBeenCalledWith(BudgetOrmEntity, {
       where: { userId: 'u1', categoryId: 'c1', month: 6, year: 2026 },

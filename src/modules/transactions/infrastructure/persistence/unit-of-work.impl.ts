@@ -11,7 +11,7 @@ import { TransactionMapper } from './transaction.mapper';
 import { AccountMapper } from '../../../accounts/infrastructure/persistence/account.mapper';
 import { createScopedAccountRepository } from '../../../accounts/infrastructure/persistence/scoped-account.repository';
 import { BudgetMapper } from '../../../budgets/infrastructure/persistence/budget.mapper';
-import { createScopedBudgetRepository } from '../../../budgets/infrastructure/persistence/scoped-budget.repository';
+import { createScopedBudgetPeriodReader } from '../../../budgets/infrastructure/persistence/scoped-budget.repository';
 import { monthPeriod } from '../../../../shared/domain/month-period';
 import { TypeOrmTransactionRunner } from '../../../../shared/infrastructure/persistence/typeorm-transaction-runner';
 
@@ -114,10 +114,13 @@ class ScopedTransactionRepository extends IScopedTransactionRepository {
  * singleton, no request scoping: the `QueryRunner` lives on the call stack
  * of `run()`.
  *
- * `ctx.budgets` — CreateTransaction locks the budget row before summing
- * period expenses — goes through `createScopedBudgetRepository()`, the same
- * factory `BudgetUnitOfWorkImpl` uses on its own QueryRunner. Two independent
- * consumers, two independent transactions, same lock semantics.
+ * `ctx.budgetPeriodReader` — CreateTransaction locks the budget row before
+ * summing period expenses — goes through `createScopedBudgetPeriodReader()`,
+ * built off the SAME underlying class `createScopedBudgetRepository()` hands
+ * to `BudgetUnitOfWorkImpl`, just narrowed to a read-only view (P5): this
+ * flow only ever reads the limit, never writes the budget. Two independent
+ * consumers, two independent transactions, same lock semantics, zero
+ * duplicated SQL.
  */
 @Injectable()
 export class TypeOrmUnitOfWorkImpl
@@ -140,7 +143,10 @@ export class TypeOrmUnitOfWorkImpl
         this.transactionMapper,
       ),
       accounts: createScopedAccountRepository(queryRunner, this.accountMapper),
-      budgets: createScopedBudgetRepository(queryRunner, this.budgetMapper),
+      budgetPeriodReader: createScopedBudgetPeriodReader(
+        queryRunner,
+        this.budgetMapper,
+      ),
     };
   }
 }

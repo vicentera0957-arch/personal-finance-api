@@ -1,13 +1,16 @@
 import { IUnitOfWork } from '../../../shared/domain/IUnitOfWork';
-import { IAccountRepository } from './repository/accounts.repository';
+import { IScopedAccountRepository } from './repository/scoped-account.repository';
 
 /**
  * Recursos escopados que `run()` entrega dentro de una transacción de
  * `IAccountUnitOfWork`. `interface`, no `abstract class` — ver
  * `TransactionTxContext` / el docblock de `IUnitOfWork` para el porqué.
+ *
+ * `IScopedAccountRepository`, no `IAccountRepository` (P5): ni Archive,
+ * Unarchive ni Rename necesitan `findByUserId` ni `delete` bajo lock.
  */
 export interface AccountTxContext {
-  readonly accounts: IAccountRepository;
+  readonly accounts: IScopedAccountRepository;
 }
 
 /**

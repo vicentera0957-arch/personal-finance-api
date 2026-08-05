@@ -1,5 +1,6 @@
 import { EntityManager, QueryRunner } from 'typeorm';
-import { IBudgetRepository } from '../../domain/repository/budgets.repository';
+import { IScopedBudgetRepository } from '../../domain/repository/scoped-budget.repository';
+import { IScopedBudgetPeriodReader } from '../../domain/repository/budget-period-reader.port';
 import { Budget } from '../../domain/budget.entity';
 import { BudgetOrmEntity } from './budget.orm.entity';
 import { BudgetMapper } from './budget.mapper';
@@ -15,7 +16,10 @@ import { BudgetMapper } from './budget.mapper';
 // and would be useless — hence scoped repos only, built from a QueryRunner with an
 // active transaction.)
 
-class ScopedBudgetRepository extends IBudgetRepository {
+class ScopedBudgetRepository
+  extends IScopedBudgetRepository
+  implements IScopedBudgetPeriodReader
+{
   constructor(
     private readonly manager: EntityManager,
     private readonly mapper: BudgetMapper,
@@ -26,7 +30,7 @@ class ScopedBudgetRepository extends IBudgetRepository {
   // LOCK (FOR UPDATE): budget row, held until commit. The "logical mutex" for the
   // period invariant (Σ expenses ≤ limit). Used by UpdateBudgetLimit / DeleteBudget
   // when the budget id is known; serializes them against concurrent expense creates.
-  async findById(id: string): Promise<Budget | null> {
+  async findByIdWithLock(id: string): Promise<Budget | null> {
     const orm = await this.manager.findOne(BudgetOrmEntity, {
       where: { id },
       lock: { mode: 'pessimistic_write' },
@@ -34,18 +38,11 @@ class ScopedBudgetRepository extends IBudgetRepository {
     return orm ? this.mapper.toDomain(orm) : null;
   }
 
-  async findByUserId(userId: string): Promise<Budget[]> {
-    const orms = await this.manager.find(BudgetOrmEntity, {
-      where: { userId },
-    });
-    return orms.map((orm) => this.mapper.toDomain(orm));
-  }
-
   // LOCK (FOR UPDATE): budget row, held until commit. Same logical mutex as
-  // findById, but reached by the natural tuple (user, category, month, year)
-  // instead of the PK. This is the gate CreateTransaction takes first, before
-  // summing period expenses — so both paths converge on the same locked row.
-  async findByUserIdAndCategoryIdAndPeriod(
+  // findByIdWithLock, but reached by the natural tuple (user, category, month,
+  // year) instead of the PK. This is the gate CreateTransaction takes first,
+  // before summing period expenses — so both paths converge on the same locked row.
+  async findByUserIdAndCategoryIdAndPeriodWithLock(
     userId: string,
     categoryId: string,
     month: number,
@@ -79,17 +76,32 @@ class ScopedBudgetRepository extends IBudgetRepository {
 // transaction, so we validate that here too — a FOR UPDATE without an open
 // transaction is type-correct but silently pointless.
 //
-// Two independent callers reach this factory, each on its own QueryRunner:
-// BudgetUnitOfWorkImpl (UpdateBudgetLimit, DeleteBudget) and
-// TypeOrmUnitOfWorkImpl (CreateTransaction, which locks the budget row before
-// summing period expenses). Same shape as createScopedAccountRepository.
+// BudgetUnitOfWorkImpl (UpdateBudgetLimit, DeleteBudget) is the only caller:
+// it owns the Budget aggregate, so it gets the full read/write surface.
 export function createScopedBudgetRepository(
   queryRunner: QueryRunner,
   mapper: BudgetMapper,
-): IBudgetRepository {
+): IScopedBudgetRepository {
   if (queryRunner.isReleased || !queryRunner.isTransactionActive) {
     throw new Error(
       'createScopedBudgetRepository requires a QueryRunner with an active transaction: ' +
+        'its FOR UPDATE locks have no effect otherwise.',
+    );
+  }
+  return new ScopedBudgetRepository(queryRunner.manager, mapper);
+}
+
+// TypeOrmUnitOfWorkImpl (CreateTransaction) is the only caller: it only locks
+// the budget row before summing period expenses, on its OWN QueryRunner — it
+// never writes a budget. Same underlying class as createScopedBudgetRepository
+// above (zero duplicated SQL / FOR UPDATE), narrowed to a read-only view.
+export function createScopedBudgetPeriodReader(
+  queryRunner: QueryRunner,
+  mapper: BudgetMapper,
+): IScopedBudgetPeriodReader {
+  if (queryRunner.isReleased || !queryRunner.isTransactionActive) {
+    throw new Error(
+      'createScopedBudgetPeriodReader requires a QueryRunner with an active transaction: ' +
         'its FOR UPDATE locks have no effect otherwise.',
     );
   }

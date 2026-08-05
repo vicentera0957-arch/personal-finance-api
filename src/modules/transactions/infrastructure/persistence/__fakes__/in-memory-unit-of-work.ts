@@ -7,12 +7,16 @@ import {
   IBudgetUnitOfWork,
 } from '../../../../budgets/domain/IBudgetUnitOfWork';
 import { IScopedTransactionRepository } from '../../../domain/repository/scoped-transaction.repository';
-import { IAccountRepository } from '../../../../accounts/domain/repository/accounts.repository';
-import { IBudgetRepository } from '../../../../budgets/domain/repository/budgets.repository';
+import { IScopedAccountRepository } from '../../../../accounts/domain/repository/scoped-account.repository';
+import { IScopedBudgetRepository } from '../../../../budgets/domain/repository/scoped-budget.repository';
+import { IScopedBudgetPeriodReader } from '../../../../budgets/domain/repository/budget-period-reader.port';
 import { IExpenseChecker } from '../../../../budgets/domain/ports/expense-checker.port';
 
 // Este fake sirve DOS puertos (ITransactionUnitOfWork y IBudgetUnitOfWork),
 // así que su run() necesita un contexto que satisfaga ambos TCtx a la vez.
+// Tras P5 esto ya no requiere una intersección en `budgets`: cada puerto
+// pide una propiedad distinta (`budgetPeriodReader` vs. `budgets`), así que
+// no hay dos tipos incompatibles compartiendo un nombre.
 type InMemoryTxContext = TransactionTxContext & BudgetTxContext;
 
 export class InMemoryUnitOfWork
@@ -24,8 +28,9 @@ export class InMemoryUnitOfWork
 
   constructor(
     private readonly txRepo: IScopedTransactionRepository,
-    private readonly acctRepo: IAccountRepository,
-    private readonly budgetRepo?: IBudgetRepository,
+    private readonly acctRepo: IScopedAccountRepository,
+    private readonly budgetRepo?: IScopedBudgetRepository &
+      IScopedBudgetPeriodReader,
     private readonly expenseChecker?: IExpenseChecker,
   ) {
     super();
@@ -45,7 +50,15 @@ export class InMemoryUnitOfWork
       const result = await work({
         transactions: txRepo,
         accounts: acctRepo,
-        get budgets(): IBudgetRepository {
+        get budgetPeriodReader(): IScopedBudgetPeriodReader {
+          if (!budgetRepo) {
+            throw new Error(
+              'BudgetRepository not provided to InMemoryUnitOfWork',
+            );
+          }
+          return budgetRepo;
+        },
+        get budgets(): IScopedBudgetRepository {
           if (!budgetRepo) {
             throw new Error(
               'BudgetRepository not provided to InMemoryUnitOfWork',
