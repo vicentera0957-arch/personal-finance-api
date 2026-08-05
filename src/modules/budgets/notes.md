@@ -65,8 +65,8 @@ Methods: `hasExpensesInPeriod(userId, categoryId, month, year): Promise<boolean>
 | `GetBudgetByIdUseCase`                 | Finds → validates ownership → throws `BudgetNotFoundException`                                          |
 | `GetBudgetsByUserIdUseCase`            | Filters by userId (and optionally month/year)                                                      |
 | `GetBudgetByUserCategoryPeriodUseCase` | Internal lookup for `CreateTransactionUseCase`                                                    |
-| `UpdateBudgetLimitUseCase`             | Opens UoW → `findById` budget (FOR UPDATE) → validates ownership → sums the period's expenses (no own lock; serialized by the budget lock) → if `new limit < spent` throws `BudgetLimitBelowSpentException` (409) → commit → cache invalidation best-effort (outside the tx's error scope) |
-| `DeleteBudgetUseCase`                  | Opens UoW → `findById` budget (FOR UPDATE) → validates ownership → `hasExpensesInPeriod` (no own lock; serialized by the budget lock) → deletes if there are no expenses → cache invalidation best-effort (outside the tx's error scope) |
+| `UpdateBudgetLimitUseCase`             | Opens UoW → `findByIdWithLock` budget (FOR UPDATE) → validates ownership → sums the period's expenses (no own lock; serialized by the budget lock) → if `new limit < spent` throws `BudgetLimitBelowSpentException` (409) → commit → cache invalidation best-effort (outside the tx's error scope) |
+| `DeleteBudgetUseCase`                  | Opens UoW → `findByIdWithLock` budget (FOR UPDATE) → validates ownership → `hasExpensesInPeriod` (no own lock; serialized by the budget lock) → deletes if there are no expenses → cache invalidation best-effort (outside the tx's error scope) |
 
 ---
 
@@ -132,7 +132,19 @@ budgets.module.ts:      imported forwardRef(() => TransactionsModule)
 
 Neither port actually needed anything `transactions`-specific: `UpdateBudgetLimit` and `DeleteBudget` only ever needed a transaction, a `FOR UPDATE` on the budget row, and one aggregate read under that lock — all scoped to the budget aggregate. So instead of keeping the cross-module split, both implementations (`ScopedExpenseChecker`, `BudgetUnitOfWorkImpl`) moved into `budgets/infrastructure/persistence/`, next to the ports they serve. `budgets` no longer imports `transactions`; `forwardRef()` is gone from the whole module graph.
 
-The one piece that stayed genuinely shared is `ScopedBudgetRepository`: `CreateTransactionUseCase` still locks the budget row (on `TypeOrmUnitOfWorkImpl`'s own `QueryRunner`) before summing period expenses, independent of `UpdateBudgetLimit` / `DeleteBudget` locking it (on `BudgetUnitOfWorkImpl`'s own `QueryRunner`). So `ScopedBudgetRepository` took the shape `ScopedAccountRepository` already used: unexported class, reached only via `createScopedBudgetRepository(queryRunner, mapper)`, called independently by both UoWs, each on its own transaction. `transactions → budgets` remains as a plain one-way import (`GetBudgetByUserCategoryPeriodUseCase`, `BudgetMapper`, and the scoped-repository factory).
+The one piece that stayed genuinely shared is `ScopedBudgetRepository`: `CreateTransactionUseCase` still locks the budget row (on `TypeOrmUnitOfWorkImpl`'s own `QueryRunner`) before summing period expenses, independent of `UpdateBudgetLimit` / `DeleteBudget` locking it (on `BudgetUnitOfWorkImpl`'s own `QueryRunner`). So `ScopedBudgetRepository` took the shape `ScopedAccountRepository` already used: unexported class, reached only via factories, called independently by both UoWs, each on its own transaction. `transactions → budgets` remains as a plain one-way import (`GetBudgetByUserCategoryPeriodUseCase`, `BudgetMapper`, and the scoped-repository factories).
+
+> **P5 (`PLAN-P5-narrow-ports.md`) split the ONE factory into TWO, same underlying class.**
+> `createScopedBudgetRepository(queryRunner, mapper)` still returns the full read/write surface
+> (`IScopedBudgetRepository`: `findByIdWithLock`, `save`, `delete`) — the one `BudgetUnitOfWorkImpl`
+> uses, since `UpdateBudgetLimit`/`DeleteBudget` own the aggregate. `transactions` no longer calls it.
+> Instead `TypeOrmUnitOfWorkImpl` calls the new `createScopedBudgetPeriodReader(queryRunner, mapper)`,
+> which returns `IScopedBudgetPeriodReader` (just `findByUserIdAndCategoryIdAndPeriodWithLock`) — the
+> ONLY thing `CreateTransaction` ever needed. Both factories build the exact same
+> `ScopedBudgetRepository` instance (`implements IScopedBudgetRepository, IScopedBudgetPeriodReader`)
+> off the same `QueryRunner`; the narrowing is a return-type view, not a second query or a second
+> lock. Exposed to `transactions` as `ctx.budgetPeriodReader`, not `ctx.budgets` — the rename says
+> out loud that this consumer can't write a budget.
 
 ---
 

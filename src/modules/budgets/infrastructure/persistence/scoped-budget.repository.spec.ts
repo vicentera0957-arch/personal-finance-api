@@ -36,7 +36,12 @@ describe('createScopedBudgetRepository', () => {
       queryRunner,
       new BudgetMapper(),
     );
-    await reader.findByUserIdAndCategoryIdAndPeriodWithLock('u1', 'c1', 6, 2026);
+    await reader.findByUserIdAndCategoryIdAndPeriodWithLock(
+      'u1',
+      'c1',
+      6,
+      2026,
+    );
 
     expect(findOne).toHaveBeenCalledWith(BudgetOrmEntity, {
       where: { userId: 'u1', categoryId: 'c1', month: 6, year: 2026 },

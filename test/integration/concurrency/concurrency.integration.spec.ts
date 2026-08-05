@@ -66,7 +66,7 @@ describe('Concurrency: pessimistic locks and invariant serialization under load'
 
   // =======================================================================
   // N concurrent inflows on the same account
-  // Without the lock in ScopedAccountRepository.findById, two concurrent requests
+  // Without the lock in ScopedAccountRepository.findByIdWithLock, two concurrent requests
   // read the same currentBalance and both write balance+100 instead of
   // (balance+100)+100. The result would be 10_100 instead of 10_200.
   // With FOR UPDATE, the second request blocks until the first commits.
@@ -107,7 +107,7 @@ describe('Concurrency: pessimistic locks and invariant serialization under load'
 
   // =======================================================================
   // N concurrent expenses respect the budget limit
-  // Without the lock in ScopedBudgetRepository.findByUserIdAndCategoryIdAndPeriod
+  // Without the lock in ScopedBudgetRepository.findByUserIdAndCategoryIdAndPeriodWithLock
   // and in sumExpenseAmountByUserCategoryAndPeriod, all concurrent requests read
   // sum=90 at the same time, all validate 90+5=95 <= 100 and all pass, leaving the
   // final sum at 90+25=115 > 100 (invariant violated).

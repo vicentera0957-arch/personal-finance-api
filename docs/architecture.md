@@ -120,7 +120,7 @@ flowchart LR
         UOW["«impl» BudgetUnitOfWorkImpl<br/><i>budgets/infrastructure</i>"]
         IEC["«port» IExpenseChecker<br/><i>budgets/domain</i>"]
         ECI["«impl» ScopedExpenseChecker<br/><i>budgets/infrastructure</i>"]
-        BLOCK["ScopedBudgetRepository.findById<br/>SELECT … FOR UPDATE (budget row)"]
+        BLOCK["ScopedBudgetRepository.findByIdWithLock<br/>SELECT … FOR UPDATE (budget row)"]
         BUC -->|"calls at runtime"| IBU
         UOW -.->|implements| IBU
         UOW -->|"factory (QueryRunner)"| BLOCK
@@ -195,7 +195,7 @@ flowchart LR
         AUC["Archive · Unarchive · Rename<br/><i>use cases</i>"]
         IAU["«port» IAccountUnitOfWork<br/><i>accounts/domain</i>"]
         UOW["«impl» AccountUnitOfWorkImpl<br/><i>accounts/infrastructure</i>"]
-        LOCK["ScopedAccountRepository.findById<br/>SELECT … FOR UPDATE (account row)"]
+        LOCK["ScopedAccountRepository.findByIdWithLock<br/>SELECT … FOR UPDATE (account row)"]
         AUC -->|"calls at runtime"| IAU
         UOW -.->|implements| IAU
         UOW -->|"factory (QueryRunner)"| LOCK

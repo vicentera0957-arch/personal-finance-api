@@ -148,17 +148,17 @@ Each impl builds its `TCtx` exactly once per `run()` call, inside `createContext
 
 `TransactionTxContext` (built by `TypeOrmUnitOfWorkImpl.createContext()`) exposes three scoped resources, all sharing the same `EntityManager` (via the active `QueryRunner`):
 
-- `ctx.transactions` → `ScopedTransactionRepository`
-- `ctx.accounts` → `ScopedAccountRepository` (built from `accounts`' factory — see below)
-- `ctx.budgets` → `ScopedBudgetRepository` (built from `budgets`' factory — see below)
+- `ctx.transactions` → `ScopedTransactionRepository`, typed `IScopedTransactionRepository`
+- `ctx.accounts` → `ScopedAccountRepository` (built from `accounts`' factory — see below), typed `IScopedAccountRepository`
+- `ctx.budgetPeriodReader` → the same `ScopedBudgetRepository` class (built from `budgets`' factory — see below), typed `IScopedBudgetPeriodReader` — a **narrower, sibling** port than what `budgets`' own UoW gets (see "Why `IScopedAccountRepository`/`IScopedBudgetPeriodReader` are narrow" below). Named apart from `ctx.budgets` on purpose: this consumer can only read the period's budget row, never write or delete it.
 
 `AccountTxContext` (built by `AccountUnitOfWorkImpl.createContext()`) exposes one:
 
-- `ctx.accounts` → `ScopedAccountRepository`
+- `ctx.accounts` → `ScopedAccountRepository`, typed `IScopedAccountRepository`
 
 `BudgetTxContext` (built by `BudgetUnitOfWorkImpl.createContext()`) exposes two:
 
-- `ctx.budgets` → `ScopedBudgetRepository` (same factory `TypeOrmUnitOfWorkImpl` calls, its own `QueryRunner`)
+- `ctx.budgets` → `ScopedBudgetRepository` (same factory `TypeOrmUnitOfWorkImpl`'s `budgetPeriodReader` calls, its own `QueryRunner`), typed `IScopedBudgetRepository` — the full read/write surface, because this UoW owns the Budget aggregate
 - `ctx.expenses` → `ScopedExpenseChecker`
 
 `AuthTxContext` (built by `AuthUnitOfWorkImpl.createContext()`) exposes:
@@ -177,17 +177,34 @@ These classes take pessimistic locks aggressively because, by construction, they
 
 **The factory takes a `QueryRunner`, never an `EntityManager`.** That is the whole point: `dataSource.manager` is an `EntityManager`, so passing it stops *compiling*. A `QueryRunner` that is connected but has no open transaction is still type-correct and still silently useless, so the factory also throws on `isReleased || !isTransactionActive`. Never publish a scoped repository class directly — a `FOR UPDATE` that quietly does nothing is the worst failure mode in this system, and no integration test reliably catches it.
 
+**Why `IScopedAccountRepository`/`IScopedBudgetPeriodReader` are narrow.** `ctx.accounts` and
+`ctx.budgetPeriodReader` used to be typed as the full global ports (`IAccountRepository`,
+`IBudgetRepository`), so `CreateTransactionUseCase` could, by type, `delete()` a neighbor's aggregate
+inside its own transaction — nothing used that capability, but nothing prevented it either. Three
+sibling ports close that: `IScopedAccountRepository` (`findByIdWithLock` + `save` — no
+`findByUserId`/`delete`, zero callers), `IScopedBudgetRepository` (`findByIdWithLock` + `save` +
+`delete` — `budgets`' own UoW still owns that aggregate) and `IScopedBudgetPeriodReader`
+(`findByUserIdAndCategoryIdAndPeriodWithLock` only — the one thing `CreateTransaction` reads). They
+are **siblings, not subtypes** — none `extends` a global repo port, because inheriting would drag
+along the very writes being removed. The two budgets factories build the identical
+`ScopedBudgetRepository` instance off one `QueryRunner`
+(`createScopedBudgetRepository` → `IScopedBudgetRepository`, `createScopedBudgetPeriodReader` →
+`IScopedBudgetPeriodReader`): the narrowing is a return-type view, zero duplicated SQL. A
+compile-only type-test (`transactions/domain/__type-tests__/uow-narrowing.type-test.ts`, gated by
+`npm run build`) fails if a scoped context ever regains `save`/`delete` on an aggregate its consumer
+doesn't own.
+
 ### Locking & serialization map
 
-Row-based reads (`findById`, `findByTokenHashWithLock`) take `FOR UPDATE`. Aggregate reads (`SUM`/`COUNT`) **cannot** — Postgres forbids `FOR UPDATE` on aggregates — so they carry **no own lock** and are serialized by the budget-row lock the caller takes first.
+Row-based reads (`findByIdWithLock`, `findByTokenHashWithLock`) take `FOR UPDATE`. Aggregate reads (`SUM`/`COUNT`) **cannot** — Postgres forbids `FOR UPDATE` on aggregates — so they carry **no own lock** and are serialized by the budget-row lock the caller takes first.
 
 | Method                                                                | Purpose                                                                                                                                                                                                     |
 | --------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ScopedAccountRepository.findById`                                    | Serializes balance mutations (`CreateTransaction`, `DeleteTransaction`, `Archive`, `Unarchive`, `Rename`) on the same account row. Lives in `accounts/infrastructure/persistence/scoped-account.repository.ts`; the two callers reach it through **different** UoWs and therefore different `QueryRunner`s — they still serialize, because the lock is on the row |
-| `ScopedBudgetRepository.findById`                                     | Serializes `UpdateBudgetLimit` and `DeleteBudget` against concurrent transaction creates. Lives in `budgets/infrastructure/persistence/scoped-budget.repository.ts`; `BudgetUnitOfWorkImpl` and `TypeOrmUnitOfWorkImpl` reach it through the same factory on **different** `QueryRunner`s — they still serialize, because the lock is on the row (same shape as `ScopedAccountRepository` above) |
-| `ScopedBudgetRepository.findByUserIdAndCategoryIdAndPeriod`           | Serializes the budget-limit check inside `CreateTransaction`                                                                                                                                                |
+| `ScopedAccountRepository.findByIdWithLock`                            | Serializes balance mutations (`CreateTransaction`, `DeleteTransaction`, `Archive`, `Unarchive`, `Rename`) on the same account row. Lives in `accounts/infrastructure/persistence/scoped-account.repository.ts`; the two callers reach it through **different** UoWs and therefore different `QueryRunner`s — they still serialize, because the lock is on the row. Since P5 both callers see it through `IScopedAccountRepository` (`findByIdWithLock` + `save` only) |
+| `ScopedBudgetRepository.findByIdWithLock`                             | Serializes `UpdateBudgetLimit` and `DeleteBudget` against concurrent transaction creates. Lives in `budgets/infrastructure/persistence/scoped-budget.repository.ts`; only exposed through `IScopedBudgetRepository` (`createScopedBudgetRepository`), consumed by `BudgetUnitOfWorkImpl` — the aggregate owner |
+| `ScopedBudgetRepository.findByUserIdAndCategoryIdAndPeriodWithLock`   | Serializes the budget-limit check inside `CreateTransaction`. Since P5, `TypeOrmUnitOfWorkImpl` reaches the same underlying class through the sibling factory `createScopedBudgetPeriodReader`, exposed as `ctx.budgetPeriodReader: IScopedBudgetPeriodReader` (read-only — no `save`/`delete`) — a **different** `QueryRunner` from `BudgetUnitOfWorkImpl`'s, so they still serialize on the row, not on a shared instance |
 | `ScopedTransactionRepository.findByIdWithLock`                                | Serializes concurrent `DELETE /transactions/:id` on the same row — second arrival sees null after first commits, throws `TransactionNotFoundException`, rolls back. Prevents double-reverse of the balance. |
-| `ScopedTransactionRepository.sumExpenseAmountByUserCategoryAndPeriod` | **No own lock** (aggregate). Serialized by the budget-row lock `CreateTransaction` takes first via `findByUserIdAndCategoryIdAndPeriod`                                                                                                                                           |
+| `ScopedTransactionRepository.sumExpenseAmountByUserCategoryAndPeriod` | **No own lock** (aggregate). Serialized by the budget-row lock `CreateTransaction` takes first via `findByUserIdAndCategoryIdAndPeriodWithLock`                                                                                                                                           |
 | `ScopedExpenseChecker.hasExpensesInPeriod`                            | **No own lock** (aggregate). Serialized by the budget-row `FOR UPDATE` `DeleteBudget` takes first. Closes Race 1. Lives in `budgets/infrastructure/persistence/scoped-expense-checker.ts`, served by `BudgetUnitOfWorkImpl` — moved out of `transactions/infrastructure/persistence/unit-of-work.impl.ts`, where it lived before the `IBudgetUnitOfWork` split |
 | `ScopedExpenseChecker.sumExpenseAmountInPeriod`                       | **No own lock** (aggregate). Serialized by the budget-row `FOR UPDATE` `UpdateBudgetLimit` takes first. Closes B4. Same file/history as the row above |
 | `ScopedRefreshTokenRepository.findByTokenHashWithLock`                | Serializes two concurrent `/auth/refresh` calls on the same token — replay detection depends on this                                                                                                        |
@@ -318,7 +335,7 @@ Three layers, every time a uniqueness rule exists:
 
 > **Resolved (was a gap):** the integration suite under `test/integration/` (auth, users, accounts, categories, budgets, transactions, concurrency) is active — `npm run test:integration` against a real Postgres. The old `.bak` disabling is gone.
 
-> **Resolved (was a gap):** `ITransactionRepository` is split into a query port (`findById`/`findByAccountId`/`findByUserId`) and a command port `IScopedTransactionRepository` (`findByIdWithLock`/`sum`/`save`/`delete`). The global repo can no longer write outside the UoW — it is enforced by types. The dead `IExpenseChecker` binding (`ExpenseCheckerImpl`) was removed; the port is served only by `ScopedExpenseChecker` inside the UoW.
+> **Resolved (was a gap):** `ITransactionRepository` is split into a query port (`findById`/`findByAccountId`/`findByUserId`) and a command port `IScopedTransactionRepository` (`findByIdWithLock`/`sum`/`save`/`delete`). The global repo can no longer write outside the UoW — it is enforced by types. The dead `IExpenseChecker` binding (`ExpenseCheckerImpl`) was removed; the port is served only by `ScopedExpenseChecker` inside the UoW. **P5 (`PLAN-P5-narrow-ports.md`) extended the same discipline to the other two aggregates**, and went one step further than a query/command split: `accounts` and `budgets` each publish a full port for their own UoW plus a **narrower sibling port** for the one neighbor that reads/writes across the boundary (`IScopedAccountRepository`, `IScopedBudgetRepository`, `IScopedBudgetPeriodReader` — never `extends` of the global repo, to avoid dragging along `delete()`). A consumer that doesn't own an aggregate can no longer, by type, write or delete it — verified by a compile-only type-test gated on `npm run build`.
 
 ---
 

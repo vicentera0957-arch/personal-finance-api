@@ -14,9 +14,20 @@ Defines only `run<T>(work: (ctx: TCtx) => Promise<T>): Promise<T>`. It knows not
 Level 2 - Per-module port (<module>/domain/I<Module>UnitOfWork.ts)
 Each module that needs atomicity defines its own port that extends IUnitOfWork<TCtx> for its own `TCtx` — a plain interface (not a DI token; see the docblock on IUnitOfWork for why that's fine) listing the repos that module's flows need as **properties**, not getters — including repos of other modules it consumes (not just its own). The port itself declares no members beyond the inherited `run()`; the module-specific surface lives entirely in `TCtx`.
 
-Example: `TransactionTxContext` (the `TCtx` for `ITransactionUnitOfWork`) exposes `transactions` + `accounts` + `budgets` as read-only properties, because CreateTransaction maintains invariants that touch all three tables in a single PostgreSQL transaction.
+Example: `TransactionTxContext` (the `TCtx` for `ITransactionUnitOfWork`) exposes `transactions` + `accounts` + `budgetPeriodReader` as read-only properties, because CreateTransaction maintains invariants that touch all three tables in a single PostgreSQL transaction.
 
-`TCtx` lives in the consumer module's domain/ ("port owned by consumer" pattern), even though its properties are repo interfaces of other modules. Those repo interfaces are those of their owning module's domain (e.g. IAccountRepository still belongs to accounts/domain); the UoW's `createContext()` merely groups them according to what the use case needs.
+`TCtx` lives in the consumer module's domain/ ("port owned by consumer" pattern), even though its properties are repo interfaces of other modules. Those repo interfaces are those of their owning module's domain (e.g. `IScopedAccountRepository` still belongs to `accounts/domain`); the UoW's `createContext()` merely groups them according to what the use case needs.
+
+**Per-consumer narrowing (`PLAN-P5-narrow-ports.md`).** As of P5, the grouping isn't just "which
+repos" but "how much of each repo": `accounts` and `budgets` each publish a full port (own
+aggregate) alongside a narrower **sibling** port (never a subtype — extending would drag along
+`save`/`delete`) for neighbors that only read or partially write. `TransactionTxContext.accounts` is
+`IScopedAccountRepository` (`findByIdWithLock` + `save` — the balance write transactions legitimately
+owns; no `delete`/`findByUserId`, zero callers). `TransactionTxContext.budgetPeriodReader` is
+`IScopedBudgetPeriodReader` (read-only — transactions never writes a budget), which is why the
+property isn't named `budgets` anymore. `BudgetTxContext.budgets` stays `IScopedBudgetRepository`,
+the full surface, because `budgets`' own UoW owns that aggregate. The rule: a scoped port hands a
+consumer the reads it uses and only the writes on the aggregate it's responsible for.
 
 Level 3 - One implementation per transactional boundary
 There is no single global impl. Each impl serves the port whose flows share one boundary, `extends TypeOrmTransactionRunner<TCtx>` for its own `TCtx`, and `implements I<Module>UnitOfWork` (valid because that port has no members beyond `run()`). That is a 1:1 mapping across all four module-specific ports:

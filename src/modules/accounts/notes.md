@@ -79,9 +79,9 @@ Abstract class. Methods: `findById`, `findByUserId`, `save`, `delete`.
 | `CreateAccountUseCase` | Creates VOs → creates entity → persists |
 | `GetAccountByIdUseCase` | Finds by id → validates ownership (`requestUserId`) → throws `AccountNotFoundException` if it doesn't exist |
 | `GetAccountsByUserIdUseCase` | Returns an array (empty is valid) |
-| `RenameAccountUseCase` | Opens `IAccountUnitOfWork` → `findById` (FOR UPDATE) → inline ownership → `account.rename()` → persists |
-| `ArchiveAccountUseCase` | Opens `IAccountUnitOfWork` → `findById` (FOR UPDATE) → inline ownership → `account.archive()` → persists |
-| `UnarchiveAccountUseCase` | Opens `IAccountUnitOfWork` → `findById` (FOR UPDATE) → inline ownership → `account.unarchive()` → persists |
+| `RenameAccountUseCase` | Opens `IAccountUnitOfWork` → `findByIdWithLock` (FOR UPDATE) → inline ownership → `account.rename()` → persists |
+| `ArchiveAccountUseCase` | Opens `IAccountUnitOfWork` → `findByIdWithLock` (FOR UPDATE) → inline ownership → `account.archive()` → persists |
+| `UnarchiveAccountUseCase` | Opens `IAccountUnitOfWork` → `findByIdWithLock` (FOR UPDATE) → inline ownership → `account.unarchive()` → persists |
 | `DeleteAccountUseCase` | Delegates to `GetAccountByIdUseCase` (existence + ownership) → `repo.delete()` — no UoW (doesn't mutate balance) |
 
 > **Why Rename/Archive/Unarchive use the UoW and Delete doesn't:** the first three compete for the account row's lock against `CreateTransaction`/`DeleteTransaction` (see Race 2). `Delete` doesn't mutate the balance, so it doesn't need to serialize with the financial mutations.
@@ -91,7 +91,9 @@ Abstract class. Methods: `findById`, `findByUserId`, `save`, `delete`.
 > TypeOrmTransactionRunner<AccountTxContext>` and `implements IAccountUnitOfWork`; its only job is
 > `createContext(queryRunner)`, which builds the single scoped account repo exposed as
 > `ctx.accounts` (a property on the object `run()`'s callback receives — there is no
-> `getScopedAccountRepository()` getter to call anymore). It used to come from `transactions`, which
+> `getScopedAccountRepository()` getter to call anymore), typed `IScopedAccountRepository`
+> (`PLAN-P5-narrow-ports.md`: `findByIdWithLock` + `save` only — no `findByUserId`/`delete`, since
+> nothing here ever called them). It used to come from `transactions`, which
 > forced this module to import `TransactionsModule` and closed a dependency cycle — for no domain
 > reason, since `transactions` never injected that token. Competing for the same row lock never
 > required the same UoW instance: even back when `Scope.REQUEST` still existed, it already gave one
@@ -100,7 +102,7 @@ Abstract class. Methods: `findById`, `findByUserId`, `save`, `delete`.
 > singleton — no `QueryRunner` field to protect), the same is true for an even simpler reason: every
 > `run()` call opens its own `QueryRunner` regardless of instance sharing. The serialization is
 > Postgres holding the row until commit, unchanged either way. **`accounts` is now a leaf module.**
-| `UpdateAccountBalanceUseCase` | `repo.findById()` → `account.inflow()` or `account.outflow()` → `repo.save()` |
+| `UpdateAccountBalanceUseCase` | `repo.findByIdWithLock()` → `account.inflow()` or `account.outflow()` → `repo.save()` |
 
 ### `UpdateAccountBalanceUseCase` — consumed by `transactions`
 
@@ -110,13 +112,13 @@ This use case IS consumed by `CreateTransactionUseCase` and `DeleteTransactionUs
 
 ```typescript
 // create-transaction.use-case.ts (inside uow.run(async (ctx) => { ... }))
-const updateBalance = new UpdateAccountBalanceUseCase(ctx.accounts); // ScopedAccountRepository
+const updateBalance = new UpdateAccountBalanceUseCase(ctx.accounts); // IScopedAccountRepository
 await updateBalance.execute(command.accountId, amount.getValue(), 'inflow' | 'outflow');
 ```
 
 By using the scoped repository, the balance update runs inside the same PostgreSQL transaction as the `txRepo.save(transaction)`. This guarantees atomicity: if the transaction save fails, the balance is not updated either.
 
-**Bug B (balance lost update) — CLOSED.** `ScopedAccountRepository.findById` takes `FOR UPDATE`, so two concurrent transactions on the same account are serialized: the second one waits for the first one's COMMIT and reads the current balance. Full post-mortem in [transactions/notes-history.md](../../transactions/notes-history.md). The competition between account mutations and transactions (Race 2) is in [docs/history/race-conditions-fix-2026-05.md](../../../docs/history/race-conditions-fix-2026-05.md).
+**Bug B (balance lost update) — CLOSED.** `ScopedAccountRepository.findByIdWithLock` takes `FOR UPDATE`, so two concurrent transactions on the same account are serialized: the second one waits for the first one's COMMIT and reads the current balance. Full post-mortem in [transactions/notes-history.md](../../transactions/notes-history.md). The competition between account mutations and transactions (Race 2) is in [docs/history/race-conditions-fix-2026-05.md](../../../docs/history/race-conditions-fix-2026-05.md).
 
 ---
 

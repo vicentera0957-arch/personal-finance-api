@@ -19,8 +19,15 @@
 > 4 impls son singletons; ya no hay ningún provider `Scope.REQUEST` en el grafo, y los 7 controllers
 > de dominio se resuelven una sola vez por proceso (`test/integration/di-scope.integration.spec.ts`
 > lo prueba, no sólo lo asume). El resultado vive en el código y en la sección de concurrencia de
-> `CLAUDE.md`. Los problemas que quedan (P5, P6) son internos a la forma del puerto o una
-> duplicación de query — ninguno es de composición entre módulos ni de ciclo de vida transaccional.
+> `CLAUDE.md`. **P5 también se cerró**, sobre el estado post-runner, vía `PLAN-P5-narrow-ports.md`:
+> `ctx.accounts` / `ctx.budgets` en `TransactionTxContext` dejaron de ser los puertos completos
+> (`IAccountRepository`, `IBudgetRepository`) y pasaron a ser `IScopedAccountRepository` (sin
+> `findByUserId` ni `delete`) y, por separado, `ctx.budgetPeriodReader: IScopedBudgetPeriodReader`
+> (sólo lectura — `transactions` nunca escribe un budget). Un type-test
+> (`transactions/domain/__type-tests__/uow-narrowing.type-test.ts`, gateado por `npm run build`)
+> falla en compilación si algún puerto escopado vuelve a ganar `save`/`delete` sobre un agregado que
+> no le pertenece. El problema que queda (P6) es una duplicación de query, no de composición entre
+> módulos ni de ciclo de vida transaccional.
 
 ---
 
@@ -117,34 +124,12 @@ endurecimiento estructural, no defectos de comportamiento (ese, P7, ya está cer
 > `src/PLAN-P3P4-transactional-runner.md` — enunciado, evidencia, costo y la propuesta que terminó
 > implementándose. Sus secciones dedicadas se retiraron de este inventario, siguiendo el mismo
 > patrón que P1, P2 y P7.
-
-## P5 — Puerto transaccional sobre-expuesto
-
-**Enunciado:** el UoW de transacciones entrega los puertos de repositorio **completos** de los
-agregados vecinos, incluyendo operaciones que sus consumidores nunca deberían poder invocar.
-
-**Evidencia:** `transactions/domain/ITransactionUnitOfWork.ts:20-21` devuelve `IAccountRepository` e
-`IBudgetRepository` enteros — con `save()` y `delete()`. Por tipo, `CreateTransactionUseCase` puede
-borrar una cuenta o un budget dentro de su transacción. Nada lo impide.
-
-**Costo real:** ninguno hoy (nadie abusa). Es una frontera declarada pero no impuesta. Lo relevante
-es que **el repo ya decidió que esto importa**: `ITransactionRepository` fue partido en puerto de
-query y `IScopedTransactionRepository` de comando, precisamente para que el repo global no pueda
-escribir fuera del UoW *y esté impuesto por tipos*. La misma disciplina no se aplicó a los vecinos.
-
-**Independencia:** total. Se puede hacer sin tocar nada más.
-
-**Propuesta:** puertos de comando acotados. `transactions` no necesita `IAccountRepository`; necesita
-"leer con lock + guardar balance" — dos métodos. Idem budget: "leer con lock por tupla natural".
-
-**El punto de entrada ya existe:** el tipo de retorno de `createScopedAccountRepository` y
-`createScopedBudgetRepository` es exactamente donde se estrecha el puerto, y ninguna otra llamada
-tiene que cambiar. Hoy devuelven el repositorio completo para no ampliar el alcance del refactor que
-las creó. El precedente de la forma final es `IScopedTransactionRepository`
-(`transactions/domain/repository/scoped-transaction.repository.ts`): puerto de consulta separado del
-de comando, y el de comando nunca es token de DI.
-
----
+>
+> **P5 también se cerró** (ver la nota de cabecera). Queda como referencia histórica en
+> `src/PLAN-P5-narrow-ports.md` — la derivación de qué capacidad necesita realmente cada consumidor
+> vecino, la regla de estrechamiento (§2: "un puerto escopado entrega las lecturas que usa y sólo las
+> escrituras sobre el agregado del que ese consumidor es responsable") y la verificación a nivel de
+> tipos. Su sección dedicada se retiró de este inventario, mismo patrón.
 
 ## P6 — La definición de "gasto del período" tiene dos implementaciones
 
@@ -230,35 +215,29 @@ explícito por implícito es un retroceso de legibilidad. Y no resuelve el owner
 
 ```
 P6  ────────────────────────────  independiente
-P5  ────────────────────────────  independiente
 ```
 
-P3 y P4 (que eran mutuamente dependientes — "misma solución: una cirugía compra las dos") ya
-cerraron. Los dos que quedan, P5 y P6, son mutuamente independientes y no dependen de nada más.
+P3 y P4 (que eran mutuamente dependientes — "misma solución: una cirugía compra las dos") y P5 (que
+dependía sólo de que P3 + P4 hubiera fijado la forma final del contexto) ya cerraron. Sólo queda P6,
+que no depende de nada más.
 
 | Problema | Costo | Riesgo | Naturaleza |
 | -------- | ----- | ------ | ---------- |
 | **P6** Query de gastos duplicada | bajo | nulo | duplicación |
-| **P5** Puerto sobre-expuesto | bajo | nulo | endurecimiento |
 
-**Orden sugerido:** P6 → P5. (El original era P6 → P3 + P4 → P5; con P3 + P4 cerrados, sólo queda
-el tramo final.)
-
-P6 primero, porque el cierre de P1 lo encareció y sigue encareciéndose. P5 al final: el tipo de
-retorno de las factories scoped es el punto exacto donde se estrecha el puerto, y conviene tocarlo
-una sola vez.
-
-> **Discrepancia de orden con P5 — resuelta.** El plan de P5 (`PLAN-P5-narrow-ports.md`) proponía
-> hacerlo *antes* de P3 + P4; el plan de P3 + P4 asumía que P5 seguía diferido. Se ejecutó **P3 + P4
-> → P5**: P3 + P4 cerró primero (`PLAN-P3P4-transactional-runner.md`, commits 1-8), y P5 sigue
-> pendiente, ahora sobre el estado post-runner. Esto tiene una consecuencia concreta para quien
-> retome P5: los 7 puntos donde acotaría el puerto ya no son los getters `getScopedAccountRepository()`
-> / `getScopedBudgetRepository()` que su plan original describía — son las propiedades `ctx.accounts`
-> / `ctx.budgets` que `createContext()` construye. El punto de entrada (el tipo de retorno de
-> `createScopedAccountRepository` / `createScopedBudgetRepository`) no se movió; sólo cambió quién
-> lo invoca y cómo se expone el resultado. `PLAN-P5-narrow-ports.md` §10.3 registra esto.
+> **Cierre de P5, para quien busque el orden histórico.** El plan de P5 (`PLAN-P5-narrow-ports.md`)
+> proponía hacerlo *antes* de P3 + P4; el plan de P3 + P4 asumía que P5 seguía diferido. Se ejecutó
+> **P3 + P4 → P5**: P3 + P4 cerró primero (`PLAN-P3P4-transactional-runner.md`, commits 1-8), y P5 se
+> retomó después sobre el estado post-runner (`PLAN-P5-narrow-ports.md` §10.3 registra el ajuste: los
+> puntos donde se acotó el puerto ya no eran los getters `getScopedAccountRepository()` /
+> `getScopedBudgetRepository()` que el plan original describía, sino las propiedades `ctx.accounts` /
+> `ctx.budgetPeriodReader` que `createContext()` construye — el punto de entrada, el tipo de retorno
+> de `createScopedAccountRepository` / `createScopedBudgetRepository` (más la nueva
+> `createScopedBudgetPeriodReader`), no se movió; sólo cambió quién lo invoca y cómo se expone el
+> resultado).
 
 **Cada parada es un estado coherente.** Con P7 cerrado, el sistema ya es *más correcto*. Con P3 + P4
 cerrados, es *más seguro de extender* (menos superficie para un `release()` olvidado, sin contagio
-de `Scope.REQUEST`). Lo que queda (P5, P6) es endurecimiento incremental, no corrección de un
-defecto de comportamiento.
+de `Scope.REQUEST`). Con P5 cerrado, los puertos que cruzan agregados vecinos ya no pueden, por tipo,
+escribir o borrar lo que no les pertenece. Lo que queda (P6) es una duplicación de query, no
+corrección de un defecto de comportamiento.

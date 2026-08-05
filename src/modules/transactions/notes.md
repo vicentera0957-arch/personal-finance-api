@@ -47,12 +47,14 @@ Abstract class that **extends `IUnitOfWork<TransactionTxContext>`** (`shared/dom
 What this port's `TCtx` (`TransactionTxContext`) **adds** are the properties `CreateTransactionUseCase` and `DeleteTransactionUseCase` read off the callback to coordinate writes across the three aggregates within a single transaction:
 
 - `ctx.transactions` → scoped `IScopedTransactionRepository`
-- `ctx.accounts` → scoped `IAccountRepository`
-- `ctx.budgets` → scoped `IBudgetRepository`
+- `ctx.accounts` → scoped `IScopedAccountRepository`
+- `ctx.budgetPeriodReader` → scoped `IScopedBudgetPeriodReader`
 
 These used to be getter methods on the UoW instance (`getScopedTransactionRepository()`, etc.); since `PLAN-P3P4-transactional-runner.md`, they are properties of the object `run()`'s callback receives, built once per call inside `createContext()`.
 
-The three scoped repos share the active `QueryRunner`'s `EntityManager`, so every read/write runs in the same PostgreSQL transaction. By construction (they are only obtained via the UoW, already inside an open tx) their by-id reads take `FOR UPDATE` — see the *Architectural decision — locks in scoped repos* section below.
+**Since `PLAN-P5-narrow-ports.md` (P5), `ctx.accounts` and `ctx.budgetPeriodReader` are narrow, sibling ports — not the full `IAccountRepository`/`IBudgetRepository`.** `IScopedAccountRepository` keeps only `findByIdWithLock` + `save` (no `findByUserId`/`delete`: nothing in `transactions` ever called them). `ctx.budgetPeriodReader` replaces the old `ctx.budgets`: `CreateTransactionUseCase` only ever reads the budget row by `(user, category, period)` to check the limit — it never writes or deletes a budget, so by type it no longer can. The property was renamed from `budgets` to `budgetPeriodReader` because the old name implied a capability (`save`/`delete`) this consumer never had. `IScopedBudgetPeriodReader` lives in `budgets/domain/repository/budget-period-reader.port.ts`; a compile-only type-test (`domain/__type-tests__/uow-narrowing.type-test.ts`, gated by `npm run build`) fails if either port ever regains a write it shouldn't have.
+
+The scoped repos share the active `QueryRunner`'s `EntityManager`, so every read/write runs in the same PostgreSQL transaction. By construction (they are only obtained via the UoW, already inside an open tx) their locked reads take `FOR UPDATE` — see the *Architectural decision — locks in scoped repos* section below.
 
 > The base `IUnitOfWork` port is not documented in this module: it lives in `shared/domain` and is also consumed by `IBudgetUnitOfWork`, `IAccountUnitOfWork` and `IAuthUnitOfWork`. Documenting its contract here would duplicate the abstraction.
 
@@ -69,9 +71,9 @@ The three scoped repos share the active `QueryRunner`'s `EntityManager`, so ever
 4. If it is an expense: validates a budget exists for the period (fails fast without opening the transaction). The category must be `expense`; "budgetability" is **derived from `nature`**, not from an `isBudgetable` flag (that flag was removed).
 
 **Flow inside the UoW:** everything below runs inside `uow.run(async (ctx) => { ... })`. `run()` opens the `QueryRunner` and starts the PG transaction before invoking the callback, commits on a clean return, rolls back on a thrown error, and always releases — there is no `begin()`/`commit()`/`rollback()` call in the use case itself.
-1. `ctx.budgets.findByUserIdAndCategoryIdAndPeriod(...)` (scoped repo, implicit `FOR UPDATE`) — **the invariant's gate**: locks the period's budget row before reading any data that feeds the decision. It is the only object that always exists and that every concurrent writer of the period goes through.
+1. `ctx.budgetPeriodReader.findByUserIdAndCategoryIdAndPeriodWithLock(...)` (scoped, `FOR UPDATE`) — **the invariant's gate**: locks the period's budget row before reading any data that feeds the decision. It is the only object that always exists and that every concurrent writer of the period goes through.
 2. `ctx.transactions.sumExpenseAmountByUserCategoryAndPeriod(...)` (no own lock) — runs post-gate, so under `READ COMMITTED` it sees prior commits. Consistency comes from the budget lock, not from a `FOR UPDATE` over the range (which doesn't prevent phantoms).
-3. `UpdateAccountBalanceUseCase(ctx.accounts).execute(...)` — updates the balance using the scoped repository (implicit pessimistic lock in `findById`)
+3. `UpdateAccountBalanceUseCase(ctx.accounts).execute(...)` — updates the balance using the scoped repository (pessimistic lock in `findByIdWithLock`)
 4. `ctx.transactions.save(transaction)` — persists the transaction
 5. Return the saved transaction — `run()` commits and releases on the way out; nothing left for the use case to call.
 
@@ -123,7 +125,7 @@ A concrete class that satisfies **one** module port today: `ITransactionUnitOfWo
 
 It used to also `implement IBudgetUnitOfWork`, aliased via `useExisting` to the same request-scoped instance so `UpdateBudgetLimitUseCase` / `DeleteBudgetUseCase` shared this class's `QueryRunner` whenever they ran in the same request (which they never actually needed to — `CreateTransactionUseCase` is the only flow that genuinely needs a multi-aggregate `QueryRunner`). `IAccountUnitOfWork` was a third alias here before that. Both moved out the same way: `accounts` now owns `AccountUnitOfWorkImpl`, `budgets` now owns `BudgetUnitOfWorkImpl` — neither's use cases ever needed a `QueryRunner` shared with this class, and serving them from here forced their modules to import `TransactionsModule` (via `forwardRef()`, in the budgets case) just to resolve a token this class's own use cases never inject. Note what `useExisting` actually bought, back when `Scope.REQUEST` still existed — a shared `QueryRunner` **within one request**, which only `CreateTransactionUseCase` needed. Between requests it bought nothing, because `Scope.REQUEST` already yielded one instance per request; what serializes concurrent requests is the Postgres row lock, same as today.
 
-This class still builds a scoped budget repo — `CreateTransactionUseCase` locks the budget row before summing period expenses — exposed as `ctx.budgets` (a property, not a getter, since the run() migration). It goes through `createScopedBudgetRepository()`, the same factory `BudgetUnitOfWorkImpl` calls on its own `QueryRunner`. Two independent consumers, two independent transactions, same lock semantics; see `budgets/notes.md` → "Why `budgets` does not depend on `transactions`".
+This class still builds a scoped budget reader — `CreateTransactionUseCase` locks the budget row before summing period expenses — exposed as `ctx.budgetPeriodReader` (a property, not a getter, since the run() migration; renamed from `ctx.budgets` by P5, `PLAN-P5-narrow-ports.md`, because the property only ever supports the one read `CreateTransaction` needs, never a write). It goes through `createScopedBudgetPeriodReader()`, built off the SAME underlying class `createScopedBudgetRepository()` hands to `BudgetUnitOfWorkImpl`, just narrowed to a read-only view. Two independent consumers, two independent transactions, same lock semantics, zero duplicated SQL; see `budgets/notes.md` → "Why `budgets` does not depend on `transactions`".
 
 #### Lifecycle: `createContext()` is the only thing this class writes
 
@@ -136,7 +138,7 @@ protected createContext(queryRunner: QueryRunner): TransactionTxContext {
   return {
     transactions: new ScopedTransactionRepository(queryRunner.manager, this.transactionMapper),
     accounts: createScopedAccountRepository(queryRunner, this.accountMapper),
-    budgets: createScopedBudgetRepository(queryRunner, this.budgetMapper),
+    budgetPeriodReader: createScopedBudgetPeriodReader(queryRunner, this.budgetMapper),
   };
 }
 ```
@@ -145,9 +147,9 @@ protected createContext(queryRunner: QueryRunner): TransactionTxContext {
 
 `createContext()` builds the three scoped repos, all on `queryRunner.manager` (the active runner's `EntityManager`), and exposes them as read-only properties of `TransactionTxContext` — what used to be three getter method calls are now three property reads on `ctx`:
 
-- `ctx.transactions` → `ScopedTransactionRepository`
-- `ctx.accounts` → `ScopedAccountRepository`, built by `createScopedAccountRepository()` from `accounts/infrastructure/persistence/scoped-account.repository.ts`
-- `ctx.budgets` → `ScopedBudgetRepository`, built by `createScopedBudgetRepository()` from `budgets/infrastructure/persistence/scoped-budget.repository.ts`
+- `ctx.transactions` → `ScopedTransactionRepository`, typed `IScopedTransactionRepository`
+- `ctx.accounts` → `ScopedAccountRepository`, built by `createScopedAccountRepository()` from `accounts/infrastructure/persistence/scoped-account.repository.ts`, typed `IScopedAccountRepository` (P5: `findByIdWithLock` + `save` only)
+- `ctx.budgetPeriodReader` → the same `ScopedBudgetRepository` class, built by `createScopedBudgetPeriodReader()` from `budgets/infrastructure/persistence/scoped-budget.repository.ts`, typed `IScopedBudgetPeriodReader` (P5: read-only — no `save`/`delete`, since this consumer doesn't own the Budget aggregate)
 
 (There used to be a fourth, `ctx.expenses` / `getScopedExpenseChecker()` → `ScopedExpenseChecker`. It moved to `budgets` along with `IBudgetUnitOfWork` — its only consumers, `DeleteBudgetUseCase` and `UpdateBudgetLimitUseCase`, live there, so keeping it here was serving a port this module no longer implements.)
 
@@ -157,7 +159,7 @@ protected createContext(queryRunner: QueryRunner): TransactionTxContext {
 
 #### Locks by construction
 
-Because they always live inside an open tx, the scoped repos' `findById` methods take `FOR UPDATE` (`lock: { mode: 'pessimistic_write' }`) without a parameter: reading a row by id here implies intent to mutate. The aggregate methods (`SUM`/`COUNT`) take **no** lock — Postgres forbids it on aggregates, and serialization comes from the `FOR UPDATE` the caller takes beforehand on the budget row. See the full map in [CLAUDE.md → Locking & serialization map](../../../CLAUDE.md) and the rationale in *Architectural decision — locks in scoped repos* below.
+Because they always live inside an open tx, the scoped repos' `findByIdWithLock` methods take `FOR UPDATE` (`lock: { mode: 'pessimistic_write' }`) without a parameter: reading a row by id here implies intent to mutate. The aggregate methods (`SUM`/`COUNT`) take **no** lock — Postgres forbids it on aggregates, and serialization comes from the `FOR UPDATE` the caller takes beforehand on the budget row. See the full map in [CLAUDE.md → Locking & serialization map](../../../CLAUDE.md) and the rationale in *Architectural decision — locks in scoped repos* below.
 
 ### `TransactionMapper`
 
@@ -211,9 +213,20 @@ The races that **cross modules** — Race 1 (`DELETE /budgets/:id` vs `POST /tra
 **Reasons:**
 1. The `ScopedXRepository` classes are private to the file. Only the UoW builds them and they are only used inside an active `QueryRunner`. In that context, reading by id implies intent to mutate — there is no legitimate case of reading without a lock.
 2. The domain interfaces (`IAccountRepository`, `IBudgetRepository`) are not polluted with SQL concepts. They stay clean for the rest of the system.
-3. It doesn't require creating parallel scoped interfaces (`IScopedAccountRepository extends IAccountRepository`) or modifying `IUnitOfWork` to return specialized types. Minimal change, maximum coverage.
+3. It doesn't require modifying `IUnitOfWork` to return specialized types.
 
 **Accepted trade-off:** the flexibility of doing a lock-free read inside a transaction is lost. In this domain there is no use case for that — non-mutating reads (validation, listing) use the global repos outside the UoW.
+
+> **Update — P5 (`PLAN-P5-narrow-ports.md`).** Point 3 above used to also say this "doesn't require
+> creating parallel scoped interfaces (`IScopedAccountRepository extends IAccountRepository`)" — that
+> stopped being true. P5 did add `IScopedAccountRepository`, `IScopedBudgetRepository` and
+> `IScopedBudgetPeriodReader`, but **not** as `extends` of the global ports: as sibling interfaces
+> declaring only the methods a given consumer legitimately needs. Extending the full port would have
+> dragged along `delete()`/`findByUserId()` — precisely what P5 exists to keep away from a consumer
+> that doesn't own the aggregate. This decision (locks hardcoded, no optional parameter) still holds;
+> what changed is that the *return type* handed to each consumer is now narrower than the concrete
+> `ScopedXRepository` class implements. See CLAUDE.md's locking map and
+> `src/PLAN-P5-narrow-ports.md` for the full rule.
 
 ---
 

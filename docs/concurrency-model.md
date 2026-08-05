@@ -44,7 +44,7 @@ around — you cannot lock a row that doesn't exist yet, so uniqueness is guaran
 
 The pessimistic lock is taken when the row is **read** and is **held until `COMMIT`/`ROLLBACK`**
 (two-phase locking) — not until the query returns. That is what covers the subsequent write:
-between the `findById` and the `commit`, the row is locked for everyone else.
+between the `findByIdWithLock` and the `commit`, the row is locked for everyone else.
 
 > That is why the scoped repos run on the `QueryRunner`'s `manager` (open tx) and **not** on the
 > global `DataSource` (autocommit). In autocommit the `FOR UPDATE` would be released as soon as the SELECT
@@ -124,10 +124,10 @@ the type system — see CLAUDE.md's anti-patterns list. If a future flow needs t
 
 | Read (scoped) | Lock | Serializes |
 | --- | --- | --- |
-| `ScopedAccountRepository.findById` | **FOR UPDATE** | Balance mutations: Create/DeleteTransaction + Archive/Unarchive/Rename (Race 2, Bug B). Defined in `accounts/infrastructure/persistence/scoped-account.repository.ts`; the two callers reach it from different UoWs and therefore different `QueryRunner`s — the row lock serializes them regardless |
-| `ScopedBudgetRepository.findById` | **FOR UPDATE** | UpdateBudgetLimit, DeleteBudget vs concurrent creates. Defined in `budgets/infrastructure/persistence/scoped-budget.repository.ts`; `BudgetUnitOfWorkImpl` and `TypeOrmUnitOfWorkImpl` reach it through the same factory on different `QueryRunner`s — same shape as `ScopedAccountRepository` above |
-| `ScopedBudgetRepository.findByUserIdAndCategoryIdAndPeriod` | **FOR UPDATE** | The period-invariant gate in CreateTransaction (Bug A) |
-| `ScopedTransactionRepository.findById` | **FOR UPDATE** | Double DELETE of the same tx (Race 3) |
+| `ScopedAccountRepository.findByIdWithLock` | **FOR UPDATE** | Balance mutations: Create/DeleteTransaction + Archive/Unarchive/Rename (Race 2, Bug B). Defined in `accounts/infrastructure/persistence/scoped-account.repository.ts`; the two callers reach it from different UoWs and therefore different `QueryRunner`s — the row lock serializes them regardless. Since P5, both callers see it through `IScopedAccountRepository` (`findByIdWithLock` + `save` only — no `findByUserId`/`delete`) |
+| `ScopedBudgetRepository.findByIdWithLock` | **FOR UPDATE** | UpdateBudgetLimit, DeleteBudget vs concurrent creates. Defined in `budgets/infrastructure/persistence/scoped-budget.repository.ts`; `BudgetUnitOfWorkImpl` and `TypeOrmUnitOfWorkImpl` reach it through sibling factories on different `QueryRunner`s — same shape as `ScopedAccountRepository` above |
+| `ScopedBudgetRepository.findByUserIdAndCategoryIdAndPeriodWithLock` | **FOR UPDATE** | The period-invariant gate in CreateTransaction (Bug A). Since P5 this is the ONLY budget capability `transactions` gets, via the sibling port `IScopedBudgetPeriodReader` (`ctx.budgetPeriodReader`, not `ctx.budgets`) — by type, `CreateTransaction` can no longer `save`/`delete` a budget |
+| `ScopedTransactionRepository.findByIdWithLock` | **FOR UPDATE** | Double DELETE of the same tx (Race 3) |
 | `ScopedRefreshTokenRepository.findByTokenHashWithLock` | **FOR UPDATE** | Two `/refresh` with the same token → replay detection |
 | `sumExpenseAmountByUserCategoryAndPeriod` | **no lock** (aggregate) | Serialized by the budget lock taken beforehand |
 | `ScopedExpenseChecker.hasExpensesInPeriod` / `sumExpenseAmountInPeriod` | **no lock** (aggregate) | Serialized by the budget lock of Delete/Update. Lives in `budgets/infrastructure/persistence/scoped-expense-checker.ts`, served by `BudgetUnitOfWorkImpl` — moved out of `transactions/infrastructure/persistence/unit-of-work.impl.ts` when `IBudgetUnitOfWork` got its own impl. Closes Race 1 (`hasExpensesInPeriod`) and B4 (`sumExpenseAmountInPeriod`) |
@@ -185,10 +185,10 @@ feeds the decision is what closes the race window.
    exists+owned and `nature` matches (R7); if expense, validates a budget exists for the period (global,
    no lock). Fail-fast: 404/403/400 without opening a connection.
 2. `uow.run(async (ctx) => {`
-3. **LOCK budget** (expense only): `ctx.budgets.findByUserIdAndCategoryIdAndPeriod` → `FOR UPDATE`.
+3. **LOCK budget** (expense only): `ctx.budgetPeriodReader.findByUserIdAndCategoryIdAndPeriodWithLock` → `FOR UPDATE`.
 4. **Dependent read:** `ctx.transactions.sumExpenseAmountByUserCategoryAndPeriod` (no lock, post-gate).
 5. **Decision:** `spent + amount ≤ limit`? if not → `BudgetLimitExceededException` (422).
-6. **LOCK account** + write: `updateBalance` → `ctx.accounts.findById FOR UPDATE` → recomputes → `save`.
+6. **LOCK account** + write: `updateBalance` → `ctx.accounts.findByIdWithLock FOR UPDATE` → recomputes → `save`.
    Then `ctx.transactions.save(transaction)`.
 7. `})` — commit/rollback/release handled entirely by `run()`.
 
@@ -203,14 +203,14 @@ feeds the decision is what closes the race window.
    `UpdateAccountBalanceUseCase`. `run()` rolls back and re-throws it unwrapped; the use case catches it
    **outside** `run()` and translates it to `CannotDeleteTransactionException` (409) — the rollback has
    already happened by then, so the translation only changes which exception the controller sees.
-6. **LOCK account** + write: `updateBalance` (reverse) → `ctx.accounts.findById FOR UPDATE`; `ctx.transactions.delete`.
+6. **LOCK account** + write: `updateBalance` (reverse) → `ctx.accounts.findByIdWithLock FOR UPDATE`; `ctx.transactions.delete`.
 7. `})` — commit/rollback/release handled entirely by `run()`.
 
 ### `UpdateBudgetLimit`
 
 1. — (inline ownership).
 2. `uow.run(async (ctx) => {`
-3. **LOCK budget:** `ctx.budgets.findById FOR UPDATE`; inline ownership.
+3. **LOCK budget:** `ctx.budgets.findByIdWithLock FOR UPDATE`; inline ownership.
 4. **Dependent read:** `ctx.expenses.sumExpenseAmountInPeriod` (no lock, under the budget lock).
 5. **Decision:** `new limit < spent` → `BudgetLimitBelowSpentException` (409) [B4].
 6. `ctx.budgets.save`. Cache invalidation happens **after** `await uow.run(...)` resolves, in its own
@@ -221,7 +221,7 @@ feeds the decision is what closes the race window.
 
 1. — (inline ownership).
 2. `uow.run(async (ctx) => {`
-3. **LOCK budget:** `ctx.budgets.findById FOR UPDATE`; inline ownership.
+3. **LOCK budget:** `ctx.budgets.findByIdWithLock FOR UPDATE`; inline ownership.
 4. **Dependent read:** `ctx.expenses.hasExpensesInPeriod` (no lock, under the budget lock).
 5. **Decision:** there are expenses in the period → `BudgetHasTransactionsInPeriodException` (409) [Race 1].
 6. `ctx.budgets.delete`. Cache invalidation after `run()` resolves, same shape as `UpdateBudgetLimit`.
@@ -231,7 +231,7 @@ feeds the decision is what closes the race window.
 
 1. — (inline ownership).
 2. `uow.run(async (ctx) => {`
-3. **LOCK account:** `ctx.accounts.findById FOR UPDATE`; inline ownership. Competes for the same row as
+3. **LOCK account:** `ctx.accounts.findByIdWithLock FOR UPDATE`; inline ownership. Competes for the same row as
    Create/DeleteTransaction [Race 2].
 4. —
 5. **Decision:** domain method (`archive()` throws if already archived, etc.).
@@ -342,12 +342,12 @@ sequenceDiagram
     UC->>UoW: uow.run(async (ctx) => { ... })
     UoW->>DB: createQueryRunner + START TRANSACTION
     UoW->>UC: ctx (built once by createContext())
-    UC->>UoW: ctx.budgets.findByUserIdAndCategoryIdAndPeriod()
+    UC->>UoW: ctx.budgetPeriodReader.findByUserIdAndCategoryIdAndPeriodWithLock()
     UoW->>DB: SELECT budget ... FOR UPDATE (lock)
     UC->>UoW: ctx.transactions.sumExpenseAmountByUserCategoryAndPeriod()
     UoW->>DB: SELECT COALESCE(SUM(amount),0)   (no lock)
     Note over UC: decision: spent + amount <= limit ?
-    UC->>UoW: ctx.accounts.findById()
+    UC->>UoW: ctx.accounts.findByIdWithLock()
     UoW->>DB: SELECT account ... FOR UPDATE (lock)
     UC->>UoW: ctx.accounts.save(account) + ctx.transactions.save(tx)
     Note over UC,UoW: callback returns cleanly — no explicit commit() call
@@ -415,22 +415,40 @@ in Race 3). In other words, the tests **bite** — they don't pass by accident.
 ## 13. Design fragility (known debt — to be addressed later)
 
 The model is **correct but fragile-by-convention**: its correctness relies on human discipline, not on
-guarantees enforced by the compiler or the tests. Three documented cracks to address later:
+guarantees enforced by the compiler or the tests. Two documented cracks remain (a third, 13.1, closed):
 
-### 13.1 Implicit locks ("spooky action at a distance")
+### 13.1 Implicit locks ("spooky action at a distance") — **CLOSED by P5**
 
-The `FOR UPDATE` lives *inside* the scoped repo's `findById`. From the call site (`budgetRepo.findById(id)`)
-nothing indicates that the line takes an exclusive lock. Whoever reads the use case doesn't see the lock — they
-have to know it or open the impl.
+> Closed via `PLAN-P5-narrow-ports.md`. Kept as a record of the risk and why the eventual fix took the
+> shape it did — the two fixes proposed below when this section was still open turned out to be wrong
+> in different ways.
 
-**Risk:** a contributor who adds a new write flow and reads with the **global** repo (instead
-of the scoped one), or writes the balance/budget through a path that doesn't go through `findById`, **reopens the races
-without anything detecting it**. The rule "don't read inside the UoW with the global repo" (CLAUDE.md) is the only
-barrier, and it is prose, not code.
+The risk this section used to describe: the `FOR UPDATE` lived *inside* the scoped repo's `findById`,
+and the call site (`budgetRepo.findById(id)`) gave no indication that the line took an exclusive
+lock. A contributor adding a write flow with the **global** repo instead of the scoped one could
+reopen a race without anything detecting it.
 
-**Robust fix (future):** expose the lock in the name — `findByIdForUpdate()` on a scoped interface
-(`IScopedAccountRepository extends IAccountRepository`) returned by the UoW. The lock becomes visible at
-the call site and self-documenting. Cost: one scoped interface per aggregate.
+Two things changed since this was written, neither of which is the fix originally proposed here:
+
+1. **The method itself now says `findByIdWithLock`.** The rename makes the lock visible at every call
+   site without needing a second interface — this alone predates P5 (it mirrors
+   `IScopedTransactionRepository.findByIdWithLock` and `findByTokenHashWithLock` in auth).
+2. **P5 additionally narrows what each *consumer* can do with the result**, which is a different axis
+   from naming the lock. This section originally proposed `IScopedAccountRepository extends
+   IAccountRepository` — that shape was rejected when P5 actually landed: inheriting the full port
+   would have dragged along `delete()` and `findByUserId()`, exactly the operations P5 exists to take
+   away from a consumer that doesn't own the aggregate. The port that shipped is a **sibling**, not a
+   subtype (`IScopedAccountRepository`, `IScopedBudgetRepository`,
+   `IScopedBudgetPeriodReader` — none `extends` a global repo port). `transactions` now holds
+   `ctx.accounts: IScopedAccountRepository` (`findByIdWithLock` + `save`, no `delete`/`findByUserId`)
+   and `ctx.budgetPeriodReader: IScopedBudgetPeriodReader` (read-only) instead of the full
+   `IAccountRepository`/`IBudgetRepository`. A compile-only type-test
+   (`transactions/domain/__type-tests__/uow-narrowing.type-test.ts`, gated by `npm run build`) fails
+   if a scoped context ever regains `save`/`delete` on an aggregate its consumer doesn't own.
+
+What P5 does **not** claim to fix: `ctx.accounts` still lets `transactions` write any balance it
+wants — that is the legitimate multi-aggregate invariant transactions anchors (see CLAUDE.md, "Why
+the impl lives in transactions"), not a hole P5 left open.
 
 ### 13.2 Lock ordering not enforced (deadlock risk)
 
