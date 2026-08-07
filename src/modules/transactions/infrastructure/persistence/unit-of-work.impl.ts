@@ -12,7 +12,7 @@ import { AccountMapper } from '../../../accounts/infrastructure/persistence/acco
 import { createScopedAccountRepository } from '../../../accounts/infrastructure/persistence/scoped-account.repository';
 import { BudgetMapper } from '../../../budgets/infrastructure/persistence/budget.mapper';
 import { createScopedBudgetPeriodReader } from '../../../budgets/infrastructure/persistence/scoped-budget.repository';
-import { monthPeriod } from '../../../../shared/domain/month-period';
+import { sumPeriodExpenses } from '../../../../shared/infrastructure/persistence/period-expenses.query';
 import { TypeOrmTransactionRunner } from '../../../../shared/infrastructure/persistence/typeorm-transaction-runner';
 
 // ── Scoped repositories — private to this file; only the UoW constructs them ──
@@ -57,8 +57,6 @@ class ScopedTransactionRepository extends IScopedTransactionRepository {
     month: number,
     year: number,
   ): Promise<number> {
-    const { start, end } = monthPeriod(year, month);
-
     // NO LOCK: aggregate read. Serialization is guaranteed by the pessimistic
     // lock on the budget row taken in findByUserIdAndCategoryIdAndPeriod, which
     // CreateTransactionUseCase acquires BEFORE calling this sum.
@@ -67,23 +65,12 @@ class ScopedTransactionRepository extends IScopedTransactionRepository {
     // A FOR UPDATE here would add no correctness (locking existing rows can't block
     // phantom inserts into the range) and would only contend with unrelated reads.
     //
-    // Reads FROM v_period_expenses — the single definition of "expense", shared
-    // with reports (GET /reports/summary). Runs on the SAME this.manager (same
-    // QueryRunner → same transaction), so the budget-row lock the caller holds
-    // still serializes it; the view inlines into the plan, leaving both the
-    // execution plan and the lock model unchanged. Columns are raw snake_case:
-    // the view carries no entity metadata to map camelCase.
-    const raw = await this.manager
-      .createQueryBuilder()
-      .select('COALESCE(SUM(e.amount), 0)', 'total')
-      .from('v_period_expenses', 'e')
-      .where('e.user_id = :userId', { userId })
-      .andWhere('e.category_id = :categoryId', { categoryId })
-      .andWhere('e.transaction_date >= :start', { start })
-      .andWhere('e.transaction_date < :end', { end })
-      .getRawOne<{ total: string }>();
-
-    return Number(raw?.total ?? 0);
+    // Query lives in shared/infrastructure/persistence/period-expenses.query.ts —
+    // the single owner of "Σ gastos del período" (PROBLEMS.md P6), same one
+    // ScopedExpenseChecker.sumExpenseAmountInPeriod (budgets) calls. Runs on the
+    // SAME this.manager (same QueryRunner → same transaction), so the budget-row
+    // lock the caller holds still serializes it.
+    return sumPeriodExpenses(this.manager, userId, categoryId, month, year);
   }
 
   async delete(id: string): Promise<void> {

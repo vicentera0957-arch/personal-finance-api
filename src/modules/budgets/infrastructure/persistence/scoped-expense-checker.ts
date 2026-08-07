@@ -1,6 +1,7 @@
 import { EntityManager, QueryRunner } from 'typeorm';
 import { IExpenseChecker } from '../../domain/ports/expense-checker.port';
 import { monthPeriod } from '../../../../shared/domain/month-period';
+import { sumPeriodExpenses } from '../../../../shared/infrastructure/persistence/period-expenses.query';
 
 // ── Scoped checker — private to this file; only the factory below constructs it ──
 //
@@ -40,28 +41,22 @@ class ScopedExpenseChecker extends IExpenseChecker {
     return Number(raw?.cnt ?? 0) > 0;
   }
 
+  // NO LOCK: Postgres forbids pessimistic locks on aggregates (SUM).
+  // Serialization against CreateTransaction is guaranteed by the budget-row
+  // lock that UpdateBudgetLimitUseCase takes BEFORE calling this checker.
+  //
+  // Query lives in shared/infrastructure/persistence/period-expenses.query.ts —
+  // the single owner of "Σ gastos del período" (PROBLEMS.md P6), same one
+  // ScopedTransactionRepository.sumExpenseAmountByUserCategoryAndPeriod
+  // (transactions) calls. Runs on the same this.manager → same transaction, so
+  // the budget-row lock the caller holds still serializes it.
   async sumExpenseAmountInPeriod(
     userId: string,
     categoryId: string,
     month: number,
     year: number,
   ): Promise<number> {
-    const { start, end } = monthPeriod(year, month);
-    const raw = await this.manager
-      .createQueryBuilder()
-      .select('COALESCE(SUM(e.amount), 0)', 'total')
-      .from('v_period_expenses', 'e')
-      .where('e.user_id = :userId', { userId })
-      .andWhere('e.category_id = :categoryId', { categoryId })
-      .andWhere('e.transaction_date >= :start', { start })
-      .andWhere('e.transaction_date < :end', { end })
-      // NO LOCK: Postgres forbids pessimistic locks on aggregates (SUM).
-      // Serialization against CreateTransaction is guaranteed by the budget-row
-      // lock that UpdateBudgetLimitUseCase takes BEFORE calling this checker.
-      // Reads FROM v_period_expenses (shared expense definition) on the same
-      // this.manager → same transaction; the view inlines, lock model unchanged.
-      .getRawOne<{ total: string }>();
-    return Number(raw?.total ?? 0);
+    return sumPeriodExpenses(this.manager, userId, categoryId, month, year);
   }
 }
 

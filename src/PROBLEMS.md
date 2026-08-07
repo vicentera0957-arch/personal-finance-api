@@ -7,7 +7,7 @@
 > Esto **no** es un plan de ejecución. Es el mapa de qué problema específico se está resolviendo
 > con cada movimiento, para no confundir causas con síntomas.
 >
-> **P1, P2, P3, P4 y P7 están cerrados** y se eliminaron de este inventario. P1 y P2 rompían los dos
+> **Todos los problemas (P1–P7) están cerrados** y se eliminaron de este inventario. P1 y P2 rompían los dos
 > ciclos de módulos dando a `accounts` y a `budgets` su propio UoW; el resultado vive en el código y
 > en la sección de concurrencia de `CLAUDE.md`. P7 (la invalidación de caché disparando un
 > `rollback()` sobre una transacción ya commiteada) se cerró con `PLAN-P7-cache-rollback.md`: la
@@ -26,8 +26,14 @@
 > (sólo lectura — `transactions` nunca escribe un budget). Un type-test
 > (`transactions/domain/__type-tests__/uow-narrowing.type-test.ts`, gateado por `npm run build`)
 > falla en compilación si algún puerto escopado vuelve a ganar `save`/`delete` sobre un agregado que
-> no le pertenece. El problema que queda (P6) es una duplicación de query, no de composición entre
-> módulos ni de ciclo de vida transaccional.
+> no le pertenece. **P6 también se cerró**, vía `PLAN-P6-unify-period-expenses-query.md`: la
+> sentencia SQL de "Σ gastos del período" — antes duplicada carácter por carácter entre
+> `ScopedTransactionRepository.sumExpenseAmountByUserCategoryAndPeriod` (transactions) y
+> `ScopedExpenseChecker.sumExpenseAmountInPeriod` (budgets) — vive ahora en una sola función,
+> `sumPeriodExpenses` (`shared/infrastructure/persistence/period-expenses.query.ts`), que ambos
+> métodos llaman sobre su propio `EntityManager`. Los nombres de los dos métodos no cambiaron: cada
+> uno sigue documentando la pregunta de su consumidor bajo su propio lock, no la consulta en sí.
+> **No queda ningún problema abierto en este inventario.**
 
 ---
 
@@ -130,35 +136,12 @@ endurecimiento estructural, no defectos de comportamiento (ese, P7, ya está cer
 > vecino, la regla de estrechamiento (§2: "un puerto escopado entrega las lecturas que usa y sólo las
 > escrituras sobre el agregado del que ese consumidor es responsable") y la verificación a nivel de
 > tipos. Su sección dedicada se retiró de este inventario, mismo patrón.
-
-## P6 — La definición de "gasto del período" tiene dos implementaciones
-
-**Enunciado:** la misma query existe dos veces, en dos puertos distintos, con nombres distintos.
-
-**Evidencia:** `ScopedTransactionRepository.sumExpenseAmountByUserCategoryAndPeriod`
-(`transactions/infrastructure/persistence/unit-of-work.impl.ts`) y
-`ScopedExpenseChecker.sumExpenseAmountInPeriod`
-(`budgets/infrastructure/persistence/scoped-expense-checker.ts`) son **la misma sentencia carácter
-por carácter**: mismo `COALESCE(SUM(e.amount), 0)`, mismo `FROM v_period_expenses e`, mismos cuatro
-filtros, mismos parámetros.
-
-**Costo real:** bajo pero irónico. Todo el trabajo de la vista fue para tener *una* definición de
-"qué cuenta como gasto"; en la capa de arriba quedaron dos métodos que la consultan idénticamente. Si
-la firma cambia (excluir transferencias, por ejemplo), hay dos lugares y ningún test que detecte la
-divergencia.
-
-> **Prioridad subida — efecto colateral de cerrar P1.** Antes las dos copias vivían en el mismo
-> archivo, a cien líneas de distancia: la duplicación se veía de un vistazo. Ahora viven en módulos
-> distintos y una está detrás de una factory, así que es invisible. El refactor no creó la
-> duplicación pero **encareció su costo**, y ese fue un trade aceptado conscientemente para mantener
-> el cierre de P1 como cambio de composición puro (consolidar obligaba a tocar los fakes y un spec
-> de `transactions`).
-
-**Independencia:** total. No depende de nada de lo que queda.
-
-**Propuesta:** un solo dueño de esa consulta. Siendo idénticas, `CreateTransaction` puede consumir la
-misma capacidad que consume `UpdateBudgetLimit` — es la misma pregunta, al mismo dato, bajo el mismo
-lock.
+>
+> **P6 también se cerró** (ver la nota de cabecera). Queda como referencia histórica en
+> `src/PLAN-P6-unify-period-expenses-query.md` — por qué no hacía falta colapsar las dos clases (cada
+> una corre sobre un `QueryRunner`/`EntityManager` distinto) y sí extraer la sentencia a
+> `sumPeriodExpenses` en `shared/infrastructure/persistence/`. Su sección dedicada se retiró de este
+> inventario, mismo patrón. **Este inventario no tiene problemas abiertos.**
 
 ---
 
@@ -213,17 +196,16 @@ explícito por implícito es un retroceso de legibilidad. Y no resuelve el owner
 
 # Mapa de dependencias entre problemas
 
-```
-P6  ────────────────────────────  independiente
-```
+Todos los problemas del inventario (P1–P7) están cerrados. No queda ningún ítem pendiente ni ninguna
+dependencia por resolver.
 
-P3 y P4 (que eran mutuamente dependientes — "misma solución: una cirugía compra las dos") y P5 (que
-dependía sólo de que P3 + P4 hubiera fijado la forma final del contexto) ya cerraron. Sólo queda P6,
-que no depende de nada más.
+P3 y P4 (que eran mutuamente dependientes — "misma solución: una cirugía compra las dos"), P5 (que
+dependía sólo de que P3 + P4 hubiera fijado la forma final del contexto) y P6 (independiente de todo
+lo demás) ya cerraron.
 
-| Problema | Costo | Riesgo | Naturaleza |
-| -------- | ----- | ------ | ---------- |
-| **P6** Query de gastos duplicada | bajo | nulo | duplicación |
+| Problema | Costo | Riesgo | Naturaleza | Plan |
+| -------- | ----- | ------ | ---------- | ---- |
+| **P6** Query de gastos duplicada | bajo | nulo | duplicación | `PLAN-P6-unify-period-expenses-query.md` |
 
 > **Cierre de P5, para quien busque el orden histórico.** El plan de P5 (`PLAN-P5-narrow-ports.md`)
 > proponía hacerlo *antes* de P3 + P4; el plan de P3 + P4 asumía que P5 seguía diferido. Se ejecutó
@@ -239,5 +221,6 @@ que no depende de nada más.
 **Cada parada es un estado coherente.** Con P7 cerrado, el sistema ya es *más correcto*. Con P3 + P4
 cerrados, es *más seguro de extender* (menos superficie para un `release()` olvidado, sin contagio
 de `Scope.REQUEST`). Con P5 cerrado, los puertos que cruzan agregados vecinos ya no pueden, por tipo,
-escribir o borrar lo que no les pertenece. Lo que queda (P6) es una duplicación de query, no
-corrección de un defecto de comportamiento.
+escribir o borrar lo que no les pertenece. Con P6 cerrado, "Σ gastos del período" tiene un solo dueño
+en el código, igual que ya lo tenía en la DB (`v_period_expenses`) y en el cálculo del rango
+(`monthPeriod`). El inventario queda sin problemas abiertos.
