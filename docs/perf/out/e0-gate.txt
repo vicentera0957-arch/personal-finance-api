@@ -1,0 +1,437 @@
+-- e0-gate
+-- corrido: 2026-08-07 13:54:57
+-- fuente:  e0-gate.sql
+
+-- Config de psql para el lab de performance (docs/perf/).
+-- Montado como /root/.psqlrc en el contenedor postgres (ver docker-compose.yml),
+-- por eso sobrevive tanto a `docker compose restart` (que pide E3) como a
+-- `down`/`up`. psql lo lee tambien en modo no-interactivo (`-f`), asi que estas
+-- opciones aplican igual cuando `pgq` captura evidencia a un .txt.
+-- El "Time: N ms" al pie de cada sentencia. Ojo: NO es el numero que se reporta
+-- en PERFORMANCE.md — ese sale de `Execution Time` dentro del EXPLAIN ANALYZE.
+-- Este incluye ida y vuelta de red y parseo del cliente.
+\timing on
+Timing is on.
+-- Sin paginador: con `less` de por medio la salida capturada queda con codigos
+-- de escape ANSI o directamente se cuelga esperando una tecla.
+\pset pager off
+Pager usage is off.
+-- Un error a mitad de archivo aborta. Sin esto, un .sql con un typo sigue
+-- corriendo y produce un .txt que parece valido pero midio otra cosa.
+\set ON_ERROR_STOP on
+-- NULL visible: distinguir "no hay fila" de "hay fila con valor vacio" importa
+-- al leer pg_stats y pg_stat_user_tables.
+\pset null '(null)'
+Null display is "(null)".
+-- ===========================================================================
+-- E0 - GATE.  Verificacion de que el lab esta en condiciones de medir.
+--
+-- Por que existe: sin volumen y sin estadisticas frescas todo lo demas miente.
+-- El planner no elige por lo que HAY en la tabla, elige por lo que pg_statistic
+-- DICE que hay. Un catalogo desactualizado produce planes que parecen absurdos
+-- y conclusiones que no son reproducibles.
+--
+-- Es idempotente y re-corrible. Volve a correrlo:
+--   * despues de E4  (deja el catalogo mentiroso a proposito - ese es el punto
+--                     del ejercicio, pero hay que limpiarlo antes de seguir)
+--   * despues de cualquier re-seed (por ejemplo los 200k que necesita E17a)
+--   * cuando un plan te sorprenda y no sepas si el problema es el query o las stats
+--
+-- Uso:   . .\scripts\pgq.ps1
+--        pgq docs\perf\e0-gate.sql
+-- ===========================================================================
+-- Paralelismo apagado en TODA medicion del lab. Un Gather/Gather Merge reparte
+-- el trabajo entre workers y los buffers reportados dejan de ser comparables
+-- entre corridas (dependen de cuantos workers consiguio esa vez). Se apaga para
+-- leer planes, no porque este mal en produccion.
+SET max_parallel_workers_per_gather = 0;
+SET
+Time: 0.357 ms
+\echo ''
+
+\echo '======== 0 - CONTEXTO DEL SERVIDOR ========'
+======== 0 - CONTEXTO DEL SERVIDOR ========
+-- track_io_timing DEBE decir "on" - sin eso, E3 no puede separar el tiempo de
+-- I/O del tiempo de CPU y el ejercicio entero no tiene numero que mostrar.
+SELECT version();
+                                         version                                          
+------------------------------------------------------------------------------------------
+ PostgreSQL 15.17 on x86_64-pc-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit
+(1 row)
+
+Time: 1.077 ms
+SHOW track_io_timing;
+ track_io_timing 
+-----------------
+ on
+(1 row)
+
+Time: 0.352 ms
+SHOW shared_buffers;
+ shared_buffers 
+----------------
+ 128MB
+(1 row)
+
+Time: 0.389 ms
+SHOW work_mem;
+ work_mem 
+----------
+ 4MB
+(1 row)
+
+Time: 0.297 ms
+SHOW max_parallel_workers_per_gather;
+ max_parallel_workers_per_gather 
+---------------------------------
+ 0
+(1 row)
+
+Time: 0.479 ms
+\echo ''
+
+\echo '======== G.2 - ANALYZE ========'
+======== G.2 - ANALYZE ========
+-- npm run populate ya corre ANALYZE al terminar (scripts/populate.mjs), asi que
+-- justo despues de un seed esto es redundante. Vive aca igual porque el Gate
+-- tiene que poder devolver la base a un estado medible sin re-seedear.
+ANALYZE transactions;
+ANALYZE
+Time: 54.169 ms
+ANALYZE accounts;
+ANALYZE
+Time: 4.598 ms
+ANALYZE budgets;
+ANALYZE
+Time: 9.611 ms
+ANALYZE categories;
+ANALYZE
+Time: 4.377 ms
+ANALYZE users;
+ANALYZE
+Time: 3.509 ms
+\echo ''
+
+\echo '======== 1 - VOLUMEN: conteo real vs. reltuples ========'
+======== 1 - VOLUMEN: conteo real vs. reltuples ========
+-- CRITERIO: count(*) ~15.000 . reltuples cercano al real, NUNCA -1 ni 0.
+-- reltuples = -1 significa "nunca analizada" (PG >= 14). reltuples = 0 sobre una
+-- tabla llena es peor: el planner cree que un Seq Scan cuesta nada.
+SELECT count(*) AS filas_reales FROM transactions;
+ filas_reales 
+--------------
+        15000
+(1 row)
+
+Time: 4.770 ms
+SELECT c.relname                                        AS tabla,
+       c.reltuples::bigint                              AS reltuples_estimado,
+       c.relpages                                       AS paginas,
+       pg_size_pretty(pg_relation_size(c.oid))          AS heap,
+       pg_size_pretty(pg_indexes_size(c.oid))           AS indices,
+       pg_size_pretty(pg_total_relation_size(c.oid))    AS total
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname = 'public'
+  AND c.relname IN ('transactions', 'accounts', 'budgets', 'categories', 'users')
+ORDER BY c.reltuples DESC;
+    tabla     | reltuples_estimado | paginas |  heap   | indices |  total  
+--------------+--------------------+---------+---------+---------+---------
+ transactions |              15000 |     259 | 2072 kB | 16 MB   | 18 MB
+ budgets      |               3601 |      49 | 392 kB  | 1816 kB | 2240 kB
+ categories   |                401 |       6 | 48 kB   | 208 kB  | 288 kB
+ accounts     |                 74 |       2 | 16 kB   | 32 kB   | 88 kB
+ users        |                 51 |       5 | 40 kB   | 32 kB   | 112 kB
+(5 rows)
+
+Time: 9.864 ms
+\echo ''
+
+\echo '======== 2 - FRESCURA DE LAS ESTADISTICAS ========'
+======== 2 - FRESCURA DE LAS ESTADISTICAS ========
+-- CRITERIO: last_analyze (o last_autoanalyze) con timestamp reciente.
+-- n_dead_tup ya importa aca: es lo que E7 (Heap Fetches) y E15/E16 (xmin
+-- horizon, bloat) van a mover a proposito.
+SELECT relname            AS tabla,
+       n_live_tup         AS vivas,
+       n_dead_tup         AS muertas,
+       last_analyze,
+       last_autoanalyze,
+       last_vacuum,
+       last_autovacuum
+FROM pg_stat_user_tables
+WHERE relname IN ('transactions', 'accounts', 'budgets', 'categories', 'users')
+ORDER BY relname;
+    tabla     | vivas | muertas |         last_analyze          | last_autoanalyze | last_vacuum |        last_autovacuum        
+--------------+-------+---------+-------------------------------+------------------+-------------+-------------------------------
+ accounts     |    74 |       0 | 2026-08-07 17:54:57.335359+00 | (null)           | (null)      | 2026-08-07 17:53:27.923097+00
+ budgets      |  3601 |       0 | 2026-08-07 17:54:57.345389+00 | (null)           | (null)      | 2026-08-07 17:53:28.20769+00
+ categories   |   401 |       0 | 2026-08-07 17:54:57.34998+00  | (null)           | (null)      | 2026-08-07 17:53:27.927232+00
+ transactions | 15000 |       0 | 2026-08-07 17:54:57.330474+00 | (null)           | (null)      | 2026-08-07 17:53:28.183504+00
+ users        |    51 |      51 | 2026-08-07 17:54:57.353392+00 | (null)           | (null)      | (null)
+(5 rows)
+
+Time: 14.916 ms
+\echo ''
+
+\echo '======== 3 - DISTRIBUCION POR USUARIO: top 10 ========'
+======== 3 - DISTRIBUCION POR USUARIO: top 10 ========
+-- CRITERIO: curva DECRECIENTE, no una meseta. Si todos los usuarios tienen
+-- practicamente las mismas filas, `WHERE user_id = $1` es igual de selectivo
+-- para cualquier $1 y no existe ningun parametro que empuje al planner de un
+-- plan a otro -> E2 se hace por el camino B (fracciones por nature/mes).
+--
+-- Los user_id que salen aca son los PARAMETROS de E1/E2. Anotalos.
+WITH total AS (SELECT count(*)::numeric AS n FROM transactions)
+SELECT u.email,
+       t.user_id,
+       t.tx                                             AS transacciones,
+       round(100.0 * t.tx / (SELECT n FROM total), 3)    AS pct_de_la_tabla
+FROM (
+    SELECT user_id, count(*) AS tx
+    FROM transactions
+    GROUP BY user_id
+    ORDER BY count(*) DESC
+    LIMIT 10
+) t
+JOIN users u ON u.id = t.user_id
+ORDER BY t.tx DESC;
+             email              |               user_id                | transacciones | pct_de_la_tabla 
+--------------------------------+--------------------------------------+---------------+-----------------
+ seed-load-user-1@finanzas.dev  | 5833b6b7-86d7-4a9b-aee1-688c5075c88a |          3915 |          26.100
+ seed-load-user-2@finanzas.dev  | bb726e25-b222-40f7-a347-053f94fc4a08 |          1828 |          12.187
+ seed-load-user-3@finanzas.dev  | 167944d2-c163-4b30-9edd-d219a3523c6c |          1170 |           7.800
+ seed-load-user-4@finanzas.dev  | 68257f60-db8f-4658-b329-4380768fe4b9 |           853 |           5.687
+ seed-load-user-5@finanzas.dev  | a400640f-4b41-4bd7-b44d-8365b69757ed |           667 |           4.447
+ seed-load-user-6@finanzas.dev  | e0946ff7-efdf-4263-bf08-e0d23a093032 |           546 |           3.640
+ seed-load-user-7@finanzas.dev  | f7bd802d-c8d3-4615-ba37-0873bba49cc9 |           461 |           3.073
+ seed-load-user-8@finanzas.dev  | e6aef93c-9673-4c5f-8da1-ba4a159d7c7a |           398 |           2.653
+ seed-load-user-9@finanzas.dev  | 1e4d0fb7-b434-421c-8902-5872fc9a2f4a |           349 |           2.327
+ seed-load-user-10@finanzas.dev | f38858ec-b609-4ad2-8250-e51e4535dcb2 |           311 |           2.073
+(10 rows)
+
+Time: 9.266 ms
+\echo ''
+
+\echo '-------- 3b - DISTRIBUCION POR USUARIO: cola (5 mas chicos) --------'
+-------- 3b - DISTRIBUCION POR USUARIO: cola (5 mas chicos) --------
+-- El extremo opuesto del rango. La diferencia de fraccion entre el top 1 y estos
+-- es exactamente lo que E2 explota: misma query, mismo plan disponible, decision
+-- distinta del planner.
+WITH total AS (SELECT count(*)::numeric AS n FROM transactions)
+SELECT u.email,
+       t.user_id,
+       t.tx                                             AS transacciones,
+       round(100.0 * t.tx / (SELECT n FROM total), 3)    AS pct_de_la_tabla
+FROM (
+    SELECT user_id, count(*) AS tx
+    FROM transactions
+    GROUP BY user_id
+    ORDER BY count(*) ASC
+    LIMIT 5
+) t
+JOIN users u ON u.id = t.user_id
+ORDER BY t.tx ASC;
+             email              |               user_id                | transacciones | pct_de_la_tabla 
+--------------------------------+--------------------------------------+---------------+-----------------
+ seed-load-user-50@finanzas.dev | 1db3d33d-3f9d-4f5f-a7b0-95dbfc80c8f2 |            53 |           0.353
+ seed-load-user-49@finanzas.dev | f3cb708f-6700-4011-b3f1-b8487ba426ac |            54 |           0.360
+ seed-load-user-48@finanzas.dev | 63b420f7-89cd-4f45-a916-ad443e7f298b |            55 |           0.367
+ seed-load-user-47@finanzas.dev | e1e2d8e8-641f-4fa0-95d0-995d4ff73db3 |            57 |           0.380
+ seed-load-user-46@finanzas.dev | db467912-9810-4a42-894e-d3bddd5e9e84 |            58 |           0.387
+(5 rows)
+
+Time: 3.750 ms
+\echo ''
+
+\echo '-------- 3c - RESUMEN DE LA CURVA --------'
+-------- 3c - RESUMEN DE LA CURVA --------
+WITH per_user AS (
+    SELECT user_id, count(*) AS tx FROM transactions GROUP BY user_id
+)
+SELECT count(*)                                                        AS usuarios_con_tx,
+       min(tx)                                                         AS minimo,
+       round(percentile_cont(0.5) WITHIN GROUP (ORDER BY tx)::numeric, 1) AS mediana,
+       max(tx)                                                         AS maximo,
+       round(max(tx)::numeric / nullif(min(tx), 0), 1)                  AS ratio_max_min
+FROM per_user;
+ usuarios_con_tx | minimo | mediana | maximo | ratio_max_min 
+-----------------+--------+---------+--------+---------------
+              50 |     53 |   111.5 |   3915 |          73.9
+(1 row)
+
+Time: 6.786 ms
+\echo ''
+
+\echo '======== 4 - REPARTO POR nature ========'
+======== 4 - REPARTO POR nature ========
+-- CRITERIO: ~92% expense / ~8% income.
+-- Ese 92% es el dato incomodo de E5: un indice parcial WHERE nature='expense'
+-- excluye apenas el 8% de la tabla. NO se maquilla - se documenta que en este
+-- dataset el valor del indice parcial no es el tamano sino la especializacion.
+SELECT nature,
+       count(*)                                                     AS filas,
+       round(100.0 * count(*) / sum(count(*)) OVER (), 2)           AS pct
+FROM transactions
+GROUP BY nature
+ORDER BY filas DESC;
+ nature  | filas |  pct  
+---------+-------+-------
+ expense | 13715 | 91.43
+ income  |  1285 |  8.57
+(2 rows)
+
+Time: 4.383 ms
+\echo ''
+
+\echo '======== 5 - RANGO TEMPORAL ========'
+======== 5 - RANGO TEMPORAL ========
+-- De donde salen el month/year que usan E1, E2 y E19. El mes actual esta
+-- truncado al dia de hoy (el seed nunca genera fechas futuras), asi que para
+-- medir conviene un mes CERRADO, no el corriente.
+SELECT min(transaction_date)                                        AS mas_antigua,
+       max(transaction_date)                                        AS mas_reciente,
+       count(DISTINCT date_trunc('month', transaction_date))        AS meses_distintos
+FROM transactions;
+     mas_antigua     |    mas_reciente     | meses_distintos 
+---------------------+---------------------+-----------------
+ 2025-09-01 07:37:00 | 2026-08-07 22:56:59 |              12
+(1 row)
+
+Time: 6.350 ms
+SELECT to_char(date_trunc('month', transaction_date), 'YYYY-MM')    AS mes,
+       count(*)                                                     AS filas
+FROM transactions
+GROUP BY 1
+ORDER BY 1;
+   mes   | filas 
+---------+-------
+ 2025-09 |   835
+ 2025-10 |   908
+ 2025-11 |   985
+ 2025-12 |  1061
+ 2026-01 |  1135
+ 2026-02 |  1212
+ 2026-03 |  1287
+ 2026-04 |  1364
+ 2026-05 |  1438
+ 2026-06 |  1515
+ 2026-07 |  1592
+ 2026-08 |  1668
+(12 rows)
+
+Time: 14.389 ms
+\echo ''
+
+\echo '======== 6 - pg_stats: lo que el planner CREE ========'
+======== 6 - pg_stats: lo que el planner CREE ========
+-- CRITERIO:
+--   * n_distinct de user_id ~= cantidad de usuarios (negativo = fraccion de la tabla)
+--   * correlation de transaction_date cercano a 1 -> el seed inserta ordenado por
+--     fecha globalmente, asi que el orden fisico del heap sigue al logico. Eso
+--     abarata los rangos por fecha y es la razon por la que E17b/E17c (keyset)
+--     van a rendir de verdad.
+--   * correlation de user_id cercano a 0 -> filas de un mismo usuario dispersas
+--     por todo el heap, como en produccion. Es lo que hace CARO el random I/O de
+--     un Index Scan y lo que le da sentido a E6 (Index Only Scan).
+SELECT attname                        AS columna,
+       n_distinct,
+       round(correlation::numeric, 4) AS correlation,
+       null_frac,
+       avg_width
+FROM pg_stats
+WHERE schemaname = 'public'
+  AND tablename  = 'transactions'
+  AND attname IN ('user_id', 'category_id', 'account_id', 'nature', 'amount', 'transaction_date')
+ORDER BY attname;
+     columna      | n_distinct | correlation | null_frac | avg_width 
+------------------+------------+-------------+-----------+-----------
+ account_id       |         74 |      0.0901 |         0 |        16
+ amount           |    -0.9278 |     -0.0292 |         0 |         4
+ category_id      |        392 |      0.0299 |         0 |        16
+ nature           |          2 |      0.8323 |         0 |         7
+ transaction_date |    -0.9994 |      1.0000 |         0 |         8
+ user_id          |         50 |      0.1015 |         0 |        16
+(6 rows)
+
+Time: 11.124 ms
+\echo ''
+
+\echo '======== 7 - INDICES EXISTENTES: el punto de partida ========'
+======== 7 - INDICES EXISTENTES: el punto de partida ========
+-- Anotar cuales hay YA. E5 y E6 agregan sobre esto, y E8 mide el costo de
+-- escritura de este conjunto.
+--
+-- OJO con idx_tx_user_cat_nature_date (user_id, category_id, nature,
+-- transaction_date): ya cubre la query de E1. El "antes" del Bloque 2 NO va a
+-- ser un Seq Scan. Ver docs/perf/README.md.
+SELECT i.indexrelname                                           AS indice,
+       pg_size_pretty(pg_relation_size(i.indexrelid))           AS tamano,
+       i.idx_scan                                               AS veces_usado,
+       pg_get_indexdef(i.indexrelid)                            AS definicion
+FROM pg_stat_user_indexes i
+WHERE i.relname = 'transactions'
+ORDER BY pg_relation_size(i.indexrelid) DESC;
+             indice             | tamano  | veces_usado |                                                          definicion                                                          
+--------------------------------+---------+-------------+------------------------------------------------------------------------------------------------------------------------------
+ idx_tx_user_cat_nature_date    | 5992 kB |           0 | CREATE INDEX idx_tx_user_cat_nature_date ON public.transactions USING btree (user_id, category_id, nature, transaction_date)
+ idx_tx_user_date               | 3816 kB |          47 | CREATE INDEX idx_tx_user_date ON public.transactions USING btree (user_id, transaction_date)
+ idx_tx_account_date            | 3784 kB |          63 | CREATE INDEX idx_tx_account_date ON public.transactions USING btree (account_id, transaction_date)
+ PK_a219afd8dd77ed80f5a862f1db9 | 2384 kB |           0 | CREATE UNIQUE INDEX "PK_a219afd8dd77ed80f5a862f1db9" ON public.transactions USING btree (id)
+(4 rows)
+
+Time: 7.579 ms
+\echo ''
+
+\echo '-------- 7b - INDICES DEL RESTO DE LAS TABLAS --------'
+-------- 7b - INDICES DEL RESTO DE LAS TABLAS --------
+SELECT relname AS tabla, indexrelname AS indice,
+       pg_size_pretty(pg_relation_size(indexrelid)) AS tamano
+FROM pg_stat_user_indexes
+WHERE relname IN ('accounts', 'budgets', 'categories', 'users')
+ORDER BY relname, indexrelname;
+   tabla    |             indice              | tamano  
+------------+---------------------------------+---------
+ accounts   | PK_5a7a02c20412299d198e097a8fe  | 16 kB
+ accounts   | idx_account_user                | 16 kB
+ budgets    | IDX_c0c45c679cb723c1ffff48a139  | 232 kB
+ budgets    | PK_9c8a51748f82387644b773da482  | 440 kB
+ budgets    | UQ_budgets_user_category_period | 1096 kB
+ categories | IDX_2296b7fe012d95646fa41921c8  | 40 kB
+ categories | PK_24dbc6126a28ff948da33e97d3b  | 64 kB
+ categories | UQ_60f3bd4aa1b7e60c1c76c7fa0a5  | 104 kB
+ users      | PK_a3ffb1c0c8416b9fc6f907b7433  | 16 kB
+ users      | uq_users_email                  | 16 kB
+(10 rows)
+
+Time: 3.700 ms
+\echo ''
+
+\echo '======== 8 - LA VIEW v_period_expenses ========'
+======== 8 - LA VIEW v_period_expenses ========
+-- CRITERIO: tiene que EXISTIR. Es la definicion unica de "que cuenta como gasto"
+-- y la lee tanto GET /reports/summary como los 3 agregados de enforcement del UoW.
+-- Una base construida con DB_SYNCHRONIZE=true NO la tiene (no hay entity detras);
+-- solo la crea la migracion CreatePeriodExpensesView. Si esto devuelve 0 filas:
+-- npm run migration:run.
+SELECT viewname, definition
+FROM pg_views
+WHERE schemaname = 'public' AND viewname = 'v_period_expenses';
+     viewname      |                        definition                        
+-------------------+----------------------------------------------------------
+ v_period_expenses |  SELECT transactions.id,                                +
+                   |     transactions.user_id,                               +
+                   |     transactions.category_id,                           +
+                   |     transactions.account_id,                            +
+                   |     transactions.amount,                                +
+                   |     transactions.transaction_date                       +
+                   |    FROM transactions                                    +
+                   |   WHERE ((transactions.nature)::text = 'expense'::text);
+(1 row)
+
+Time: 4.581 ms
+\echo ''
+
+\echo '======== FIN DEL GATE ========'
+======== FIN DEL GATE ========
+

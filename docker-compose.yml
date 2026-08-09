@@ -10,6 +10,11 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./docker/init-test-db.sql:/docker-entrypoint-initdb.d/init-test-db.sql
+      # Config de psql para el lab de performance (docs/perf/). `docker compose
+      # exec postgres psql` corre como root dentro del contenedor, por eso el
+      # destino es /root/.psqlrc. Versionado en vez de copiado a mano: asi
+      # sobrevive a recrear el contenedor, no solo a `restart`.
+      - ./docker/psqlrc:/root/.psqlrc:ro
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U finance_user -d personal_finance_db']
       interval: 5s

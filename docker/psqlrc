@@ -1,0 +1,22 @@
+-- Config de psql para el lab de performance (docs/perf/).
+-- Montado como /root/.psqlrc en el contenedor postgres (ver docker-compose.yml),
+-- por eso sobrevive tanto a `docker compose restart` (que pide E3) como a
+-- `down`/`up`. psql lo lee tambien en modo no-interactivo (`-f`), asi que estas
+-- opciones aplican igual cuando `pgq` captura evidencia a un .txt.
+
+-- El "Time: N ms" al pie de cada sentencia. Ojo: NO es el numero que se reporta
+-- en PERFORMANCE.md — ese sale de `Execution Time` dentro del EXPLAIN ANALYZE.
+-- Este incluye ida y vuelta de red y parseo del cliente.
+\timing on
+
+-- Sin paginador: con `less` de por medio la salida capturada queda con codigos
+-- de escape ANSI o directamente se cuelga esperando una tecla.
+\pset pager off
+
+-- Un error a mitad de archivo aborta. Sin esto, un .sql con un typo sigue
+-- corriendo y produce un .txt que parece valido pero midio otra cosa.
+\set ON_ERROR_STOP on
+
+-- NULL visible: distinguir "no hay fila" de "hay fila con valor vacio" importa
+-- al leer pg_stats y pg_stat_user_tables.
+\pset null '(null)'

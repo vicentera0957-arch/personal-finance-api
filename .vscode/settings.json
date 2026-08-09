@@ -9,5 +9,29 @@
   },
   "[json]": {
     "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+
+  // Lab de performance PostgreSQL (docs/perf/README.md).
+  // Dos terminales con propositos distintos: A explora sin dejar rastro,
+  // B captura la evidencia que se commitea. Se abren desde el dropdown "+"
+  // del panel de terminal, o con Ctrl+Shift+P > "Terminal: Create New Terminal
+  // (With Profile)".
+  //
+  // -ExecutionPolicy Bypass es por proceso, NO cambia la politica de la maquina:
+  // evita que un clon fresco (donde los .ps1 vienen marcados como descargados)
+  // falle al dot-sourcear pgq.ps1.
+  "terminal.integrated.profiles.windows": {
+    "Lab A - explorar (pg)": {
+      "path": "powershell.exe",
+      "args": ["-NoExit", "-ExecutionPolicy", "Bypass", "-Command", ". .\\scripts\\pgq.ps1; pg"],
+      "icon": "database",
+      "color": "terminal.ansiCyan"
+    },
+    "Lab B - capturar (pgq)": {
+      "path": "powershell.exe",
+      "args": ["-NoExit", "-ExecutionPolicy", "Bypass", "-Command", ". .\\scripts\\pgq.ps1"],
+      "icon": "output",
+      "color": "terminal.ansiGreen"
+    }
   }
 }
