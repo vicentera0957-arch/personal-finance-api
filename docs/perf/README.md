@@ -12,10 +12,15 @@ cierra con algo escrito en `PERFORMANCE.md` / `docs/CONCURRENCY.md` o un commit.
 
 | Ruta | Qué es | ¿Se commitea? |
 | --- | --- | --- |
+| **`docs/perf/GUIA.md`** | **Qué corrés, en qué orden, y qué mirar en cada salida. Empezá acá.** | sí |
 | `docs/perf/scripts/*.sql` | El experimento. Reproducible por cualquiera. | sí |
+| `docs/perf/scripts/*.md` | Runbooks de los ejercicios que necesitan dos sesiones y no se pueden scriptear | sí |
 | `docs/perf/salida/*.txt` | La salida cruda de psql. **Es la evidencia.** | sí |
 | `PERFORMANCE.md` | La narrativa con las conclusiones (§1 baseline · §2 índices · §4 keyset · §5 analítico) | sí |
 | `docs/CONCURRENCY.md` | Las 4 anomalías de concurrencia | ver "Bloque 3" abajo |
+
+Este README es la **puesta en marcha** (infraestructura, datos, convenciones).
+Para correr los ejercicios andá a [GUIA.md](GUIA.md).
 
 Los `.txt` se commitean a propósito: un `EXPLAIN` sin su salida cruda es una
 afirmación sin respaldo. La cabecera que `pgq` agrega (fecha + archivo fuente) es
