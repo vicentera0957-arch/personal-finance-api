@@ -71,13 +71,22 @@ ocurrió.
 
 #### Mediciones
 
-Tres corridas idénticas. **La 3 es la baseline.** Las dos primeras no aportan
-números propios: están para verificar que la medición es *reproducible*. Si las
-tres no coinciden en nodo, `cost=` y `rows=`, algo no es determinista y el número
-no vale. Si coinciden, la 3 se puede citar sola.
+Tres corridas idénticas. **La 3 es la baseline.**
+
+Las dos primeras no están para verificar que el plan se repite: el árbol de nodos
+es una función determinista de la query, el catálogo, `pg_statistic` y las GUCs.
+Congeladas esas cuatro cosas, el plan es idéntico ejecutes una vez o mil, y acá
+ninguna se movió. Comprobarlo no costó nada y no probó nada.
+
+Lo que las tres corridas dan es **la barra de error del tiempo**. Una sola
+corrida entrega `3,585 ms` sin ninguna indicación de cuánto vale ese número; tres
+muestran que la dispersión es de ~0,5 ms, un **15%**. Eso fija el piso de ruido
+con el que hay que leer el Bloque 2: una mejora de 0,3 ms va a estar por debajo
+de él y no significará nada. Un solo número no es una medición.
 
 Ninguna de las tres es una medición en frío — las páginas ya estaban en el buffer
-por la exploración previa. La medición en frío es E3, con reinicio del contenedor.
+por la exploración previa, y `shared read = 0` en las tres lo confirma. La
+medición en frío es E3, con reinicio del contenedor.
 
 | Métrica        | Corrida 1        | Corrida 2        | Corrida 3 (**baseline**) |
 | -------------- | ---------------- | ---------------- | ------------------------ |
