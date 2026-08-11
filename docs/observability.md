@@ -1,64 +1,68 @@
 # Observability
 
-> The three pillars: **logs**, **metrics**, **traces** (+ error tracking as a separate operational pillar).
-> Status and pending decisions below.
+The three pillars — **logs**, **metrics**, **traces** — plus error tracking as a fourth
+operational concern. Two are in place; two are deliberately not, and this document says
+what each would cost to add.
 
 | Pillar | Status | Tool |
 | --- | --- | --- |
-| **Logs** | Already in place | `nestjs-pino` (structured JSON, per-request request-id) |
-| **Metrics** | Added this session | `prom-client` → `/metrics` endpoint (Prometheus) |
-| **Traces** | Proposed (pending approval) | OpenTelemetry — requires choosing a backend |
-| **Error tracking** | Proposed (pending approval) | Sentry — requires a DSN |
+| **Logs** | In place | `nestjs-pino` — structured JSON, request-id per request |
+| **Metrics** | In place | `prom-client` → `/metrics` (Prometheus exposition format) |
+| **Traces** | Not implemented | OpenTelemetry — blocked on choosing a backend |
+| **Error tracking** | Not implemented | Sentry — blocked on a DSN |
 
 ---
 
-## 1. Logs — already existing
+## 1. Logs
 
 `nestjs-pino` replaces Nest's default logger (`main.ts`: `app.useLogger(app.get(Logger))`).
-Structured JSON logs with `req.id` (request-id), which lets you trace a request across all its logs.
-No changes this session — it is correct as-is.
+Structured JSON with `req.id`, so every log line from one request can be correlated.
 
 ---
 
-## 2. Metrics — implemented (Prometheus)
-
-### What was added
+## 2. Metrics (Prometheus)
 
 ```
 src/shared/infrastructure/metrics/
-  metrics.service.ts          # Own registry + collectDefaultMetrics + HTTP histogram
+  metrics.service.ts          # own registry + collectDefaultMetrics + HTTP histogram
   metrics.controller.ts       # GET /metrics (@Public, text exposition format)
-  http-metrics.middleware.ts  # Express middleware factory: times and records on res 'finish'
+  http-metrics.middleware.ts  # Express middleware: times and records on res 'finish'
   metrics.module.ts           # provides + exports MetricsService, declares the controller
 ```
 
-Wiring:
-- `app.module.ts`: imports `MetricsModule`.
-- `main.ts`: `app.use(httpMetricsMiddleware(app.get(MetricsService)))` and `/metrics` excluded from the `api/v1` prefix.
+Wired in `app.module.ts` (imports `MetricsModule`) and `main.ts`
+(`app.use(httpMetricsMiddleware(...))`, with `/metrics` excluded from the `api/v1` prefix).
 
-### Design decisions (the *why*)
+### Design decisions
 
-- **Own registry, not prom-client's global one.** The integration suite boots multiple apps in
-  the same process; with the global registry, the second `collectDefaultMetrics` would throw "metric already
-  registered". One `Registry` per `MetricsService` instance (singleton) avoids it.
-- **Middleware, not interceptor.** The final status code is set by the exception filter *after*
-  an interceptor sees the response. `res.on('finish')` fires after the filter → 4xx/5xx are
-  labeled correctly. That is why it is middleware (`app.use`), not `APP_INTERCEPTOR`.
-- **`route` label = route pattern (`/accounts/:id`), never the raw URL.** Labeling by URL with real
-  ids explodes cardinality (one time series per id). `req.route.path` is used.
-- **`/metrics` is `@Public` and unprefixed.** Prometheus doesn't authenticate. In production it is restricted at
-  the network level (scrape only from the monitoring subnet / behind the LB), not with app auth.
+- **Its own registry, not `prom-client`'s global one.** The integration suite boots
+  several apps in one process; against the global registry the second
+  `collectDefaultMetrics()` throws "metric already registered". One `Registry` per
+  `MetricsService` instance avoids it.
+- **Middleware, not an interceptor.** The final status code is set by the exception
+  filter *after* an interceptor sees the response, so an interceptor would mislabel
+  every mapped domain exception. `res.on('finish')` fires after the filter, so 4xx/5xx
+  are labelled correctly. That is why this is `app.use()` and not `APP_INTERCEPTOR`.
+- **The `route` label is the route pattern (`/accounts/:id`), never the raw URL.**
+  Labelling by URL with real ids means one time series per id — unbounded cardinality,
+  which is the standard way to take down a Prometheus server. `req.route.path` is used.
+- **`/metrics` is `@Public` and unprefixed.** Prometheus does not authenticate. In
+  production it is restricted at the network layer (scrape only from the monitoring
+  subnet, or behind the load balancer), not with application auth.
 
 ### What it exposes
 
-- **Node/process defaults** (`collectDefaultMetrics`): event-loop lag, heap, GC, CPU, file descriptors.
-- **`http_request_duration_seconds`** (Histogram) with `method`, `route`, `status_code` labels. The
-  `_count` gives the total requests for free; the histogram gives p50/p95/p99 via `histogram_quantile`.
+- **Node/process defaults** (`collectDefaultMetrics`): event-loop lag, heap, GC, CPU,
+  file descriptors.
+- **`http_request_duration_seconds`** (histogram) labelled `method`, `route`,
+  `status_code`. `_count` gives throughput for free; the buckets give p50/p95/p99 via
+  `histogram_quantile`.
 
-Verified end-to-end: `GET /metrics` → 200, `content-type: text/plain; version=0.0.4`, and
-`http_request_duration_seconds_bucket{method="GET",route="/health",status_code="200"}` is recorded.
+Verified end to end by `test/integration/metrics/metrics.integration.spec.ts`:
+`GET /metrics` returns 200 with `content-type: text/plain; version=0.0.4` and the
+default metrics present.
 
-### How to scrape it (Prometheus)
+### Scrape config
 
 ```yaml
 scrape_configs:
@@ -68,10 +72,10 @@ scrape_configs:
       - targets: ['personal-finance-api:3000']
 ```
 
-### Useful PromQL (for dashboards/alerts)
+### Useful PromQL
 
 ```promql
-# latency p95 per route (last 5m)
+# p95 latency per route (last 5m)
 histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, route))
 
 # 5xx rate
@@ -83,47 +87,47 @@ sum(rate(http_request_duration_seconds_count[1m])) by (route)
 
 ---
 
-## 3. Traces — PROPOSED (pending approval)
+## 3. Traces — not implemented
 
-OpenTelemetry for distributed traces. **Not implemented** because it requires decisions from you and a
-running backend (I didn't want to wire it blindly — the auto-instrumentation SDK can interfere with
-startup if misconfigured).
+OpenTelemetry, for distributed traces. Not wired because it needs a decision that isn't
+a code decision: **which backend to export to.** Self-hosted (Jaeger or Tempo over OTLP,
+free, runs in `docker-compose`) or a vendor (Honeycomb, Datadog, Grafana Cloud, needs an
+API key). Wiring the SDK without a destination would add startup risk for no signal —
+the auto-instrumentation SDK can interfere with boot if misconfigured.
 
-**Decision needed:** which backend do we export to?
-- **Jaeger / Tempo** (self-hosted, OTLP) — free, spun up in docker-compose.
-- **Vendor** (Honeycomb, Datadog, Grafana Cloud) — requires an API key.
+Implementation sketch, once a backend is chosen:
 
-**Implementation sketch** (once approved):
-- `@opentelemetry/sdk-node` + `@opentelemetry/auto-instrumentations-node` (automatically instruments HTTP, Express,
-  pg → spans for each request and each Postgres query, without touching domain code).
-- Initialize the SDK **before** importing anything else (a `tracing.ts` required at the start of
-  `main.ts` with `node -r`).
-- OTLP exporter configurable via env (`OTEL_EXPORTER_OTLP_ENDPOINT`), **disabled by default** so as not to
-  break dev/test.
-- Correlation: inject `trace_id` into the pino logs → a log leads to its trace.
+- `@opentelemetry/sdk-node` + `@opentelemetry/auto-instrumentations-node`, which
+  instruments HTTP, Express and `pg` automatically — spans per request and per query,
+  without touching domain code.
+- Initialise the SDK **before** anything else is imported: a `tracing.ts` loaded via
+  `node -r` ahead of `main.ts`.
+- OTLP exporter configured by env (`OTEL_EXPORTER_OTLP_ENDPOINT`), **off by default** so
+  dev and test are unaffected.
+- Inject `trace_id` into the pino logs, so a log line leads to its trace.
 
-**Specific value here:** you would see the span of each `POST /transactions` broken down — how long the
-budget's `SELECT ... FOR UPDATE` takes, how long it waits for the lock, how long the account's takes. For a system
-whose heart is pessimistic locks, that is gold for diagnosing contention in production.
-
----
-
-## 4. Error tracking — PROPOSED (pending approval)
-
-**Sentry** for exception capture with stack trace, request context and grouping.
-**Not implemented** because it requires a **DSN** (your Sentry account).
-
-**Sketch** (once you have the DSN):
-- `@sentry/node`, initialized in `main.ts` with `SENTRY_DSN` from env (disabled if not set).
-- A global `AllExceptionsFilter` that reports to Sentry **only the 5xx** (4xx are expected client
-  errors — not incidents). Today the mapped domain exceptions (4xx) must not go to Sentry;
-  the `500`s (the unforeseen) must.
-- Attach `req.id` and `userId` (from `@CurrentUser`) to the scope for context.
+**Why this is the highest-value gap in this specific system.** Every `POST /transactions`
+takes two pessimistic row locks. A trace would break that request down into how long the
+budget `SELECT ... FOR UPDATE` waited, how long the account one waited, and how long the
+work between them took. For an architecture whose correctness rests on lock ordering and
+contention, lock-wait time in production is the one number that can't be inferred from
+anything already collected.
 
 ---
 
-## Pending approval (summary)
+## 4. Error tracking — not implemented
 
-1. **Metrics** → review the implementation (it already works); approve or tune buckets/labels.
-2. **Traces** → decide on a backend (self-hosted Jaeger vs vendor) before implementing.
-3. **Error tracking** → provide `SENTRY_DSN` (or decide on an alternative) before implementing.
+Sentry, for exception capture with stack trace, request context and grouping. Not wired
+because it needs a **DSN**, which means an account.
+
+Sketch:
+
+- `@sentry/node`, initialised in `main.ts` from `SENTRY_DSN` (disabled when unset).
+- A global `AllExceptionsFilter` reporting **only 5xx**. Mapped domain exceptions are
+  4xx — expected client errors, not incidents. Sending them would bury the real signal.
+- Attach `req.id` and the `userId` from `@CurrentUser()` to the scope for context.
+
+Note that this filter and the one proposed in
+[ADR-0006](./adr/0006-domain-exceptions-vs-http.md) are the same object: if the
+domain→HTTP mapping ever moves into a global `@Catch()` filter, error reporting is a
+few lines in that same place.

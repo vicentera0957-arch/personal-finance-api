@@ -12,7 +12,7 @@ import { IScopedBudgetPeriodReader } from '../../budgets/domain/repository/budge
  * class`.
  *
  * `accounts: IScopedAccountRepository` y `budgetPeriodReader:
- * IScopedBudgetPeriodReader` (P5, PLAN-P5-narrow-ports.md §2): transactions
+ * IScopedBudgetPeriodReader` (P5, docs/history/structural-refactors.md, §2 del plan archivado): transactions
  * escribe el balance de la cuenta (parte del invariante multi-agregado que
  * ancla), pero NUNCA borra una cuenta ni escribe/borra un budget — sólo lee
  * el límite. `budgetPeriodReader`, no `budgets`: el nombre deja de sugerir

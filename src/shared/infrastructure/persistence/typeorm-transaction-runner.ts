@@ -21,7 +21,7 @@ import { IUnitOfWork } from '../../domain/IUnitOfWork';
  * cadena lanza NestedTransactionError antes de crear su propio QueryRunner.
  * Es un runner sin estado: sin este chequeo, dos run() anidados abrirían dos
  * transacciones distintas y podrían deadlockear entre sí en silencio (ver
- * PLAN-P3P4-transactional-runner.md §5).
+ * docs/history/structural-refactors.md, P3+P4 (§5 del plan archivado)).
  *
  * `extends IUnitOfWork<TCtx>`: los 4 impls (`extends
  * TypeOrmTransactionRunner<TCtx> implements IFooUnitOfWork`) ya no heredan

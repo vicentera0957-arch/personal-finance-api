@@ -22,6 +22,7 @@ A module has a `notes-history.md` only when it has closed post-mortems of its ow
 | [categories](./categories/notes.md) | yes | — (no closed post-mortems) |
 | [budgets](./budgets/notes.md) | yes | [post-mortems](./budgets/notes-history.md) |
 | [transactions](./transactions/notes.md) | yes | [post-mortems](./transactions/notes-history.md) |
+| [reports](./reports/notes.md) | yes | — (read model; no write-side races to close) |
 
 > Cross-module race post-mortems live centrally in
 > [`docs/history/race-conditions-fix-2026-05.md`](../../docs/history/race-conditions-fix-2026-05.md).

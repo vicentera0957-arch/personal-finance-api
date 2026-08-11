@@ -92,13 +92,22 @@ CREATE INDEX idx_tx_expense_period
 DROP INDEX idx_tx_expense_period;
 ```
 
-## Documentation actions (applied 2026-07-02)
+## What this was really about
 
-The drift in three places that said "the index is missing / full-table scans":
+The interesting part is not the benchmark result — it is that the "missing index" had
+been sitting in the *Known gaps* section of `CLAUDE.md` as a real deficiency, and it had
+never existed. The index was created by `InitialSchema` and had been serving the query
+the whole time.
 
-1. **CLAUDE.md** → *Known gaps* section: ✅ rewritten as a "Resolved (was a gap)" note —
-   the composite index exists; the partial one is an optional large-scale optimization.
-2. **`transaction.orm.entity.ts`** (index comment): ✅ rewritten — the composite index
-   covers the query; the partial one would only matter at millions of rows.
-3. **`transactions/notes.md`**: ✅ verified — it does not repeat the "full-table scan"
-   narrative; no change needed.
+Documentation drift is not a cosmetic problem: it produced a planned schema change to
+fix a problem that wasn't there. The correction touched `CLAUDE.md` and the index
+comment in `transaction.orm.entity.ts`, and it is why this repo's standing convention
+is that **when code and a doc disagree, the code wins, and the doc gets fixed in the
+same PR.**
+
+Later measured at a scale this benchmark couldn't reach: see
+[`PERFORMANCE.md`](../PERFORMANCE.md), which re-runs the same query against 1,000,000
+rows. The conclusion holds — and it also sharpened the honest version of the argument.
+With 94.6% of rows being `expense` in that dataset, a partial index on
+`WHERE nature = 'expense'` excludes barely 5.4%, so its value would be specialization,
+not size.

@@ -1,7 +1,7 @@
 # ADR-0008: Redis behind a minimal cache-store port; per-module caches by composition
 
-- **Status:** Accepted <!-- rationale already written up in src/shared/domain/cache-decision.md -->
-- **Date:** YYYY-MM-DD
+- **Status:** Accepted
+- **Date:** 2026-06-20
 - **Deciders:** Vicente Cristobal Rivas Avello
 
 > The full, rigorous rationale lives in

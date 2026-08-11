@@ -16,7 +16,7 @@
 
 Anchored to `CreateTransaction`. The full analysis (scenario, fix, why it works) lives in [transactions/notes-history.md](../transactions/notes-history.md), because the main correction is in `create-transaction.use-case.ts` and `unit-of-work.impl.ts`.
 
-**Summary from the budgets side:** both flows (`UpdateBudgetLimit` and `CreateTransaction`) now compete for the same budget row lock. `ScopedBudgetRepository.findById` and `findByUserIdAndCategoryIdAndPeriod` take `FOR UPDATE`; the second budget read in `CreateTransaction` was moved inside the UoW. Postgres serializes: the second arrival waits for the first one's COMMIT and reads the current limit.
+**Summary from the budgets side:** both flows (`UpdateBudgetLimit` and `CreateTransaction`) now compete for the same budget row lock. `ScopedBudgetRepository.findByIdWithLock` and `findByUserIdAndCategoryIdAndPeriodWithLock` take `FOR UPDATE`; the second budget read in `CreateTransaction` was moved inside the UoW. Postgres serializes: the second arrival waits for the first one's COMMIT and reads the current limit.
 
 ---
 
@@ -24,4 +24,6 @@ Anchored to `CreateTransaction`. The full analysis (scenario, fix, why it works)
 
 Documented centrally in [docs/history/race-conditions-fix-2026-05.md](../../../docs/history/race-conditions-fix-2026-05.md).
 
-In short: `DeleteBudgetUseCase` runs inside `IBudgetUnitOfWork`; `ScopedBudgetRepository.findById` takes `FOR UPDATE` and `getScopedExpenseChecker().hasExpensesInPeriod` runs under the same `QueryRunner`. The budget row acts as a mutex: whoever wins the lock completes their critical section atomically, and the loser either sees the budget deleted (404) or sees expenses in the period (409).
+In short: `DeleteBudgetUseCase` runs inside `IBudgetUnitOfWork`; `ScopedBudgetRepository.findByIdWithLock` takes `FOR UPDATE` and `ctx.expenses.hasExpensesInPeriod` runs under the same `QueryRunner`. The budget row acts as a mutex: whoever wins the lock completes their critical section atomically, and the loser either sees the budget deleted (404) or sees expenses in the period (409).
+
+> Method names above are the current ones. When this post-mortem was written the reads were `findById` / `findByUserIdAndCategoryIdAndPeriod` and the checker was reached through a `getScopedExpenseChecker()` getter; the `WithLock` suffixes and the `ctx` properties came later (P3+P4 and P5, see [`docs/history/structural-refactors.md`](../../../docs/history/structural-refactors.md)). The lock semantics did not change.

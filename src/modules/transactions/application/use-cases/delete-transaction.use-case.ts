@@ -44,7 +44,7 @@ export class DeleteTransactionUseCase {
     } catch (err) {
       // La traducción sale del alcance transaccional: el rollback ya ocurrió
       // dentro de run() antes de re-lanzar. Es una decisión del use case, no
-      // del ciclo de vida (ver PLAN-P3P4 §2.4.a).
+      // del ciclo de vida (ver docs/history/structural-refactors.md, P3+P4 (§2.4.a del plan archivado)).
       if (err instanceof InsufficientFundsException) {
         throw new CannotDeleteTransactionException(id);
       }

@@ -137,6 +137,15 @@ it.
 
 **Follow-ups**
 
-- The factories currently return the full repository port. Narrowing them to bounded
-  command ports (the `IScopedTransactionRepository` precedent) is tracked as P5 in
-  `src/PROBLEMS.md`; the factory return type is the exact seam where it happens.
+- ~~The factories currently return the full repository port. Narrowing them to bounded
+  command ports (the `IScopedTransactionRepository` precedent) is the obvious next step;
+  the factory return type is the exact seam where it happens.~~ **Done** (2026-08-04):
+  `createScopedAccountRepository` and `createScopedBudgetRepository` now return narrow
+  sibling ports, and `createScopedBudgetPeriodReader` was added as a read-only view over
+  the same class. A compile-only type-test enforces it. See
+  [`structural-refactors.md`](../history/structural-refactors.md), P5.
+- The "guarantee genuinely lost" above is now **partly** recovered: an
+  `AsyncLocalStorage` nesting detector throws `NestedTransactionError` when a second
+  `run()` starts on the same async chain, so the self-deadlock case this ADR worried
+  about fails loudly instead of hanging. Two `run()` calls racing via `Promise.all` are
+  still invisible to it — different async chains — and remain an accepted cost.
