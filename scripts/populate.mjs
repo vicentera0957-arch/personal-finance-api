@@ -22,8 +22,10 @@
  *   npm run populate -- --reset          # wipe previously-seeded users first
  *   npm run populate -- --no-analyze     # skip ANALYZE (see SEED_SKEW notes)
  *   SEED_USERS=20 SEED_TX_COUNT=5000 npm run populate
- *   SEED_USERS=200 SEED_TX_COUNT=200000 npm run populate   # for OFFSET/keyset
- *                                                           # pagination experiments
+ *   SEED_USERS=200 SEED_TX_COUNT=1000000 SEED_MONTHS=24 npm run populate
+ *                                          # the docs/perf/ lab dataset — see
+ *                                          # "Por que 1.000.000 y no 15.000"
+ *                                          # in docs/perf/README.md
  *
  * Env vars (all optional):
  *   SEED_USERS       synthetic users to create (default 50)
@@ -38,10 +40,20 @@
  * migrations do (see src/data-source.ts for the same env-var/default pattern).
  *
  * Everything is built in memory before the bulk insert (see bulkInsert
- * below) — fine through the hundreds of thousands, but past roughly 500k
- * rows the array-building and multi-row VALUES() batching both start
- * costing real time/memory; at that scale switch to `COPY FROM STDIN`
- * instead of parameterized INSERTs.
+ * below). The "switch to COPY FROM STDIN past ~500k rows" warning that used
+ * to live here was a guess; it has since been measured. 1M transactions
+ * (200 users, 24 months) insert in **117 s**, ~8.500 rows/s, on the
+ * multi-row VALUES() path — acceptable, so COPY stays unbuilt. What the
+ * scale does require is `node --max-old-space-size=6144`: the peak is two
+ * live copies of the row set, because bulkInsert's caller `.map()`s the
+ * whole array into column objects before handing it over.
+ *
+ * Money columns are `integer` (int32), and that is a real ceiling here, not
+ * a formality: every per-user total scales with SEED_TX_COUNT via the Pareto
+ * skew, so quantities that look safe at 15k rows overflow at 1M. Two of them
+ * did, and both fixes are load-bearing — see the salary sizing in
+ * generateTransactions. If you change how amounts are generated, re-run at
+ * SEED_TX_COUNT=1000000 before believing it works; 15k proves nothing.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -217,7 +229,13 @@ const BUDGET_LIMITS = {
 
 async function bulkInsert(client, table, columns, rows) {
   if (rows.length === 0) return;
+  // Progress + table name on stderr: at SEED_TX_COUNT in the hundreds of
+  // thousands the transactions insert alone runs for minutes with nothing to
+  // show, and when a row does get rejected Postgres names the *type* but not
+  // the table ("value ... is out of range for type integer"), which is not
+  // enough to find the offending generator on a five-table insert.
   const chunkSize = Math.max(1, Math.floor(60_000 / columns.length));
+  process.stderr.write(`  … inserting ${rows.length} rows into ${table}\n`);
   for (let start = 0; start < rows.length; start += chunkSize) {
     const chunk = rows.slice(start, start + chunkSize);
     const values = [];
@@ -350,6 +368,7 @@ function generateTransactions(user, months, txPerMonth) {
     // rest of the month's rows at amount=0. Pricing expenses first lets the
     // salary below be sized to actually cover them.
     let projectedExpenses = 0;
+    let projectedOtherIncome = 0;
     const priced = slots.map((slot) => {
       if (slot.cat === 'Sueldo') return slot;
       let rawAmount;
@@ -365,10 +384,28 @@ function generateTransactions(user, months, txPerMonth) {
         description = pick(DESCRIPTIONS[slot.cat] ?? [slot.cat]);
       }
       if (slot.kind === 'expense') projectedExpenses += rawAmount;
+      // Freelance (VARIABLE_SLOTS, weight 5) is income that is never spent,
+      // so it accumulates into the balance exactly like an oversized salary
+      // would. It has to be netted out of the salary below, otherwise it
+      // scales with SEED_TX_COUNT: the rank-1 Pareto user draws ~10.6k
+      // Freelance rows over 24 months at ~225k CLP each — 2.4e9, past int32
+      // on `current_balance` all by itself.
+      else projectedOtherIncome += rawAmount;
       return { ...slot, rawAmount, description };
     });
 
-    for (const slot of priced) {
+    // Income before expenses. Amounts and dates are already fixed by the
+    // pricing pass, and every row is re-sorted by transaction_date globally
+    // before insert, so this ordering is invisible in the data — it only
+    // controls the running balance, making it peak before anything is
+    // charged. Without it the salary can arrive after the expenses it was
+    // sized to cover and chargeAccount clamps rows to amount=0.
+    const ordered = [
+      ...priced.filter((s) => s.kind === 'income'),
+      ...priced.filter((s) => s.kind === 'expense'),
+    ];
+
+    for (const slot of ordered) {
       const date = randomDateInMonth(month, year);
       const cat = user.categories.find((c) => c.name === slot.cat);
 
@@ -376,13 +413,24 @@ function generateTransactions(user, months, txPerMonth) {
       let account;
       let description;
       if (slot.cat === 'Sueldo') {
-        // Proportional to this month's own projected expenses (1.05x-1.35x
-        // headroom) instead of an absolute figure — this is what keeps
-        // chargeAccount's clamp from firing regardless of how much Pareto
-        // activity this user-month has. 50k floor covers the rare
-        // all-salary month (see monthSlots: a user floored at 1 tx/month
-        // has zero projected expenses that month).
-        amount = Math.max(Math.round(projectedExpenses * (1.05 + Math.random() * 0.3)), 50_000);
+        // Covers what this month's expenses actually need from the salary —
+        // i.e. net of the month's other income — plus an ABSOLUTE surplus.
+        // Both halves of that matter, and both are int32 constraints rather
+        // than aesthetic ones: `amount` and `current_balance` are `integer`.
+        //
+        // Net of other income, because Freelance rows are never spent (see
+        // projectedOtherIncome above). Absolute surplus, because whatever the
+        // month does not spend accumulates into account.balance across all
+        // SEED_MONTHS — a proportional 5-35% surplus therefore grows with
+        // SEED_TX_COUNT (the rank-1 user books ~8.5e9 CLP of expenses over 24
+        // months, so even a 20% average surplus lands beyond 2^31). Together
+        // these cap the balance at initialBalance + SEED_MONTHS * 400k, flat
+        // in SEED_TX_COUNT.
+        //
+        // The 50k floor covers both the rare all-salary month (monthSlots: a
+        // user floored at 1 tx/month has zero projected expenses) and the
+        // month where Freelance income happens to exceed expenses.
+        amount = Math.max(projectedExpenses - projectedOtherIncome + randomInt(50_000, 400_000), 50_000);
         description = 'Sueldo mensual';
         account = primary;
         account.balance += amount;
