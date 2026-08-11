@@ -1,6 +1,6 @@
--- e0-gate
--- corrido: 2026-08-07 13:54:57
--- fuente:  e0-gate.sql
+-- setup
+-- corrido: 2026-08-10 17:18:38
+-- fuente:  setup.sql   (se llamaba e0-gate.sql cuando se corrio esta captura)
 
 -- Config de psql para el lab de performance (docs/perf/).
 -- Montado como /root/.psqlrc en el contenedor postgres (ver docker-compose.yml),
@@ -46,7 +46,7 @@ Null display is "(null)".
 -- leer planes, no porque este mal en produccion.
 SET max_parallel_workers_per_gather = 0;
 SET
-Time: 0.357 ms
+Time: 0.254 ms
 \echo ''
 
 \echo '======== 0 - CONTEXTO DEL SERVIDOR ========'
@@ -59,35 +59,35 @@ SELECT version();
  PostgreSQL 15.17 on x86_64-pc-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit
 (1 row)
 
-Time: 1.077 ms
+Time: 1.690 ms
 SHOW track_io_timing;
  track_io_timing 
 -----------------
  on
 (1 row)
 
-Time: 0.352 ms
+Time: 0.280 ms
 SHOW shared_buffers;
  shared_buffers 
 ----------------
  128MB
 (1 row)
 
-Time: 0.389 ms
+Time: 0.190 ms
 SHOW work_mem;
  work_mem 
 ----------
  4MB
 (1 row)
 
-Time: 0.297 ms
+Time: 0.415 ms
 SHOW max_parallel_workers_per_gather;
  max_parallel_workers_per_gather 
 ---------------------------------
  0
 (1 row)
 
-Time: 0.479 ms
+Time: 0.292 ms
 \echo ''
 
 \echo '======== G.2 - ANALYZE ========'
@@ -97,19 +97,19 @@ Time: 0.479 ms
 -- tiene que poder devolver la base a un estado medible sin re-seedear.
 ANALYZE transactions;
 ANALYZE
-Time: 54.169 ms
+Time: 202.985 ms
 ANALYZE accounts;
 ANALYZE
-Time: 4.598 ms
+Time: 4.790 ms
 ANALYZE budgets;
 ANALYZE
-Time: 9.611 ms
+Time: 49.798 ms
 ANALYZE categories;
 ANALYZE
-Time: 4.377 ms
+Time: 6.613 ms
 ANALYZE users;
 ANALYZE
-Time: 3.509 ms
+Time: 3.881 ms
 \echo ''
 
 \echo '======== 1 - VOLUMEN: conteo real vs. reltuples ========'
@@ -120,10 +120,10 @@ Time: 3.509 ms
 SELECT count(*) AS filas_reales FROM transactions;
  filas_reales 
 --------------
-        15000
+      1000000
 (1 row)
 
-Time: 4.770 ms
+Time: 64.403 ms
 SELECT c.relname                                        AS tabla,
        c.reltuples::bigint                              AS reltuples_estimado,
        c.relpages                                       AS paginas,
@@ -137,14 +137,14 @@ WHERE n.nspname = 'public'
 ORDER BY c.reltuples DESC;
     tabla     | reltuples_estimado | paginas |  heap   | indices |  total  
 --------------+--------------------+---------+---------+---------+---------
- transactions |              15000 |     259 | 2072 kB | 16 MB   | 18 MB
- budgets      |               3601 |      49 | 392 kB  | 1816 kB | 2240 kB
- categories   |                401 |       6 | 48 kB   | 208 kB  | 288 kB
- accounts     |                 74 |       2 | 16 kB   | 32 kB   | 88 kB
- users        |                 51 |       5 | 40 kB   | 32 kB   | 112 kB
+ transactions |            1000000 |   17084 | 133 MB  | 288 MB  | 421 MB
+ budgets      |              28801 |     385 | 3080 kB | 4144 kB | 7256 kB
+ categories   |               1601 |      23 | 184 kB  | 272 kB  | 488 kB
+ accounts     |                285 |       4 | 32 kB   | 32 kB   | 96 kB
+ users        |                201 |       5 | 40 kB   | 48 kB   | 128 kB
 (5 rows)
 
-Time: 9.864 ms
+Time: 6.316 ms
 \echo ''
 
 \echo '======== 2 - FRESCURA DE LAS ESTADISTICAS ========'
@@ -162,16 +162,16 @@ SELECT relname            AS tabla,
 FROM pg_stat_user_tables
 WHERE relname IN ('transactions', 'accounts', 'budgets', 'categories', 'users')
 ORDER BY relname;
-    tabla     | vivas | muertas |         last_analyze          | last_autoanalyze | last_vacuum |        last_autovacuum        
---------------+-------+---------+-------------------------------+------------------+-------------+-------------------------------
- accounts     |    74 |       0 | 2026-08-07 17:54:57.335359+00 | (null)           | (null)      | 2026-08-07 17:53:27.923097+00
- budgets      |  3601 |       0 | 2026-08-07 17:54:57.345389+00 | (null)           | (null)      | 2026-08-07 17:53:28.20769+00
- categories   |   401 |       0 | 2026-08-07 17:54:57.34998+00  | (null)           | (null)      | 2026-08-07 17:53:27.927232+00
- transactions | 15000 |       0 | 2026-08-07 17:54:57.330474+00 | (null)           | (null)      | 2026-08-07 17:53:28.183504+00
- users        |    51 |      51 | 2026-08-07 17:54:57.353392+00 | (null)           | (null)      | (null)
+    tabla     |  vivas  | muertas |         last_analyze          |       last_autoanalyze        | last_vacuum |        last_autovacuum        
+--------------+---------+---------+-------------------------------+-------------------------------+-------------+-------------------------------
+ accounts     |     285 |       0 | 2026-08-10 21:18:35.341012+00 | 2026-08-10 21:09:48.230628+00 | (null)      | 2026-08-10 21:09:48.23017+00
+ budgets      |   28801 |       0 | 2026-08-10 21:18:35.39004+00  | 2026-08-10 21:09:48.235522+00 | (null)      | 2026-08-10 21:17:54.056152+00
+ categories   |    1601 |       0 | 2026-08-10 21:18:35.397611+00 | 2026-08-10 21:09:48.253894+00 | (null)      | 2026-08-10 21:17:54.062146+00
+ transactions | 1000000 |       0 | 2026-08-10 21:18:35.334583+00 | 2026-08-10 21:09:48.229334+00 | (null)      | 2026-08-10 21:17:53.953207+00
+ users        |     201 |       0 | 2026-08-10 21:18:35.401465+00 | 2026-08-10 21:09:48.247409+00 | (null)      | 2026-08-10 21:12:48.775001+00
 (5 rows)
 
-Time: 14.916 ms
+Time: 6.163 ms
 \echo ''
 
 \echo '======== 3 - DISTRIBUCION POR USUARIO: top 10 ========'
@@ -198,19 +198,19 @@ JOIN users u ON u.id = t.user_id
 ORDER BY t.tx DESC;
              email              |               user_id                | transacciones | pct_de_la_tabla 
 --------------------------------+--------------------------------------+---------------+-----------------
- seed-load-user-1@finanzas.dev  | 5833b6b7-86d7-4a9b-aee1-688c5075c88a |          3915 |          26.100
- seed-load-user-2@finanzas.dev  | bb726e25-b222-40f7-a347-053f94fc4a08 |          1828 |          12.187
- seed-load-user-3@finanzas.dev  | 167944d2-c163-4b30-9edd-d219a3523c6c |          1170 |           7.800
- seed-load-user-4@finanzas.dev  | 68257f60-db8f-4658-b329-4380768fe4b9 |           853 |           5.687
- seed-load-user-5@finanzas.dev  | a400640f-4b41-4bd7-b44d-8365b69757ed |           667 |           4.447
- seed-load-user-6@finanzas.dev  | e0946ff7-efdf-4263-bf08-e0d23a093032 |           546 |           3.640
- seed-load-user-7@finanzas.dev  | f7bd802d-c8d3-4615-ba37-0873bba49cc9 |           461 |           3.073
- seed-load-user-8@finanzas.dev  | e6aef93c-9673-4c5f-8da1-ba4a159d7c7a |           398 |           2.653
- seed-load-user-9@finanzas.dev  | 1e4d0fb7-b434-421c-8902-5872fc9a2f4a |           349 |           2.327
- seed-load-user-10@finanzas.dev | f38858ec-b609-4ad2-8250-e51e4535dcb2 |           311 |           2.073
+ seed-load-user-1@finanzas.dev  | 7afba7e7-5856-4bd5-8cce-57887f4b1947 |        212817 |          21.282
+ seed-load-user-2@finanzas.dev  | f6d50731-06c9-42de-b906-a1e5112afcb2 |         99283 |           9.928
+ seed-load-user-3@finanzas.dev  | 84f7acbc-16e4-4a3a-8e32-22379a1ef496 |         63558 |           6.356
+ seed-load-user-4@finanzas.dev  | 8a570869-e188-45e4-a048-7b18ac2b2156 |         46317 |           4.632
+ seed-load-user-5@finanzas.dev  | 1695edad-7811-4f84-bcad-edbb22d6a7d7 |         36236 |           3.624
+ seed-load-user-6@finanzas.dev  | 3d486fd0-3abd-4129-a00d-b7c659b597fe |         29651 |           2.965
+ seed-load-user-7@finanzas.dev  | c2b0318c-f0cd-4285-b336-4212d28418c1 |         25026 |           2.503
+ seed-load-user-8@finanzas.dev  | 2417c478-3e0b-4554-9d9f-28081ea99d3a |         21608 |           2.161
+ seed-load-user-9@finanzas.dev  | 5f25d0b9-a44d-41f2-ba14-cb85db9c08a7 |         18982 |           1.898
+ seed-load-user-10@finanzas.dev | d70d2ae9-25af-4c89-aecc-dcc8c162e5ad |         16905 |           1.691
 (10 rows)
 
-Time: 9.266 ms
+Time: 249.788 ms
 \echo ''
 
 \echo '-------- 3b - DISTRIBUCION POR USUARIO: cola (5 mas chicos) --------'
@@ -232,16 +232,16 @@ FROM (
 ) t
 JOIN users u ON u.id = t.user_id
 ORDER BY t.tx ASC;
-             email              |               user_id                | transacciones | pct_de_la_tabla 
---------------------------------+--------------------------------------+---------------+-----------------
- seed-load-user-50@finanzas.dev | 1db3d33d-3f9d-4f5f-a7b0-95dbfc80c8f2 |            53 |           0.353
- seed-load-user-49@finanzas.dev | f3cb708f-6700-4011-b3f1-b8487ba426ac |            54 |           0.360
- seed-load-user-48@finanzas.dev | 63b420f7-89cd-4f45-a916-ad443e7f298b |            55 |           0.367
- seed-load-user-47@finanzas.dev | e1e2d8e8-641f-4fa0-95d0-995d4ff73db3 |            57 |           0.380
- seed-load-user-46@finanzas.dev | db467912-9810-4a42-894e-d3bddd5e9e84 |            58 |           0.387
+              email              |               user_id                | transacciones | pct_de_la_tabla 
+---------------------------------+--------------------------------------+---------------+-----------------
+ seed-load-user-200@finanzas.dev | 1141235c-9ea5-479c-bb45-de7c18e822f1 |           626 |           0.063
+ seed-load-user-199@finanzas.dev | 3fba894b-8ff2-42d9-8c92-c0ac7c203418 |           630 |           0.063
+ seed-load-user-198@finanzas.dev | 1ca138d8-d552-4ae3-a838-339175fc36d4 |           633 |           0.063
+ seed-load-user-197@finanzas.dev | 8f8a6d1b-fe14-4908-a929-e6523c5ec6fa |           637 |           0.064
+ seed-load-user-196@finanzas.dev | 9575cfed-7c9a-4897-9b02-99fc043fcf8f |           641 |           0.064
 (5 rows)
 
-Time: 3.750 ms
+Time: 269.249 ms
 \echo ''
 
 \echo '-------- 3c - RESUMEN DE LA CURVA --------'
@@ -257,10 +257,10 @@ SELECT count(*)                                                        AS usuari
 FROM per_user;
  usuarios_con_tx | minimo | mediana | maximo | ratio_max_min 
 -----------------+--------+---------+--------+---------------
-              50 |     53 |   111.5 |   3915 |          73.9
+             200 |    626 |  1335.5 | 212817 |         340.0
 (1 row)
 
-Time: 6.786 ms
+Time: 194.794 ms
 \echo ''
 
 \echo '======== 4 - REPARTO POR nature ========'
@@ -275,13 +275,13 @@ SELECT nature,
 FROM transactions
 GROUP BY nature
 ORDER BY filas DESC;
- nature  | filas |  pct  
----------+-------+-------
- expense | 13715 | 91.43
- income  |  1285 |  8.57
+ nature  | filas  |  pct  
+---------+--------+-------
+ expense | 945954 | 94.60
+ income  |  54046 |  5.40
 (2 rows)
 
-Time: 4.383 ms
+Time: 169.668 ms
 \echo ''
 
 \echo '======== 5 - RANGO TEMPORAL ========'
@@ -295,10 +295,10 @@ SELECT min(transaction_date)                                        AS mas_antig
 FROM transactions;
      mas_antigua     |    mas_reciente     | meses_distintos 
 ---------------------+---------------------+-----------------
- 2025-09-01 07:37:00 | 2026-08-07 22:56:59 |              12
+ 2024-09-01 07:00:14 | 2026-08-10 22:59:55 |              24
 (1 row)
 
-Time: 6.350 ms
+Time: 301.841 ms
 SELECT to_char(date_trunc('month', transaction_date), 'YYYY-MM')    AS mes,
        count(*)                                                     AS filas
 FROM transactions
@@ -306,21 +306,33 @@ GROUP BY 1
 ORDER BY 1;
    mes   | filas 
 ---------+-------
- 2025-09 |   835
- 2025-10 |   908
- 2025-11 |   985
- 2025-12 |  1061
- 2026-01 |  1135
- 2026-02 |  1212
- 2026-03 |  1287
- 2026-04 |  1364
- 2026-05 |  1438
- 2026-06 |  1515
- 2026-07 |  1592
- 2026-08 |  1668
-(12 rows)
+ 2024-09 | 27780
+ 2024-10 | 28984
+ 2024-11 | 30189
+ 2024-12 | 31408
+ 2025-01 | 32612
+ 2025-02 | 33815
+ 2025-03 | 35028
+ 2025-04 | 36232
+ 2025-05 | 37441
+ 2025-06 | 38642
+ 2025-07 | 39856
+ 2025-08 | 41070
+ 2025-09 | 42274
+ 2025-10 | 43481
+ 2025-11 | 44685
+ 2025-12 | 45898
+ 2026-01 | 47110
+ 2026-02 | 48313
+ 2026-03 | 49523
+ 2026-04 | 50722
+ 2026-05 | 51930
+ 2026-06 | 53139
+ 2026-07 | 54347
+ 2026-08 | 55521
+(24 rows)
 
-Time: 14.389 ms
+Time: 1254.380 ms (00:01.254)
 \echo ''
 
 \echo '======== 6 - pg_stats: lo que el planner CREE ========'
@@ -346,15 +358,15 @@ WHERE schemaname = 'public'
 ORDER BY attname;
      columna      | n_distinct | correlation | null_frac | avg_width 
 ------------------+------------+-------------+-----------+-----------
- account_id       |         74 |      0.0901 |         0 |        16
- amount           |    -0.9278 |     -0.0292 |         0 |         4
- category_id      |        392 |      0.0299 |         0 |        16
- nature           |          2 |      0.8323 |         0 |         7
- transaction_date |    -0.9994 |      1.0000 |         0 |         8
- user_id          |         50 |      0.1015 |         0 |        16
+ account_id       |        254 |      0.0666 |         0 |        16
+ amount           |      78078 |     -0.0005 |         0 |         4
+ category_id      |       1287 |      0.0171 |         0 |        16
+ nature           |          2 |      0.9025 |         0 |         7
+ transaction_date |  -0.968195 |      1.0000 |         0 |         8
+ user_id          |        200 |      0.0703 |         0 |        16
 (6 rows)
 
-Time: 11.124 ms
+Time: 6.282 ms
 \echo ''
 
 \echo '======== 7 - INDICES EXISTENTES: el punto de partida ========'
@@ -372,15 +384,15 @@ SELECT i.indexrelname                                           AS indice,
 FROM pg_stat_user_indexes i
 WHERE i.relname = 'transactions'
 ORDER BY pg_relation_size(i.indexrelid) DESC;
-             indice             | tamano  | veces_usado |                                                          definicion                                                          
---------------------------------+---------+-------------+------------------------------------------------------------------------------------------------------------------------------
- idx_tx_user_cat_nature_date    | 5992 kB |           0 | CREATE INDEX idx_tx_user_cat_nature_date ON public.transactions USING btree (user_id, category_id, nature, transaction_date)
- idx_tx_user_date               | 3816 kB |          47 | CREATE INDEX idx_tx_user_date ON public.transactions USING btree (user_id, transaction_date)
- idx_tx_account_date            | 3784 kB |          63 | CREATE INDEX idx_tx_account_date ON public.transactions USING btree (account_id, transaction_date)
- PK_a219afd8dd77ed80f5a862f1db9 | 2384 kB |           0 | CREATE UNIQUE INDEX "PK_a219afd8dd77ed80f5a862f1db9" ON public.transactions USING btree (id)
+             indice             | tamano | veces_usado |                                                          definicion                                                          
+--------------------------------+--------+-------------+------------------------------------------------------------------------------------------------------------------------------
+ idx_tx_user_cat_nature_date    | 113 MB |           0 | CREATE INDEX idx_tx_user_cat_nature_date ON public.transactions USING btree (user_id, category_id, nature, transaction_date)
+ idx_tx_account_date            | 69 MB  |         375 | CREATE INDEX idx_tx_account_date ON public.transactions USING btree (account_id, transaction_date)
+ idx_tx_user_date               | 69 MB  |         250 | CREATE INDEX idx_tx_user_date ON public.transactions USING btree (user_id, transaction_date)
+ PK_a219afd8dd77ed80f5a862f1db9 | 38 MB  |           0 | CREATE UNIQUE INDEX "PK_a219afd8dd77ed80f5a862f1db9" ON public.transactions USING btree (id)
 (4 rows)
 
-Time: 7.579 ms
+Time: 3.595 ms
 \echo ''
 
 \echo '-------- 7b - INDICES DEL RESTO DE LAS TABLAS --------'
@@ -394,17 +406,17 @@ ORDER BY relname, indexrelname;
 ------------+---------------------------------+---------
  accounts   | PK_5a7a02c20412299d198e097a8fe  | 16 kB
  accounts   | idx_account_user                | 16 kB
- budgets    | IDX_c0c45c679cb723c1ffff48a139  | 232 kB
- budgets    | PK_9c8a51748f82387644b773da482  | 440 kB
- budgets    | UQ_budgets_user_category_period | 1096 kB
+ budgets    | IDX_c0c45c679cb723c1ffff48a139  | 576 kB
+ budgets    | PK_9c8a51748f82387644b773da482  | 1176 kB
+ budgets    | UQ_budgets_user_category_period | 2392 kB
  categories | IDX_2296b7fe012d95646fa41921c8  | 40 kB
- categories | PK_24dbc6126a28ff948da33e97d3b  | 64 kB
- categories | UQ_60f3bd4aa1b7e60c1c76c7fa0a5  | 104 kB
+ categories | PK_24dbc6126a28ff948da33e97d3b  | 88 kB
+ categories | UQ_60f3bd4aa1b7e60c1c76c7fa0a5  | 144 kB
  users      | PK_a3ffb1c0c8416b9fc6f907b7433  | 16 kB
- users      | uq_users_email                  | 16 kB
+ users      | uq_users_email                  | 32 kB
 (10 rows)
 
-Time: 3.700 ms
+Time: 2.557 ms
 \echo ''
 
 \echo '======== 8 - LA VIEW v_period_expenses ========'
@@ -429,7 +441,7 @@ WHERE schemaname = 'public' AND viewname = 'v_period_expenses';
                    |   WHERE ((transactions.nature)::text = 'expense'::text);
 (1 row)
 
-Time: 4.581 ms
+Time: 3.209 ms
 \echo ''
 
 \echo '======== FIN DEL GATE ========'

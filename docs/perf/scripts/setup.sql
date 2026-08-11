@@ -1,5 +1,6 @@
 -- ===========================================================================
--- E0 - GATE.  Verificacion de que el lab esta en condiciones de medir.
+-- SETUP (el "Gate" del plan).  Verificacion de que el lab esta en condiciones
+-- de medir.
 --
 -- Por que existe: sin volumen y sin estadisticas frescas todo lo demas miente.
 -- El planner no elige por lo que HAY en la tabla, elige por lo que pg_statistic
@@ -13,7 +14,7 @@
 --   * cuando un plan te sorprenda y no sepas si el problema es el query o las stats
 --
 -- Uso:   . .\scripts\pgq.ps1
---        pgq docs\perf\e0-gate.sql
+--        pgq docs\perf\scripts\setup.sql
 -- ===========================================================================
 
 -- Paralelismo apagado en TODA medicion del lab. Un Gather/Gather Merge reparte
@@ -48,7 +49,10 @@ ANALYZE users;
 
 \echo ''
 \echo '======== 1 - VOLUMEN: conteo real vs. reltuples ========'
--- CRITERIO: count(*) ~15.000 . reltuples cercano al real, NUNCA -1 ni 0.
+-- CRITERIO: count(*) = 1.000.000 . reltuples cercano al real, NUNCA -1 ni 0.
+-- Si esto da ~15.000 estas sobre el dataset viejo, con el que el planner elige
+-- Seq Scan para casi cualquier parametro y E2/E3/E17 se quedan sin ejercicio.
+-- Re-seedea: ver "Por que 1.000.000 y no 15.000" en docs/perf/README.md.
 -- reltuples = -1 significa "nunca analizada" (PG >= 14). reltuples = 0 sobre una
 -- tabla llena es peor: el planner cree que un Seq Scan cuesta nada.
 SELECT count(*) AS filas_reales FROM transactions;
@@ -141,7 +145,7 @@ FROM per_user;
 
 \echo ''
 \echo '======== 4 - REPARTO POR nature ========'
--- CRITERIO: ~92% expense / ~8% income.
+-- CRITERIO: ~95% expense / ~5% income.
 -- Ese 92% es el dato incomodo de E5: un indice parcial WHERE nature='expense'
 -- excluye apenas el 8% de la tabla. NO se maquilla - se documenta que en este
 -- dataset el valor del indice parcial no es el tamano sino la especializacion.

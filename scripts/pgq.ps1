@@ -13,7 +13,7 @@
 #     pg                     psql interactivo. Explorar, tantear queries.
 #                            NADA queda guardado. Es la terminal de trabajo.
 #     pgq <archivo.sql>      corre el .sql y GUARDA la salida cruda en
-#                            docs/perf/out/<nombre>.txt. Es la evidencia que
+#                            docs/perf/salida/<nombre>.txt. Es la evidencia que
 #                            se commitea y que PERFORMANCE.md cita.
 #
 # La regla del plan: "ejercicio sin numero medido no cuenta". `pg` no produce
@@ -26,8 +26,8 @@ $script:PgLabDatabase = 'personal_finance_db'
 
 function Get-PgLabRoot {
     # docker compose necesita correr desde la raiz (ahi vive docker-compose.yml)
-    # y las rutas de docs/perf/out son relativas a esa misma raiz. Derivarla de
-    # git en vez de asumir el cwd: asi `pgq docs\perf\e0-gate.sql` funciona igual
+    # y las rutas de docs/perf/salida son relativas a esa misma raiz. Derivarla de
+    # git en vez de asumir el cwd: asi `pgq docs\perf\scripts\setup.sql` funciona igual
     # desde cualquier subcarpeta del repo.
     $root = git rev-parse --show-toplevel
     if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($root)) {
@@ -52,7 +52,7 @@ function pgq {
     $sql  = Resolve-Path -LiteralPath $File -ErrorAction Stop
     $name = [System.IO.Path]::GetFileNameWithoutExtension($sql.Path)
 
-    $outDir = Join-Path $root 'docs\perf\out'
+    $outDir = Join-Path $root 'docs\perf\salida'
     if (-not (Test-Path -LiteralPath $outDir)) {
         New-Item -ItemType Directory -Force -Path $outDir | Out-Null
     }
@@ -110,7 +110,7 @@ function pgq {
 
     $lines | ForEach-Object { Write-Host $_ }
     Write-Host ''
-    Write-Host "-> guardado en docs/perf/out/$name.txt" -ForegroundColor Green
+    Write-Host "-> guardado en docs/perf/salida/$name.txt" -ForegroundColor Green
 }
 
 function pg {

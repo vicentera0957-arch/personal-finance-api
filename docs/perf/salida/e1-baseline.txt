@@ -1,0 +1,90 @@
+-- e1-baseline
+-- corrido: 2026-08-10 (sesion psql interactiva, capturado a mano)
+-- fuente:  e1-baseline.sql
+--
+-- Nota de procedencia: las tres corridas se ejecutaron pegando e1-baseline.sql
+-- en `docker compose exec postgres psql`, no via `pgq`. Se removieron los
+-- prompts de psql (personal_finance_db=#); los planes van textuales.
+--
+-- El SANITY CHECK (seccion 0 del .sql) devolvio total = 170301625 sobre 4029
+-- filas en la captura por pgq de las 21:22:11 del mismo dia, mismos parametros.
+-- Queda corroborado de forma independiente por el `actual rows=4029` del Bitmap
+-- Heap Scan de las tres corridas de abajo.
+
+SET max_parallel_workers_per_gather = 0;
+SET
+
+======== E1 - CORRIDA 1 ========
+EXPLAIN (ANALYZE, BUFFERS, SETTINGS)
+SELECT COALESCE(SUM(e.amount), 0) AS total
+FROM v_period_expenses e
+WHERE e.user_id          = '7afba7e7-5856-4bd5-8cce-57887f4b1947'
+  AND e.category_id      = '98de0404-ead4-4c77-9cb3-5875f282a936'
+  AND e.transaction_date >= '2026-07-01'
+  AND e.transaction_date <  '2026-08-01';
+
+ Aggregate  (cost=2884.48..2884.49 rows=1 width=8) (actual time=3.196..3.198 rows=1 loops=1)
+   Buffers: shared hit=978
+   ->  Bitmap Heap Scan on transactions  (cost=67.80..2882.33 rows=859 width=4) (actual time=1.190..2.816 rows=4029 loops=1)
+         Recheck Cond: ((user_id = '7afba7e7-5856-4bd5-8cce-57887f4b1947'::uuid) AND (category_id = '98de0404-ead4-4c77-9cb3-5875f282a936'::uuid) AND ((nature)::text = 'expense'::text) AND (transaction_date >= '2026-07-01 00:00:00'::timestamp without time zone) AND (transaction_date < '2026-08-01 00:00:00'::timestamp without time zone))
+         Heap Blocks: exact=915
+         Buffers: shared hit=978
+         ->  Bitmap Index Scan on idx_tx_user_cat_nature_date  (cost=0.00..67.58 rows=859 width=0) (actual time=1.045..1.046 rows=4029 loops=1)
+               Index Cond: ((user_id = '7afba7e7-5856-4bd5-8cce-57887f4b1947'::uuid) AND (category_id = '98de0404-ead4-4c77-9cb3-5875f282a936'::uuid) AND ((nature)::text = 'expense'::text) AND (transaction_date >= '2026-07-01 00:00:00'::timestamp without time zone) AND (transaction_date < '2026-08-01 00:00:00'::timestamp without time zone))
+               Buffers: shared hit=63
+ Settings: max_parallel_workers_per_gather = '0'
+ Planning Time: 1.220 ms
+ Execution Time: 3.585 ms
+(12 rows)
+
+Time: 20.379 ms
+
+======== E1 - CORRIDA 2 ========
+EXPLAIN (ANALYZE, BUFFERS, SETTINGS)
+SELECT COALESCE(SUM(e.amount), 0) AS total
+FROM v_period_expenses e
+WHERE e.user_id          = '7afba7e7-5856-4bd5-8cce-57887f4b1947'
+  AND e.category_id      = '98de0404-ead4-4c77-9cb3-5875f282a936'
+  AND e.transaction_date >= '2026-07-01'
+  AND e.transaction_date <  '2026-08-01';
+
+ Aggregate  (cost=2884.48..2884.49 rows=1 width=8) (actual time=2.985..2.986 rows=1 loops=1)
+   Buffers: shared hit=978
+   ->  Bitmap Heap Scan on transactions  (cost=67.80..2882.33 rows=859 width=4) (actual time=0.989..2.536 rows=4029 loops=1)
+         Recheck Cond: ((user_id = '7afba7e7-5856-4bd5-8cce-57887f4b1947'::uuid) AND (category_id = '98de0404-ead4-4c77-9cb3-5875f282a936'::uuid) AND ((nature)::text = 'expense'::text) AND (transaction_date >= '2026-07-01 00:00:00'::timestamp without time zone) AND (transaction_date < '2026-08-01 00:00:00'::timestamp without time zone))
+         Heap Blocks: exact=915
+         Buffers: shared hit=978
+         ->  Bitmap Index Scan on idx_tx_user_cat_nature_date  (cost=0.00..67.58 rows=859 width=0) (actual time=0.836..0.837 rows=4029 loops=1)
+               Index Cond: ((user_id = '7afba7e7-5856-4bd5-8cce-57887f4b1947'::uuid) AND (category_id = '98de0404-ead4-4c77-9cb3-5875f282a936'::uuid) AND ((nature)::text = 'expense'::text) AND (transaction_date >= '2026-07-01 00:00:00'::timestamp without time zone) AND (transaction_date < '2026-08-01 00:00:00'::timestamp without time zone))
+               Buffers: shared hit=63
+ Settings: max_parallel_workers_per_gather = '0'
+ Planning Time: 0.157 ms
+ Execution Time: 3.160 ms
+(12 rows)
+
+Time: 3.954 ms
+
+======== E1 - CORRIDA 3 (BASELINE) ========
+EXPLAIN (ANALYZE, BUFFERS, SETTINGS)
+SELECT COALESCE(SUM(e.amount), 0) AS total
+FROM v_period_expenses e
+WHERE e.user_id          = '7afba7e7-5856-4bd5-8cce-57887f4b1947'
+  AND e.category_id      = '98de0404-ead4-4c77-9cb3-5875f282a936'
+  AND e.transaction_date >= '2026-07-01'
+  AND e.transaction_date <  '2026-08-01';
+
+ Aggregate  (cost=2884.48..2884.49 rows=1 width=8) (actual time=3.516..3.518 rows=1 loops=1)
+   Buffers: shared hit=978
+   ->  Bitmap Heap Scan on transactions  (cost=67.80..2882.33 rows=859 width=4) (actual time=1.281..3.118 rows=4029 loops=1)
+         Recheck Cond: ((user_id = '7afba7e7-5856-4bd5-8cce-57887f4b1947'::uuid) AND (category_id = '98de0404-ead4-4c77-9cb3-5875f282a936'::uuid) AND ((nature)::text = 'expense'::text) AND (transaction_date >= '2026-07-01 00:00:00'::timestamp without time zone) AND (transaction_date < '2026-08-01 00:00:00'::timestamp without time zone))
+         Heap Blocks: exact=915
+         Buffers: shared hit=978
+         ->  Bitmap Index Scan on idx_tx_user_cat_nature_date  (cost=0.00..67.58 rows=859 width=0) (actual time=1.118..1.119 rows=4029 loops=1)
+               Index Cond: ((user_id = '7afba7e7-5856-4bd5-8cce-57887f4b1947'::uuid) AND (category_id = '98de0404-ead4-4c77-9cb3-5875f282a936'::uuid) AND ((nature)::text = 'expense'::text) AND (transaction_date >= '2026-07-01 00:00:00'::timestamp without time zone) AND (transaction_date < '2026-08-01 00:00:00'::timestamp without time zone))
+               Buffers: shared hit=63
+ Settings: max_parallel_workers_per_gather = '0'
+ Planning Time: 0.141 ms
+ Execution Time: 3.691 ms
+(12 rows)
+
+Time: 4.469 ms
