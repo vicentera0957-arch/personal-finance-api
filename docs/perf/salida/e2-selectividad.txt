@@ -1,0 +1,213 @@
+-- e2-selectividad
+-- corrido: 2026-08-11 21:16:43
+-- fuente:  e2-selectividad.sql
+
+\timing on
+Timing is on.
+\pset pager off
+Pager usage is off.
+\set ON_ERROR_STOP on
+\pset null '(null)'
+Null display is "(null)".
+SET max_parallel_workers_per_gather = 0;
+SET
+Time: 0.952 ms
+\echo '======== E2.0 - FRACCIONES REALES (contexto) ========'
+======== E2.0 - FRACCIONES REALES (contexto) ========
+SELECT 'total'                                  AS filtro, count(*) AS filas, 100.00 AS pct FROM transactions
+UNION ALL
+SELECT 'nature=expense',    count(*), round(100.0*count(*)/(SELECT count(*) FROM transactions), 3) FROM transactions WHERE nature = 'expense'
+UNION ALL
+SELECT 'nature=income',     count(*), round(100.0*count(*)/(SELECT count(*) FROM transactions), 3) FROM transactions WHERE nature = 'income'
+UNION ALL
+SELECT 'ballena (user-1)',  count(*), round(100.0*count(*)/(SELECT count(*) FROM transactions), 3) FROM transactions WHERE user_id = '7afba7e7-5856-4bd5-8cce-57887f4b1947'
+UNION ALL
+SELECT 'cola (user-200)',   count(*), round(100.0*count(*)/(SELECT count(*) FROM transactions), 3) FROM transactions WHERE user_id = '1141235c-9ea5-479c-bb45-de7c18e822f1'
+UNION ALL
+SELECT 'ballena+cat+mes',   count(*), round(100.0*count(*)/(SELECT count(*) FROM transactions), 3) FROM transactions WHERE user_id = '7afba7e7-5856-4bd5-8cce-57887f4b1947' AND category_id = '98de0404-ead4-4c77-9cb3-5875f282a936' AND nature = 'expense' AND transaction_date >= '2026-07-01' AND transaction_date < '2026-08-01';
+      filtro      |  filas  |  pct   
+------------------+---------+--------
+ total            | 1000000 | 100.00
+ nature=expense   |  945954 | 94.595
+ nature=income    |   54046 |  5.405
+ ballena (user-1) |  212817 | 21.282
+ cola (user-200)  |     626 |  0.063
+ ballena+cat+mes  |    4029 |  0.403
+(6 rows)
+
+Time: 952.301 ms
+\echo '======== E2.A - nature = expense  (~94,6%) ========'
+======== E2.A - nature = expense  (~94,6%) ========
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT sum(amount) FROM transactions
+WHERE nature = 'expense';
+                                                         QUERY PLAN                                                         
+----------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=31946.17..31946.18 rows=1 width=8) (actual time=196.119..196.121 rows=1 loops=1)
+   Buffers: shared hit=14044 read=3040
+   I/O Timings: shared read=8.790
+   ->  Seq Scan on transactions  (cost=0.00..29584.00 rows=944867 width=4) (actual time=0.141..138.814 rows=945954 loops=1)
+         Filter: ((nature)::text = 'expense'::text)
+         Rows Removed by Filter: 54046
+         Buffers: shared hit=14044 read=3040
+         I/O Timings: shared read=8.790
+ Planning:
+   Buffers: shared hit=4 read=2
+   I/O Timings: shared read=1.927
+ Planning Time: 2.298 ms
+ Execution Time: 196.299 ms
+(13 rows)
+
+Time: 201.642 ms
+\echo '======== E2.B - nature = income  (~5,4%) ========'
+======== E2.B - nature = income  (~5,4%) ========
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT sum(amount) FROM transactions
+WHERE nature = 'income';
+                                                       QUERY PLAN                                                        
+-------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=29721.83..29721.84 rows=1 width=8) (actual time=93.357..93.358 rows=1 loops=1)
+   Buffers: shared hit=14076 read=3008
+   I/O Timings: shared read=6.930
+   ->  Seq Scan on transactions  (cost=0.00..29584.00 rows=55133 width=4) (actual time=0.212..90.033 rows=54046 loops=1)
+         Filter: ((nature)::text = 'income'::text)
+         Rows Removed by Filter: 945954
+         Buffers: shared hit=14076 read=3008
+         I/O Timings: shared read=6.930
+ Planning Time: 0.081 ms
+ Execution Time: 93.387 ms
+(10 rows)
+
+Time: 93.923 ms
+\echo '======== E2.C - ballena: user-1  (~21,3%) ========'
+======== E2.C - ballena: user-1  (~21,3%) ========
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT sum(amount) FROM transactions
+WHERE user_id = '7afba7e7-5856-4bd5-8cce-57887f4b1947';
+                                                                  QUERY PLAN                                                                  
+----------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=29536.98..29536.99 rows=1 width=8) (actual time=231.372..231.374 rows=1 loops=1)
+   Buffers: shared hit=11991 read=6975
+   I/O Timings: shared read=140.786
+   ->  Bitmap Heap Scan on transactions  (cost=9224.48..28998.89 rows=215233 width=4) (actual time=18.427..212.512 rows=212817 loops=1)
+         Recheck Cond: (user_id = '7afba7e7-5856-4bd5-8cce-57887f4b1947'::uuid)
+         Heap Blocks: exact=17084
+         Buffers: shared hit=11991 read=6975
+         I/O Timings: shared read=140.786
+         ->  Bitmap Index Scan on idx_tx_user_date  (cost=0.00..9170.67 rows=215233 width=0) (actual time=14.595..14.596 rows=212817 loops=1)
+               Index Cond: (user_id = '7afba7e7-5856-4bd5-8cce-57887f4b1947'::uuid)
+               Buffers: shared hit=1882
+ Planning Time: 0.088 ms
+ Execution Time: 231.616 ms
+(13 rows)
+
+Time: 232.148 ms
+\echo '======== E2.D - cola: user-200  (~0,063%) ========'
+======== E2.D - cola: user-200  (~0,063%) ========
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT sum(amount) FROM transactions
+WHERE user_id = '1141235c-9ea5-479c-bb45-de7c18e822f1';
+                                                             QUERY PLAN                                                             
+------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=2883.45..2883.46 rows=1 width=8) (actual time=5.242..5.244 rows=1 loops=1)
+   Buffers: shared hit=466 read=158
+   I/O Timings: shared read=4.022
+   ->  Bitmap Heap Scan on transactions  (cost=39.18..2881.27 rows=871 width=4) (actual time=3.965..5.172 rows=626 loops=1)
+         Recheck Cond: (user_id = '1141235c-9ea5-479c-bb45-de7c18e822f1'::uuid)
+         Heap Blocks: exact=616
+         Buffers: shared hit=466 read=158
+         I/O Timings: shared read=4.022
+         ->  Bitmap Index Scan on idx_tx_user_date  (cost=0.00..38.96 rows=871 width=0) (actual time=3.874..3.874 rows=626 loops=1)
+               Index Cond: (user_id = '1141235c-9ea5-479c-bb45-de7c18e822f1'::uuid)
+               Buffers: shared hit=1 read=7
+               I/O Timings: shared read=3.571
+ Planning Time: 0.077 ms
+ Execution Time: 5.327 ms
+(14 rows)
+
+Time: 5.762 ms
+\echo '======== E2.E - ballena + categoria + mes  (~0,4%) = la query de E1 ========'
+======== E2.E - ballena + categoria + mes  (~0,4%) = la query de E1 ========
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT sum(amount) FROM transactions
+WHERE user_id          = '7afba7e7-5856-4bd5-8cce-57887f4b1947'
+  AND category_id      = '98de0404-ead4-4c77-9cb3-5875f282a936'
+  AND nature           = 'expense'
+  AND transaction_date >= '2026-07-01'
+  AND transaction_date <  '2026-08-01';
+                                                                                                                                                                      QUERY PLAN                                                                                                                                                                       
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=2954.43..2954.44 rows=1 width=8) (actual time=2.524..2.525 rows=1 loops=1)
+   Buffers: shared hit=978
+   ->  Bitmap Heap Scan on transactions  (cost=68.22..2952.22 rows=883 width=4) (actual time=1.218..2.256 rows=4029 loops=1)
+         Recheck Cond: ((user_id = '7afba7e7-5856-4bd5-8cce-57887f4b1947'::uuid) AND (category_id = '98de0404-ead4-4c77-9cb3-5875f282a936'::uuid) AND ((nature)::text = 'expense'::text) AND (transaction_date >= '2026-07-01 00:00:00'::timestamp without time zone) AND (transaction_date < '2026-08-01 00:00:00'::timestamp without time zone))
+         Heap Blocks: exact=915
+         Buffers: shared hit=978
+         ->  Bitmap Index Scan on idx_tx_user_cat_nature_date  (cost=0.00..68.00 rows=883 width=0) (actual time=1.028..1.028 rows=4029 loops=1)
+               Index Cond: ((user_id = '7afba7e7-5856-4bd5-8cce-57887f4b1947'::uuid) AND (category_id = '98de0404-ead4-4c77-9cb3-5875f282a936'::uuid) AND ((nature)::text = 'expense'::text) AND (transaction_date >= '2026-07-01 00:00:00'::timestamp without time zone) AND (transaction_date < '2026-08-01 00:00:00'::timestamp without time zone))
+               Buffers: shared hit=63
+ Planning Time: 0.209 ms
+ Execution Time: 2.622 ms
+(11 rows)
+
+Time: 3.436 ms
+\echo '======== E2.F - cola + un mes  (fraccion mas chica todavia) ========'
+======== E2.F - cola + un mes  (fraccion mas chica todavia) ========
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT sum(amount) FROM transactions
+WHERE user_id          = '1141235c-9ea5-479c-bb45-de7c18e822f1'
+  AND transaction_date >= '2026-07-01'
+  AND transaction_date <  '2026-08-01';
+                                                                                                                  QUERY PLAN                                                                                                                   
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=194.16..194.17 rows=1 width=8) (actual time=0.080..0.081 rows=1 loops=1)
+   Buffers: shared hit=36
+   ->  Bitmap Heap Scan on transactions  (cost=5.05..194.03 rows=49 width=4) (actual time=0.043..0.072 rows=34 loops=1)
+         Recheck Cond: ((user_id = '1141235c-9ea5-479c-bb45-de7c18e822f1'::uuid) AND (transaction_date >= '2026-07-01 00:00:00'::timestamp without time zone) AND (transaction_date < '2026-08-01 00:00:00'::timestamp without time zone))
+         Heap Blocks: exact=33
+         Buffers: shared hit=36
+         ->  Bitmap Index Scan on idx_tx_user_date  (cost=0.00..5.04 rows=49 width=0) (actual time=0.037..0.037 rows=34 loops=1)
+               Index Cond: ((user_id = '1141235c-9ea5-479c-bb45-de7c18e822f1'::uuid) AND (transaction_date >= '2026-07-01 00:00:00'::timestamp without time zone) AND (transaction_date < '2026-08-01 00:00:00'::timestamp without time zone))
+               Buffers: shared hit=3
+ Planning Time: 0.157 ms
+ Execution Time: 0.155 ms
+(11 rows)
+
+Time: 0.611 ms
+\echo '======== E2.G - forzando Seq Scan sobre el caso mas selectivo ========'
+======== E2.G - forzando Seq Scan sobre el caso mas selectivo ========
+SET enable_indexscan = off;
+SET
+Time: 0.205 ms
+SET enable_bitmapscan = off;
+SET
+Time: 0.195 ms
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT sum(amount) FROM transactions
+WHERE user_id          = '7afba7e7-5856-4bd5-8cce-57887f4b1947'
+  AND category_id      = '98de0404-ead4-4c77-9cb3-5875f282a936'
+  AND nature           = 'expense'
+  AND transaction_date >= '2026-07-01'
+  AND transaction_date <  '2026-08-01';
+                                                                                                                                                                 QUERY PLAN                                                                                                                                                                  
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=39586.21..39586.22 rows=1 width=8) (actual time=84.727..84.728 rows=1 loops=1)
+   Buffers: shared hit=16156 read=928
+   I/O Timings: shared read=1.524
+   ->  Seq Scan on transactions  (cost=0.00..39584.00 rows=883 width=4) (actual time=74.797..84.533 rows=4029 loops=1)
+         Filter: ((transaction_date >= '2026-07-01 00:00:00'::timestamp without time zone) AND (transaction_date < '2026-08-01 00:00:00'::timestamp without time zone) AND (user_id = '7afba7e7-5856-4bd5-8cce-57887f4b1947'::uuid) AND (category_id = '98de0404-ead4-4c77-9cb3-5875f282a936'::uuid) AND ((nature)::text = 'expense'::text))
+         Rows Removed by Filter: 995971
+         Buffers: shared hit=16156 read=928
+         I/O Timings: shared read=1.524
+ Planning Time: 0.123 ms
+ Execution Time: 84.756 ms
+(10 rows)
+
+Time: 85.383 ms
+RESET enable_indexscan;
+RESET
+Time: 0.325 ms
+RESET enable_bitmapscan;
+RESET
+Time: 0.187 ms
+
