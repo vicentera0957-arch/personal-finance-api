@@ -139,7 +139,7 @@ export class CreateTransactionUseCase {
       }
 
       // LOCK (FOR UPDATE): account row. The lock is taken inside UpdateAccountBalanceUseCase
-      // via the scoped acctRepo.findById() — serializes balance mutations on this account.
+      // via ctx.accounts.findByIdWithLock() — serializes balance mutations on this account.
       await updateBalance.execute(
         command.accountId,
         amount.getValue(),
