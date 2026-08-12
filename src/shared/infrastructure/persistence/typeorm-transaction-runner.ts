@@ -46,8 +46,32 @@ export abstract class TypeOrmTransactionRunner<
     }
 
     const qr: QueryRunner = this.dataSource.createQueryRunner();
-    await qr.connect();
-    await qr.startTransaction();
+
+    // La adquisicion va en su propio try porque el `finally` con el release()
+    // vive DENTRO del callback de abajo, y a esta altura todavia no entramos.
+    // Si startTransaction() falla (corte de red, Postgres reiniciando, la
+    // conexion matada por timeout) el QueryRunner ya tomo una conexion del
+    // pool y ningun camino la devolveria: se pierde para siempre. Como esas
+    // fallas llegan en rafaga, alcanzan DB_POOL_MAX y la app queda colgada
+    // esperando conexiones que no vuelven — sin crashear, asi que /health
+    // sigue en 200 y el orquestador no la reinicia.
+    try {
+      await qr.connect();
+      await qr.startTransaction();
+    } catch (err) {
+      // Mismo criterio que el rollback de mas abajo: el error del release
+      // nunca debe enmascarar la causa real.
+      try {
+        await qr.release();
+      } catch (releaseErr) {
+        this.logger.error(
+          `Release fallo tras no poder abrir la transaccion en ` +
+            `${this.constructor.name}.run(); se propaga el error original. ` +
+            `Causa del release: ${(releaseErr as Error).message}`,
+        );
+      }
+      throw err;
+    }
 
     const ownerName = this.constructor.name;
 

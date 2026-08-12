@@ -183,4 +183,83 @@ describe('TypeOrmTransactionRunner', () => {
 
     expect(createQueryRunner).toHaveBeenCalledTimes(2);
   });
+
+  // La adquisicion (connect + startTransaction) corre ANTES de entrar al
+  // callback que tiene el `finally { release() }`. Sin un try propio ahi, un
+  // fallo en esa ventana deja la conexion tomada del pool para siempre.
+  describe('fallo al abrir la transaccion: la conexion vuelve al pool', () => {
+    it('startTransaction lanza: release() SI corre y el error original se propaga', async () => {
+      const log: string[] = [];
+      const qr = makeQueryRunner(log);
+      const boom = new Error('connection terminated unexpectedly');
+      qr.startTransaction.mockImplementation(async () => {
+        log.push('startTransaction:throw');
+        throw boom;
+      });
+      const { dataSource } = makeDataSource(qr);
+      const runner = new TestRunner(dataSource);
+
+      await expect(runner.run(async () => 'never')).rejects.toBe(boom);
+
+      expect(log).toEqual(['connect', 'startTransaction:throw', 'release']);
+      expect(qr.release).toHaveBeenCalledTimes(1);
+      expect(qr.commitTransaction).not.toHaveBeenCalled();
+      expect(qr.rollbackTransaction).not.toHaveBeenCalled();
+    });
+
+    it('connect lanza: release() corre igual y el error original se propaga', async () => {
+      const log: string[] = [];
+      const qr = makeQueryRunner(log);
+      const boom = new Error('too many clients already');
+      qr.connect.mockImplementation(async () => {
+        log.push('connect:throw');
+        throw boom;
+      });
+      const { dataSource } = makeDataSource(qr);
+      const runner = new TestRunner(dataSource);
+
+      await expect(runner.run(async () => 'never')).rejects.toBe(boom);
+
+      expect(log).toEqual(['connect:throw', 'release']);
+      expect(qr.startTransaction).not.toHaveBeenCalled();
+    });
+
+    it('el release que falla no enmascara el error de apertura', async () => {
+      const qr = makeQueryRunner([]);
+      const boom = new Error('connection terminated unexpectedly');
+      qr.startTransaction.mockRejectedValue(boom);
+      qr.release.mockRejectedValue(new Error('release failed'));
+      const { dataSource } = makeDataSource(qr);
+      const runner = new TestRunner(dataSource);
+
+      await expect(runner.run(async () => 'never')).rejects.toBe(boom);
+    });
+
+    it('el callback NUNCA corre si la transaccion no se pudo abrir', async () => {
+      const qr = makeQueryRunner([]);
+      qr.startTransaction.mockRejectedValue(new Error('boom'));
+      const { dataSource } = makeDataSource(qr);
+      const runner = new TestRunner(dataSource);
+      const work = jest.fn().mockResolvedValue('x');
+
+      await expect(runner.run(work)).rejects.toThrow('boom');
+
+      expect(work).not.toHaveBeenCalled();
+    });
+
+    it('un fallo de apertura no deja la cadena async marcada: el run() siguiente no cree estar anidado', async () => {
+      const failing = makeQueryRunner([]);
+      failing.startTransaction.mockRejectedValue(new Error('boom'));
+      const runnerA = new TestRunner(makeDataSource(failing).dataSource);
+
+      await expect(runnerA.run(async () => 'never')).rejects.toThrow('boom');
+
+      // Si el fallo hubiera dejado el AsyncLocalStorage marcado, esto tiraria
+      // NestedTransactionError en vez de completar.
+      const ok = makeQueryRunner([]);
+      const runnerB = new TestRunner(makeDataSource(ok).dataSource);
+
+      await expect(runnerB.run(async () => 'ok')).resolves.toBe('ok');
+    });
+  });
 });
