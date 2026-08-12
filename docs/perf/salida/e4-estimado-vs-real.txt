@@ -1,0 +1,224 @@
+-- e4-estimado-vs-real
+-- corrido: 2026-08-12 18:42:21
+-- fuente:  e4-estimado-vs-real.sql
+
+\timing on
+Timing is on.
+\pset pager off
+Pager usage is off.
+\set ON_ERROR_STOP on
+\pset null '(null)'
+Null display is "(null)".
+SELECT user_id AS ballena FROM transactions GROUP BY user_id ORDER BY count(*) DESC LIMIT 1 \gset
+Time: 93.876 ms
+SELECT category_id AS categoria FROM transactions WHERE user_id = :'ballena' AND nature = 'expense' AND transaction_date >= '2026-07-01' AND transaction_date < '2026-08-01' GROUP BY category_id ORDER BY count(*) DESC LIMIT 1 \gset
+Time: 38.919 ms
+SET max_parallel_workers_per_gather = 0;
+SET
+Time: 0.239 ms
+\echo '======== E4.0 - CATALOGO ANTES ========'
+======== E4.0 - CATALOGO ANTES ========
+SELECT reltuples::bigint AS reltuples, relpages FROM pg_class WHERE relname = 'transactions';
+ reltuples | relpages 
+-----------+----------
+   1000000 |    17084
+(1 row)
+
+Time: 1.991 ms
+SELECT count(*) AS filas_en_el_periodo FROM transactions
+WHERE user_id = :'ballena'
+  AND category_id = :'categoria'
+  AND nature = 'expense'
+  AND transaction_date >= '2026-07-01' AND transaction_date < '2026-08-01';
+ filas_en_el_periodo 
+---------------------
+                4028
+(1 row)
+
+Time: 1.417 ms
+BEGIN;
+BEGIN
+Time: 0.271 ms
+\echo '======== E4.1 - MEDICION ANTES DE INSERTAR ========'
+======== E4.1 - MEDICION ANTES DE INSERTAR ========
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT sum(amount) FROM transactions
+WHERE user_id          = :'ballena'
+  AND category_id      = :'categoria'
+  AND nature           = 'expense'
+  AND transaction_date >= '2026-07-01'
+  AND transaction_date <  '2026-08-01';
+                                                                                                                                                                      QUERY PLAN                                                                                                                                                                       
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=2866.03..2866.04 rows=1 width=8) (actual time=3.088..3.090 rows=1 loops=1)
+   Buffers: shared hit=982
+   ->  Bitmap Heap Scan on transactions  (cost=67.55..2863.90 rows=852 width=4) (actual time=1.071..2.681 rows=4028 loops=1)
+         Recheck Cond: ((user_id = '0898fb97-6631-48b3-9968-6bb3cb56a399'::uuid) AND (category_id = '4ab66006-6631-4966-941e-041666d26010'::uuid) AND ((nature)::text = 'expense'::text) AND (transaction_date >= '2026-07-01 00:00:00'::timestamp without time zone) AND (transaction_date < '2026-08-01 00:00:00'::timestamp without time zone))
+         Heap Blocks: exact=919
+         Buffers: shared hit=982
+         ->  Bitmap Index Scan on idx_tx_user_cat_nature_date  (cost=0.00..67.33 rows=852 width=0) (actual time=0.908..0.909 rows=4028 loops=1)
+               Index Cond: ((user_id = '0898fb97-6631-48b3-9968-6bb3cb56a399'::uuid) AND (category_id = '4ab66006-6631-4966-941e-041666d26010'::uuid) AND ((nature)::text = 'expense'::text) AND (transaction_date >= '2026-07-01 00:00:00'::timestamp without time zone) AND (transaction_date < '2026-08-01 00:00:00'::timestamp without time zone))
+               Buffers: shared hit=63
+ Planning:
+   Buffers: shared hit=4 read=2
+   I/O Timings: shared read=0.026
+ Planning Time: 0.262 ms
+ Execution Time: 3.226 ms
+(14 rows)
+
+Time: 4.526 ms
+\echo '======== E4.2 - INSERTAR 5.000 FILAS CONCENTRADAS EN ESE MISMO PERIODO ========'
+======== E4.2 - INSERTAR 5.000 FILAS CONCENTRADAS EN ESE MISMO PERIODO ========
+INSERT INTO transactions (id, user_id, account_id, category_id, nature, amount, description, transaction_date, created_at)
+SELECT gen_random_uuid(),
+       :'ballena',
+       (SELECT id FROM accounts WHERE user_id = :'ballena' AND is_archived = false ORDER BY id LIMIT 1),
+       :'categoria',
+       'expense',
+       1000,
+       'E4 sintetica',
+       TIMESTAMP '2026-07-15 00:00:00' + (g || ' seconds')::interval,
+       now()
+FROM generate_series(1, 5000) AS g;
+INSERT 0 5000
+Time: 1049.007 ms (00:01.049)
+\echo '======== E4.3 - MEDICION SIN ANALYZE (el catalogo todavia miente) ========'
+======== E4.3 - MEDICION SIN ANALYZE (el catalogo todavia miente) ========
+SELECT reltuples::bigint AS reltuples_sin_analyze FROM pg_class WHERE relname = 'transactions';
+ reltuples_sin_analyze 
+-----------------------
+               1000000
+(1 row)
+
+Time: 0.538 ms
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT sum(amount) FROM transactions
+WHERE user_id          = :'ballena'
+  AND category_id      = :'categoria'
+  AND nature           = 'expense'
+  AND transaction_date >= '2026-07-01'
+  AND transaction_date <  '2026-08-01';
+                                                                                                                                                                      QUERY PLAN                                                                                                                                                                       
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=2879.74..2879.75 rows=1 width=8) (actual time=4.280..4.282 rows=1 loops=1)
+   Buffers: shared hit=1144
+   ->  Bitmap Heap Scan on transactions  (cost=67.74..2877.60 rows=856 width=4) (actual time=1.797..3.550 rows=9028 loops=1)
+         Recheck Cond: ((user_id = '0898fb97-6631-48b3-9968-6bb3cb56a399'::uuid) AND (category_id = '4ab66006-6631-4966-941e-041666d26010'::uuid) AND ((nature)::text = 'expense'::text) AND (transaction_date >= '2026-07-01 00:00:00'::timestamp without time zone) AND (transaction_date < '2026-08-01 00:00:00'::timestamp without time zone))
+         Heap Blocks: exact=1006
+         Buffers: shared hit=1144
+         ->  Bitmap Index Scan on idx_tx_user_cat_nature_date  (cost=0.00..67.53 rows=856 width=0) (actual time=1.686..1.686 rows=9028 loops=1)
+               Index Cond: ((user_id = '0898fb97-6631-48b3-9968-6bb3cb56a399'::uuid) AND (category_id = '4ab66006-6631-4966-941e-041666d26010'::uuid) AND ((nature)::text = 'expense'::text) AND (transaction_date >= '2026-07-01 00:00:00'::timestamp without time zone) AND (transaction_date < '2026-08-01 00:00:00'::timestamp without time zone))
+               Buffers: shared hit=138
+ Planning Time: 0.168 ms
+ Execution Time: 4.403 ms
+(11 rows)
+
+Time: 5.074 ms
+\echo '======== E4.4 - ANALYZE ========'
+======== E4.4 - ANALYZE ========
+ANALYZE transactions;
+ANALYZE
+Time: 215.544 ms
+SELECT reltuples::bigint AS reltuples_post_analyze FROM pg_class WHERE relname = 'transactions';
+ reltuples_post_analyze 
+------------------------
+                1005000
+(1 row)
+
+Time: 0.421 ms
+\echo '======== E4.5 - MEDICION CON EL CATALOGO AL DIA ========'
+======== E4.5 - MEDICION CON EL CATALOGO AL DIA ========
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT sum(amount) FROM transactions
+WHERE user_id          = :'ballena'
+  AND category_id      = :'categoria'
+  AND nature           = 'expense'
+  AND transaction_date >= '2026-07-01'
+  AND transaction_date <  '2026-08-01';
+                                                                                                                                                                      QUERY PLAN                                                                                                                                                                       
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=3240.89..3240.90 rows=1 width=8) (actual time=3.763..3.765 rows=1 loops=1)
+   Buffers: shared hit=1144
+   ->  Bitmap Heap Scan on transactions  (cost=77.95..3238.44 rows=980 width=4) (actual time=1.756..3.148 rows=9028 loops=1)
+         Recheck Cond: ((user_id = '0898fb97-6631-48b3-9968-6bb3cb56a399'::uuid) AND (category_id = '4ab66006-6631-4966-941e-041666d26010'::uuid) AND ((nature)::text = 'expense'::text) AND (transaction_date >= '2026-07-01 00:00:00'::timestamp without time zone) AND (transaction_date < '2026-08-01 00:00:00'::timestamp without time zone))
+         Heap Blocks: exact=1006
+         Buffers: shared hit=1144
+         ->  Bitmap Index Scan on idx_tx_user_cat_nature_date  (cost=0.00..77.70 rows=980 width=0) (actual time=1.655..1.655 rows=9028 loops=1)
+               Index Cond: ((user_id = '0898fb97-6631-48b3-9968-6bb3cb56a399'::uuid) AND (category_id = '4ab66006-6631-4966-941e-041666d26010'::uuid) AND ((nature)::text = 'expense'::text) AND (transaction_date >= '2026-07-01 00:00:00'::timestamp without time zone) AND (transaction_date < '2026-08-01 00:00:00'::timestamp without time zone))
+               Buffers: shared hit=138
+ Planning:
+   Buffers: shared hit=62
+ Planning Time: 1.162 ms
+ Execution Time: 3.853 ms
+(13 rows)
+
+Time: 5.804 ms
+ROLLBACK;
+ROLLBACK
+Time: 0.385 ms
+\echo '======== E4.6 - DESPUES DEL ROLLBACK: volvieron las estadisticas? ========'
+======== E4.6 - DESPUES DEL ROLLBACK: volvieron las estadisticas? ========
+SELECT count(*) AS filas_en_el_periodo FROM transactions
+WHERE user_id = :'ballena'
+  AND category_id = :'categoria'
+  AND nature = 'expense'
+  AND transaction_date >= '2026-07-01' AND transaction_date < '2026-08-01';
+ filas_en_el_periodo 
+---------------------
+                4028
+(1 row)
+
+Time: 3.837 ms
+SELECT reltuples::bigint AS reltuples_post_rollback FROM pg_class WHERE relname = 'transactions';
+ reltuples_post_rollback 
+-------------------------
+                 1005000
+(1 row)
+
+Time: 0.544 ms
+EXPLAIN
+SELECT sum(amount) FROM transactions
+WHERE user_id          = :'ballena'
+  AND category_id      = :'categoria'
+  AND nature           = 'expense'
+  AND transaction_date >= '2026-07-01'
+  AND transaction_date <  '2026-08-01';
+                                                                                                                                                                      QUERY PLAN                                                                                                                                                                       
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=2879.74..2879.75 rows=1 width=8)
+   ->  Bitmap Heap Scan on transactions  (cost=67.74..2877.60 rows=856 width=4)
+         Recheck Cond: ((user_id = '0898fb97-6631-48b3-9968-6bb3cb56a399'::uuid) AND (category_id = '4ab66006-6631-4966-941e-041666d26010'::uuid) AND ((nature)::text = 'expense'::text) AND (transaction_date >= '2026-07-01 00:00:00'::timestamp without time zone) AND (transaction_date < '2026-08-01 00:00:00'::timestamp without time zone))
+         ->  Bitmap Index Scan on idx_tx_user_cat_nature_date  (cost=0.00..67.53 rows=856 width=0)
+               Index Cond: ((user_id = '0898fb97-6631-48b3-9968-6bb3cb56a399'::uuid) AND (category_id = '4ab66006-6631-4966-941e-041666d26010'::uuid) AND ((nature)::text = 'expense'::text) AND (transaction_date >= '2026-07-01 00:00:00'::timestamp without time zone) AND (transaction_date < '2026-08-01 00:00:00'::timestamp without time zone))
+(5 rows)
+
+Time: 0.815 ms
+\echo '======== E4.7 - LIMPIEZA OBLIGATORIA: dejar el catalogo sano ========'
+======== E4.7 - LIMPIEZA OBLIGATORIA: dejar el catalogo sano ========
+ANALYZE transactions;
+ANALYZE
+Time: 204.021 ms
+SELECT reltuples::bigint AS reltuples_final FROM pg_class WHERE relname = 'transactions';
+ reltuples_final 
+-----------------
+         1000000
+(1 row)
+
+Time: 0.437 ms
+EXPLAIN
+SELECT sum(amount) FROM transactions
+WHERE user_id          = :'ballena'
+  AND category_id      = :'categoria'
+  AND nature           = 'expense'
+  AND transaction_date >= '2026-07-01'
+  AND transaction_date <  '2026-08-01';
+                                                                                                                                                                      QUERY PLAN                                                                                                                                                                       
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=2870.58..2870.59 rows=1 width=8)
+   ->  Bitmap Heap Scan on transactions  (cost=67.69..2868.45 rows=853 width=4)
+         Recheck Cond: ((user_id = '0898fb97-6631-48b3-9968-6bb3cb56a399'::uuid) AND (category_id = '4ab66006-6631-4966-941e-041666d26010'::uuid) AND ((nature)::text = 'expense'::text) AND (transaction_date >= '2026-07-01 00:00:00'::timestamp without time zone) AND (transaction_date < '2026-08-01 00:00:00'::timestamp without time zone))
+         ->  Bitmap Index Scan on idx_tx_user_cat_nature_date  (cost=0.00..67.48 rows=853 width=0)
+               Index Cond: ((user_id = '0898fb97-6631-48b3-9968-6bb3cb56a399'::uuid) AND (category_id = '4ab66006-6631-4966-941e-041666d26010'::uuid) AND ((nature)::text = 'expense'::text) AND (transaction_date >= '2026-07-01 00:00:00'::timestamp without time zone) AND (transaction_date < '2026-08-01 00:00:00'::timestamp without time zone))
+(5 rows)
+
+Time: 1.670 ms

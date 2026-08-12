@@ -346,6 +346,156 @@ exacto) y sobre G, que con cuatro condiciones extra suma justo
 
 ---
 
+### E3 · Leer buffers, no milisegundos
+
+**Experimentos:** `docs/perf/scripts/e3a-frio.sql` · `e3b-caliente.sql`
+**Salida cruda:** `docs/perf/salida/e3a-frio.txt` · `e3b-caliente.txt`
+**Fecha:** 2026-08-12 · `track_io_timing = on` · `shared_buffers = 128 MB`
+· heap 133 MB · índices 289 MB
+
+> El preámbulo `\gset` de estos dos scripts deriva sus parámetros de `users`
+> (5 páginas) y `categories` (23), **no** de `transactions`. Un `GROUP BY
+> user_id` sobre el millón de filas habría calentado el caché justo antes de la
+> medición fría y destruido el ejercicio.
+
+#### Query chica — 982 buffers
+
+| | `hit` | `read` | I/O | Execution |
+| --- | --- | --- | --- | --- |
+| fría (tras `restart`) | 0 | **982** | 75,6 ms | **83,5 ms** |
+| caliente 1 | 919 | 63 | 0,4 ms | 3,3 ms |
+| caliente 2 | **982** | 0 | — | **2,9 ms** |
+
+**El total es 982 en las tres.** Lo único que cambia es de dónde salieron las
+páginas. **29× de diferencia en tiempo, cero diferencia en trabajo** — y el I/O
+explica el 90% de la corrida fría (75,6 de 83,5 ms).
+
+#### Query grande — 18.965 buffers
+
+| | `hit` | `read` | I/O | Execution | µs/página |
+| --- | --- | --- | --- | --- | --- |
+| fría | 0 | **18.965** | 1.193,7 ms | **1.338,5 ms** | 62,9 |
+| caliente 1 | 919 | **18.046** | 140,8 ms | 235,7 ms | 7,8 |
+| caliente 2 | 919 | **18.046** | 29,5 ms | **100,6 ms** | **1,6** |
+
+**Acá está el hallazgo de E3.** La corrida "caliente" **nunca deja de leer**:
+18.046 páginas de disco, idéntico en las dos, para siempre. Es el mismo
+mecanismo de C en E2 — 18.965 páginas de working set contra 16.384 de pool, un
+Bitmap Heap Scan que se auto-desaloja.
+
+Y sin embargo **el tiempo baja 13×** leyendo exactamente las mismas páginas.
+`shared read` no significa "fue al disco": significa **"no estaba en
+`shared_buffers`"**. Debajo está el page cache del kernel, que sirve esas mismas
+páginas **40× más rápido** (62,9 → 1,6 µs). Dos capas de caché, y el plan solo
+reporta la primera.
+
+#### Conclusiones
+
+**1 · Los buffers son el invariante; los milisegundos son el ruido.** Mismo
+trabajo, 29× de spread. Una query que toca 18.965 buffers es cara hoy, mañana y
+en producción.
+
+**2 · `read` no es disco.** Es un fallo de `shared_buffers`, no necesariamente
+I/O físico. `I/O Timings` distingue una cosa de la otra: 62,9 µs/página es disco,
+1,6 µs/página es page cache del SO.
+
+**3 · Hay working sets que nunca se cachean.** Si el conjunto supera
+`shared_buffers` y el nodo no usa ring buffer, el hit rate se queda clavado
+—4,8% acá— por muchas veces que se repita la query.
+
+---
+
+### E4 · Estimado vs. real
+
+**Experimento:** `docs/perf/scripts/e4-estimado-vs-real.sql`
+**Salida cruda:** `docs/perf/salida/e4-estimado-vs-real.txt`
+**Fecha:** 2026-08-12
+
+Dentro de `BEGIN`/`ROLLBACK`: medir, insertar 5.000 filas en el mismo período,
+medir sin `ANALYZE`, correr `ANALYZE`, medir.
+
+| Paso | `reltuples` | Filas reales | `rows=` est. | `actual rows` | Error |
+| --- | --- | --- | --- | --- | --- |
+| E4.1 antes | 1.000.000 | 4.028 | **852** | 4.028 | **4,7×** |
+| E4.3 sin `ANALYZE` | 1.000.000 | 9.028 | **856** | 9.028 | **10,5×** |
+| E4.5 con `ANALYZE` | 1.005.000 | 9.028 | **980** | 9.028 | **9,2×** |
+| E4.6 tras `ROLLBACK` | **1.005.000** | 4.028 | 856 | — | — |
+| E4.7 tras `ANALYZE` final | 1.000.000 | 4.028 | 853 | — | 4,7× |
+
+#### 1 · Sin `ANALYZE` la estimación igual se movió, pero 0,5% cuando la realidad se movió 124%
+
+852 → 856. El planner **no** usa `pg_class.reltuples` tal cual:
+`estimate_rel_size()` lee el **tamaño real del archivo** al planificar y escala
+`reltuples` proporcionalmente. Por eso un plan cambia cuando la tabla crece
+aunque nadie haya corrido `ANALYZE`, y por eso el ajuste es de volumen, nunca de
+**forma**.
+
+#### 2 · El `ROLLBACK` revierte las filas y no revierte todo el catálogo
+
+`reltuples` quedó en **1.005.000** con 1.000.000 de filas reales. `ANALYZE`
+escribe `pg_class.reltuples`/`relpages` con `heap_inplace_update`, que **no es
+transaccional** — es así a propósito, para no generar bloat de catálogo.
+
+`pg_statistic` sí revirtió: con `reltuples` y tamaño de archivo idénticos a
+E4.5, la estimación volvió de 980 a **856**, el valor previo al `ANALYZE`. La
+única variable que cambió es la distribución. **Las dos mitades del catálogo se
+comportan distinto ante un rollback**, y por eso el `ANALYZE` final del script es
+obligatorio, no higiene.
+
+#### 3 · El error de 4,7× no lo causó el experimento: ya estaba ahí
+
+`ANALYZE` mejoró de 856 a 980 sobre 9.028 reales. Sigue errando 9×, porque el
+error de base es anterior a cualquier inserción. El planner **multiplica
+selectividades asumiendo independencia entre columnas**:
+
+```text
+0,2128 (user) x 0,0744 (cat) x 0,946 (nature) x 0,0543 (mes) x 1M = 814
+el planner dijo 852 · la realidad es 4.028
+```
+
+Pero `Supermercado` **de esta ballena** pertenece solo a esta ballena:
+`P(user | category) = 1`, no 0,2128. Multiplicar por `P(user)` sobra, y la
+cuenta cierra exacta: `4.028 x 0,2128 = 857 ≈ 852`.
+
+`ANALYZE` **no puede** arreglar esto: corrige la distribución de cada columna por
+separado, y el problema es la **relación entre** columnas. La herramienta es otra:
+
+```sql
+CREATE STATISTICS stx_tx_user_cat (dependencies, ndistinct)
+  ON user_id, category_id, nature FROM transactions;
+ANALYZE transactions;
+```
+
+| | `rows=` estimado | Real | Error |
+| --- | --- | --- | --- |
+| sin estadísticas extendidas | 853 | 4.028 | **4,7×** |
+| con `CREATE STATISTICS` | **4.161** | 4.028 | **3,3%** |
+
+Verificado y luego revertido (`DROP STATISTICS`) para no contaminar el baseline
+del Bloque 2. **Candidato real de migración**, ver la acción pendiente abajo.
+
+#### Conclusiones
+
+**1 · La estimación se mueve con el tamaño del archivo, no solo con `ANALYZE`.**
+El planner lee el archivo en vivo y escala; `ANALYZE` aporta la *forma* de los
+datos.
+
+**2 · `ROLLBACK` no revierte `pg_class`.** Sí revierte `pg_statistic`. Después de
+cualquier experimento que inserte y deshaga, `ANALYZE` es obligatorio.
+
+**3 · La causa #1 de mala estimación no son las estadísticas viejas: es la
+independencia asumida entre columnas.** Se detecta comparando `rows=` con
+`actual rows`, y se arregla con `CREATE STATISTICS`, no corriendo `ANALYZE` más
+seguido.
+
+> **Acción pendiente para el producto.** `sumExpenseAmountByUserCategoryAndPeriod`
+> filtra por `(user_id, category_id, nature, período)`, tres columnas
+> funcionalmente dependientes. El planner subestima 4,7× ese predicado. Hoy no
+> duele porque elige el plan correcto igual, pero es exactamente el error que
+> hace colapsar un plan cuando la query gana un `JOIN`: con una estimación de 853
+> filas un Nested Loop parece razonable; con 4.028, no.
+
+---
 ## §2 — Índices
 
 <!-- Bloque 2 · E5–E8 -->

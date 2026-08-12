@@ -1,0 +1,137 @@
+-- e3b-caliente
+-- corrido: 2026-08-12 18:41:30
+-- fuente:  e3b-caliente.sql
+
+\timing on
+Timing is on.
+\pset pager off
+Pager usage is off.
+\set ON_ERROR_STOP on
+\pset null '(null)'
+Null display is "(null)".
+SELECT id AS ballena FROM users WHERE email = 'seed-load-user-1@finanzas.dev' \gset
+Time: 6.072 ms
+SELECT id AS categoria FROM categories WHERE user_id = :'ballena' AND name = 'Supermercado' AND nature = 'expense' \gset
+Time: 2.381 ms
+SET max_parallel_workers_per_gather = 0;
+SET
+Time: 0.297 ms
+\echo '======== E3.3 - CALIENTE 1 (query chica) ========'
+======== E3.3 - CALIENTE 1 (query chica) ========
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT sum(amount) FROM transactions
+WHERE user_id          = :'ballena'
+  AND category_id      = :'categoria'
+  AND nature           = 'expense'
+  AND transaction_date >= '2026-07-01'
+  AND transaction_date <  '2026-08-01';
+                                                                                                                                                                      QUERY PLAN                                                                                                                                                                       
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=2866.03..2866.04 rows=1 width=8) (actual time=3.239..3.240 rows=1 loops=1)
+   Buffers: shared hit=919 read=63
+   I/O Timings: shared read=0.387
+   ->  Bitmap Heap Scan on transactions  (cost=67.55..2863.90 rows=852 width=4) (actual time=1.259..2.898 rows=4028 loops=1)
+         Recheck Cond: ((user_id = '0898fb97-6631-48b3-9968-6bb3cb56a399'::uuid) AND (category_id = '4ab66006-6631-4966-941e-041666d26010'::uuid) AND ((nature)::text = 'expense'::text) AND (transaction_date >= '2026-07-01 00:00:00'::timestamp without time zone) AND (transaction_date < '2026-08-01 00:00:00'::timestamp without time zone))
+         Heap Blocks: exact=919
+         Buffers: shared hit=919 read=63
+         I/O Timings: shared read=0.387
+         ->  Bitmap Index Scan on idx_tx_user_cat_nature_date  (cost=0.00..67.33 rows=852 width=0) (actual time=1.075..1.075 rows=4028 loops=1)
+               Index Cond: ((user_id = '0898fb97-6631-48b3-9968-6bb3cb56a399'::uuid) AND (category_id = '4ab66006-6631-4966-941e-041666d26010'::uuid) AND ((nature)::text = 'expense'::text) AND (transaction_date >= '2026-07-01 00:00:00'::timestamp without time zone) AND (transaction_date < '2026-08-01 00:00:00'::timestamp without time zone))
+               Buffers: shared read=63
+               I/O Timings: shared read=0.387
+ Planning:
+   Buffers: shared hit=100 read=12
+   I/O Timings: shared read=0.091
+ Planning Time: 1.342 ms
+ Execution Time: 3.316 ms
+(17 rows)
+
+Time: 6.155 ms
+\echo '======== E3.4 - CALIENTE 2 (query chica) ========'
+======== E3.4 - CALIENTE 2 (query chica) ========
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT sum(amount) FROM transactions
+WHERE user_id          = :'ballena'
+  AND category_id      = :'categoria'
+  AND nature           = 'expense'
+  AND transaction_date >= '2026-07-01'
+  AND transaction_date <  '2026-08-01';
+                                                                                                                                                                      QUERY PLAN                                                                                                                                                                       
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=2866.03..2866.04 rows=1 width=8) (actual time=2.731..2.733 rows=1 loops=1)
+   Buffers: shared hit=982
+   ->  Bitmap Heap Scan on transactions  (cost=67.55..2863.90 rows=852 width=4) (actual time=1.091..2.387 rows=4028 loops=1)
+         Recheck Cond: ((user_id = '0898fb97-6631-48b3-9968-6bb3cb56a399'::uuid) AND (category_id = '4ab66006-6631-4966-941e-041666d26010'::uuid) AND ((nature)::text = 'expense'::text) AND (transaction_date >= '2026-07-01 00:00:00'::timestamp without time zone) AND (transaction_date < '2026-08-01 00:00:00'::timestamp without time zone))
+         Heap Blocks: exact=919
+         Buffers: shared hit=982
+         ->  Bitmap Index Scan on idx_tx_user_cat_nature_date  (cost=0.00..67.33 rows=852 width=0) (actual time=0.950..0.950 rows=4028 loops=1)
+               Index Cond: ((user_id = '0898fb97-6631-48b3-9968-6bb3cb56a399'::uuid) AND (category_id = '4ab66006-6631-4966-941e-041666d26010'::uuid) AND ((nature)::text = 'expense'::text) AND (transaction_date >= '2026-07-01 00:00:00'::timestamp without time zone) AND (transaction_date < '2026-08-01 00:00:00'::timestamp without time zone))
+               Buffers: shared hit=63
+ Planning Time: 0.158 ms
+ Execution Time: 2.865 ms
+(11 rows)
+
+Time: 3.616 ms
+\echo '======== E3.5 - CALIENTE 1 (query grande, ballena entera) ========'
+======== E3.5 - CALIENTE 1 (query grande, ballena entera) ========
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT sum(amount) FROM transactions
+WHERE user_id = :'ballena';
+                                                                  QUERY PLAN                                                                  
+----------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=29325.22..29325.23 rows=1 width=8) (actual time=235.466..235.467 rows=1 loops=1)
+   Buffers: shared hit=919 read=18046
+   I/O Timings: shared read=140.800
+   ->  Bitmap Heap Scan on transactions  (cost=9073.22..28797.22 rows=211200 width=4) (actual time=76.695..217.908 rows=212817 loops=1)
+         Recheck Cond: (user_id = '0898fb97-6631-48b3-9968-6bb3cb56a399'::uuid)
+         Heap Blocks: exact=17084
+         Buffers: shared hit=919 read=18046
+         I/O Timings: shared read=140.800
+         ->  Bitmap Index Scan on idx_tx_user_date  (cost=0.00..9020.42 rows=211200 width=0) (actual time=74.457..74.458 rows=212817 loops=1)
+               Index Cond: (user_id = '0898fb97-6631-48b3-9968-6bb3cb56a399'::uuid)
+               Buffers: shared read=1881
+               I/O Timings: shared read=56.339
+ Planning Time: 0.102 ms
+ Execution Time: 235.653 ms
+(14 rows)
+
+Time: 236.343 ms
+\echo '======== E3.6 - CALIENTE 2 (query grande, ballena entera) ========'
+======== E3.6 - CALIENTE 2 (query grande, ballena entera) ========
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT sum(amount) FROM transactions
+WHERE user_id = :'ballena';
+                                                                  QUERY PLAN                                                                  
+----------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=29325.22..29325.23 rows=1 width=8) (actual time=100.341..100.343 rows=1 loops=1)
+   Buffers: shared hit=919 read=18046
+   I/O Timings: shared read=29.491
+   ->  Bitmap Heap Scan on transactions  (cost=9073.22..28797.22 rows=211200 width=4) (actual time=17.354..84.342 rows=212817 loops=1)
+         Recheck Cond: (user_id = '0898fb97-6631-48b3-9968-6bb3cb56a399'::uuid)
+         Heap Blocks: exact=17084
+         Buffers: shared hit=919 read=18046
+         I/O Timings: shared read=29.491
+         ->  Bitmap Index Scan on idx_tx_user_date  (cost=0.00..9020.42 rows=211200 width=0) (actual time=14.866..14.867 rows=212817 loops=1)
+               Index Cond: (user_id = '0898fb97-6631-48b3-9968-6bb3cb56a399'::uuid)
+               Buffers: shared read=1881
+               I/O Timings: shared read=3.724
+ Planning Time: 0.084 ms
+ Execution Time: 100.590 ms
+(14 rows)
+
+Time: 101.137 ms
+\echo '======== E3.7 - QUE HAY EN EL CACHE AHORA ========'
+======== E3.7 - QUE HAY EN EL CACHE AHORA ========
+SELECT relname                                             AS tabla,
+       heap_blks_read                                      AS bloques_de_disco,
+       heap_blks_hit                                       AS bloques_de_memoria,
+       round(100.0 * heap_blks_hit /
+             nullif(heap_blks_hit + heap_blks_read, 0), 2) AS pct_hit
+FROM pg_statio_user_tables
+WHERE relname = 'transactions';
+    tabla     | bloques_de_disco | bloques_de_memoria | pct_hit 
+--------------+------------------+--------------------+---------
+ transactions |           141356 |             168918 |   54.44
+(1 row)
+
+Time: 13.933 ms

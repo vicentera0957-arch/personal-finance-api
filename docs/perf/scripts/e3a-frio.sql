@@ -1,5 +1,5 @@
-SELECT user_id AS ballena FROM transactions GROUP BY user_id ORDER BY count(*) DESC LIMIT 1 \gset
-SELECT category_id AS categoria FROM transactions WHERE user_id = :'ballena' AND nature = 'expense' AND transaction_date >= '2026-07-01' AND transaction_date < '2026-08-01' GROUP BY category_id ORDER BY count(*) DESC LIMIT 1 \gset
+SELECT id AS ballena FROM users WHERE email = 'seed-load-user-1@finanzas.dev' \gset
+SELECT id AS categoria FROM categories WHERE user_id = :'ballena' AND name = 'Supermercado' AND nature = 'expense' \gset
 
 SET max_parallel_workers_per_gather = 0;
 
