@@ -1,9 +1,11 @@
+SELECT user_id AS ballena FROM transactions GROUP BY user_id ORDER BY count(*) DESC LIMIT 1 \gset
+
 SET max_parallel_workers_per_gather = 0;
 
 \echo '======== E17c.0 - EL BUG DE CORRECTITUD DE OFFSET (antes de la performance) ========'
 CREATE TEMP TABLE pagina_a AS
 SELECT id FROM transactions
-WHERE user_id = '7afba7e7-5856-4bd5-8cce-57887f4b1947'
+WHERE user_id = :'ballena'
 ORDER BY transaction_date DESC
 LIMIT 20 OFFSET 1000;
 
@@ -11,7 +13,7 @@ SET enable_indexscan = off;
 SET enable_bitmapscan = off;
 CREATE TEMP TABLE pagina_b AS
 SELECT id FROM transactions
-WHERE user_id = '7afba7e7-5856-4bd5-8cce-57887f4b1947'
+WHERE user_id = :'ballena'
 ORDER BY transaction_date DESC
 LIMIT 20 OFFSET 1000;
 RESET enable_indexscan;
@@ -35,7 +37,7 @@ ORDER BY indexrelname;
 \echo '======== E17c.2 - TOMAR EL CURSOR DE LA FILA 10.000 ========'
 SELECT transaction_date AS cur_date, id AS cur_id
 FROM transactions
-WHERE user_id = '7afba7e7-5856-4bd5-8cce-57887f4b1947'
+WHERE user_id = :'ballena'
 ORDER BY transaction_date DESC, id DESC
 OFFSET 10000 LIMIT 1
 \gset
@@ -48,7 +50,7 @@ OFFSET 10000 LIMIT 1
 EXPLAIN (ANALYZE, BUFFERS)
 SELECT id, transaction_date, amount
 FROM transactions
-WHERE user_id = '7afba7e7-5856-4bd5-8cce-57887f4b1947'
+WHERE user_id = :'ballena'
 ORDER BY transaction_date DESC, id DESC
 LIMIT 20 OFFSET 10000;
 
@@ -56,7 +58,7 @@ LIMIT 20 OFFSET 10000;
 EXPLAIN (ANALYZE, BUFFERS)
 SELECT id, transaction_date, amount
 FROM transactions
-WHERE user_id = '7afba7e7-5856-4bd5-8cce-57887f4b1947'
+WHERE user_id = :'ballena'
   AND (transaction_date, id) < (:'cur_date'::timestamp, :'cur_id'::uuid)
 ORDER BY transaction_date DESC, id DESC
 LIMIT 20;
@@ -65,14 +67,14 @@ LIMIT 20;
 EXPLAIN (ANALYZE, BUFFERS)
 SELECT id, transaction_date, amount
 FROM transactions
-WHERE user_id = '7afba7e7-5856-4bd5-8cce-57887f4b1947'
+WHERE user_id = :'ballena'
 ORDER BY transaction_date DESC, id DESC
 LIMIT 20;
 
 \echo '======== E17c.6 - EL COSTO NO DEPENDE DE LA PROFUNDIDAD: cursor en la fila 200.000 ========'
 SELECT transaction_date AS far_date, id AS far_id
 FROM transactions
-WHERE user_id = '7afba7e7-5856-4bd5-8cce-57887f4b1947'
+WHERE user_id = :'ballena'
 ORDER BY transaction_date DESC, id DESC
 OFFSET 200000 LIMIT 1
 \gset
@@ -80,7 +82,7 @@ OFFSET 200000 LIMIT 1
 EXPLAIN (ANALYZE, BUFFERS)
 SELECT id, transaction_date, amount
 FROM transactions
-WHERE user_id = '7afba7e7-5856-4bd5-8cce-57887f4b1947'
+WHERE user_id = :'ballena'
   AND (transaction_date, id) < (:'far_date'::timestamp, :'far_id'::uuid)
 ORDER BY transaction_date DESC, id DESC
 LIMIT 20;
@@ -89,6 +91,6 @@ LIMIT 20;
 EXPLAIN (ANALYZE, BUFFERS)
 SELECT id, transaction_date, amount
 FROM transactions
-WHERE user_id = '7afba7e7-5856-4bd5-8cce-57887f4b1947'
+WHERE user_id = :'ballena'
 ORDER BY transaction_date DESC, id DESC
 LIMIT 20 OFFSET 200000;

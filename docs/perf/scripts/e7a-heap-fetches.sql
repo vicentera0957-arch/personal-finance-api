@@ -1,3 +1,6 @@
+SELECT user_id AS ballena FROM transactions GROUP BY user_id ORDER BY count(*) DESC LIMIT 1 \gset
+SELECT category_id AS categoria FROM transactions WHERE user_id = :'ballena' AND nature = 'expense' AND transaction_date >= '2026-07-01' AND transaction_date < '2026-08-01' GROUP BY category_id ORDER BY count(*) DESC LIMIT 1 \gset
+
 SET max_parallel_workers_per_gather = 0;
 
 \echo '======== E7.0 - VISIBILITY MAP ANTES ========'
@@ -12,8 +15,8 @@ FROM pg_stat_user_tables WHERE relname = 'transactions';
 EXPLAIN (ANALYZE, BUFFERS)
 SELECT COALESCE(SUM(e.amount), 0) AS total
 FROM v_period_expenses e
-WHERE e.user_id          = '7afba7e7-5856-4bd5-8cce-57887f4b1947'
-  AND e.category_id      = '98de0404-ead4-4c77-9cb3-5875f282a936'
+WHERE e.user_id          = :'ballena'
+  AND e.category_id      = :'categoria'
   AND e.transaction_date >= '2026-07-01'
   AND e.transaction_date <  '2026-08-01';
 
@@ -22,8 +25,8 @@ ALTER TABLE transactions SET (autovacuum_enabled = false);
 
 \echo '======== E7.3 - ENSUCIAR: reescribir las 4.029 filas del periodo ========'
 UPDATE transactions SET description = description
-WHERE user_id          = '7afba7e7-5856-4bd5-8cce-57887f4b1947'
-  AND category_id      = '98de0404-ead4-4c77-9cb3-5875f282a936'
+WHERE user_id          = :'ballena'
+  AND category_id      = :'categoria'
   AND nature           = 'expense'
   AND transaction_date >= '2026-07-01'
   AND transaction_date <  '2026-08-01';
@@ -38,7 +41,7 @@ SELECT relname, n_live_tup, n_dead_tup FROM pg_stat_user_tables WHERE relname = 
 EXPLAIN (ANALYZE, BUFFERS)
 SELECT COALESCE(SUM(e.amount), 0) AS total
 FROM v_period_expenses e
-WHERE e.user_id          = '7afba7e7-5856-4bd5-8cce-57887f4b1947'
-  AND e.category_id      = '98de0404-ead4-4c77-9cb3-5875f282a936'
+WHERE e.user_id          = :'ballena'
+  AND e.category_id      = :'categoria'
   AND e.transaction_date >= '2026-07-01'
   AND e.transaction_date <  '2026-08-01';

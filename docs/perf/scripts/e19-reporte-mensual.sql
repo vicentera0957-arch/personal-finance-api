@@ -1,3 +1,5 @@
+SELECT user_id AS ballena FROM transactions GROUP BY user_id ORDER BY count(*) DESC LIMIT 1 \gset
+
 SET max_parallel_workers_per_gather = 0;
 
 \echo '======== E19.1 - REPORTE MENSUAL: CTEs + window functions ========'
@@ -9,7 +11,7 @@ WITH gasto_mensual AS (
            count(*)                                      AS movimientos
     FROM transactions t
     JOIN categories c ON c.id = t.category_id
-    WHERE t.user_id = '7afba7e7-5856-4bd5-8cce-57887f4b1947'
+    WHERE t.user_id = :'ballena'
       AND t.nature  = 'expense'
     GROUP BY 1, 2, 3
 ),
@@ -42,7 +44,7 @@ WITH gasto_mensual AS (
            t.category_id,
            sum(t.amount)                                 AS gasto
     FROM transactions t
-    WHERE t.user_id = '7afba7e7-5856-4bd5-8cce-57887f4b1947'
+    WHERE t.user_id = :'ballena'
       AND t.nature  = 'expense'
     GROUP BY 1, 2
 )
@@ -55,7 +57,7 @@ SELECT g.mes,
 FROM gasto_mensual g
 JOIN categories c ON c.id = g.category_id
 LEFT JOIN budgets b
-       ON b.user_id     = '7afba7e7-5856-4bd5-8cce-57887f4b1947'
+       ON b.user_id     = :'ballena'
       AND b.category_id = g.category_id
       AND b.year        = extract(year  FROM g.mes)::int
       AND b.month       = extract(month FROM g.mes)::int
@@ -69,7 +71,7 @@ WITH gasto_mensual AS (
            t.category_id,
            sum(t.amount)                                 AS gasto
     FROM transactions t
-    WHERE t.user_id = '7afba7e7-5856-4bd5-8cce-57887f4b1947'
+    WHERE t.user_id = :'ballena'
       AND t.nature  = 'expense'
     GROUP BY 1, 2
 )
@@ -79,7 +81,7 @@ SELECT g.mes, c.name, g.gasto, b.amount_limit,
 FROM gasto_mensual g
 JOIN categories c ON c.id = g.category_id
 LEFT JOIN budgets b
-       ON b.user_id     = '7afba7e7-5856-4bd5-8cce-57887f4b1947'
+       ON b.user_id     = :'ballena'
       AND b.category_id = g.category_id
       AND b.year        = extract(year  FROM g.mes)::int
       AND b.month       = extract(month FROM g.mes)::int;
@@ -88,5 +90,5 @@ LEFT JOIN budgets b
 EXPLAIN (ANALYZE, BUFFERS)
 SELECT t.id, t.category_id, t.amount, t.transaction_date
 FROM transactions t
-WHERE t.user_id = '7afba7e7-5856-4bd5-8cce-57887f4b1947'
+WHERE t.user_id = :'ballena'
   AND t.nature  = 'expense';

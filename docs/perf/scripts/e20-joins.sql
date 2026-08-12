@@ -1,3 +1,5 @@
+SELECT user_id AS ballena FROM transactions GROUP BY user_id ORDER BY count(*) DESC LIMIT 1 \gset
+
 SET max_parallel_workers_per_gather = 0;
 
 \echo '======== E20.0 - TAMANOS DE LOS TRES LADOS DEL JOIN ========'
@@ -15,7 +17,7 @@ LEFT JOIN budgets b
       AND b.user_id     = t.user_id
       AND b.year        = extract(year  FROM t.transaction_date)::int
       AND b.month       = extract(month FROM t.transaction_date)::int
-WHERE t.user_id = '7afba7e7-5856-4bd5-8cce-57887f4b1947'
+WHERE t.user_id = :'ballena'
   AND t.nature  = 'expense'
   AND t.transaction_date >= '2026-07-01'
   AND t.transaction_date <  '2026-08-01';
@@ -31,7 +33,7 @@ LEFT JOIN budgets b
       AND b.user_id     = t.user_id
       AND b.year        = extract(year  FROM t.transaction_date)::int
       AND b.month       = extract(month FROM t.transaction_date)::int
-WHERE t.user_id = '7afba7e7-5856-4bd5-8cce-57887f4b1947'
+WHERE t.user_id = :'ballena'
   AND t.nature  = 'expense'
   AND t.transaction_date >= '2026-07-01'
   AND t.transaction_date <  '2026-08-01';
@@ -48,7 +50,7 @@ LEFT JOIN budgets b
       AND b.user_id     = t.user_id
       AND b.year        = extract(year  FROM t.transaction_date)::int
       AND b.month       = extract(month FROM t.transaction_date)::int
-WHERE t.user_id = '7afba7e7-5856-4bd5-8cce-57887f4b1947'
+WHERE t.user_id = :'ballena'
   AND t.nature  = 'expense'
   AND t.transaction_date >= '2026-07-01'
   AND t.transaction_date <  '2026-08-01';
@@ -65,7 +67,7 @@ LEFT JOIN budgets b
       AND b.user_id     = t.user_id
       AND b.year        = extract(year  FROM t.transaction_date)::int
       AND b.month       = extract(month FROM t.transaction_date)::int
-WHERE t.user_id = '7afba7e7-5856-4bd5-8cce-57887f4b1947'
+WHERE t.user_id = :'ballena'
   AND t.nature  = 'expense'
   AND t.transaction_date >= '2026-07-01'
   AND t.transaction_date <  '2026-08-01';

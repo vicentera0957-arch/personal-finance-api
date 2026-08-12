@@ -1,3 +1,6 @@
+SELECT user_id AS ballena FROM transactions GROUP BY user_id ORDER BY count(*) DESC LIMIT 1 \gset
+SELECT category_id AS categoria FROM transactions WHERE user_id = :'ballena' AND nature = 'expense' AND transaction_date >= '2026-07-01' AND transaction_date < '2026-08-01' GROUP BY category_id ORDER BY count(*) DESC LIMIT 1 \gset
+
 \echo '======== B3.SETUP - CUENTAS Y PRESUPUESTO DE LABORATORIO ========'
 
 DELETE FROM transactions WHERE description LIKE 'lab-b3%';
@@ -7,16 +10,16 @@ DELETE FROM accounts WHERE id IN ('aaaaaaaa-0000-0000-0000-000000000001',
 
 INSERT INTO accounts (id, user_id, name, type, initial_balance, current_balance, is_archived, created_at, updated_at)
 VALUES ('aaaaaaaa-0000-0000-0000-000000000001',
-        '7afba7e7-5856-4bd5-8cce-57887f4b1947',
+        :'ballena',
         'LAB B3 - cuenta A', 'corriente', 100000, 100000, false, now(), now()),
        ('aaaaaaaa-0000-0000-0000-000000000002',
-        '7afba7e7-5856-4bd5-8cce-57887f4b1947',
+        :'ballena',
         'LAB B3 - cuenta B', 'corriente', 100000, 100000, false, now(), now());
 
 INSERT INTO budgets (id, user_id, category_id, month, year, amount_limit, created_at, updated_at)
 VALUES ('bbbbbbbb-0000-0000-0000-000000000001',
-        '7afba7e7-5856-4bd5-8cce-57887f4b1947',
-        '98de0404-ead4-4c77-9cb3-5875f282a936',
+        :'ballena',
+        :'categoria',
         9, 2026, 100000, now(), now());
 
 \echo '-------- cuentas --------'

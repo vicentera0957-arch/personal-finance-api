@@ -1,14 +1,16 @@
+SELECT user_id AS ballena FROM transactions GROUP BY user_id ORDER BY count(*) DESC LIMIT 1 \gset
+
 SET max_parallel_workers_per_gather = 0;
 
 \echo '======== E17a.0 - CUANTAS FILAS TIENE LA BALLENA ========'
 SELECT count(*) AS filas FROM transactions
-WHERE user_id = '7afba7e7-5856-4bd5-8cce-57887f4b1947';
+WHERE user_id = :'ballena';
 
 \echo '======== E17a.1 - OFFSET 0 ========'
 EXPLAIN (ANALYZE, BUFFERS)
 SELECT id, transaction_date, amount, description
 FROM transactions
-WHERE user_id = '7afba7e7-5856-4bd5-8cce-57887f4b1947'
+WHERE user_id = :'ballena'
 ORDER BY transaction_date DESC
 LIMIT 20 OFFSET 0;
 
@@ -16,7 +18,7 @@ LIMIT 20 OFFSET 0;
 EXPLAIN (ANALYZE, BUFFERS)
 SELECT id, transaction_date, amount, description
 FROM transactions
-WHERE user_id = '7afba7e7-5856-4bd5-8cce-57887f4b1947'
+WHERE user_id = :'ballena'
 ORDER BY transaction_date DESC
 LIMIT 20 OFFSET 1000;
 
@@ -24,7 +26,7 @@ LIMIT 20 OFFSET 1000;
 EXPLAIN (ANALYZE, BUFFERS)
 SELECT id, transaction_date, amount, description
 FROM transactions
-WHERE user_id = '7afba7e7-5856-4bd5-8cce-57887f4b1947'
+WHERE user_id = :'ballena'
 ORDER BY transaction_date DESC
 LIMIT 20 OFFSET 10000;
 
@@ -32,7 +34,7 @@ LIMIT 20 OFFSET 10000;
 EXPLAIN (ANALYZE, BUFFERS)
 SELECT id, transaction_date, amount, description
 FROM transactions
-WHERE user_id = '7afba7e7-5856-4bd5-8cce-57887f4b1947'
+WHERE user_id = :'ballena'
 ORDER BY transaction_date DESC
 LIMIT 20 OFFSET 100000;
 
@@ -40,6 +42,6 @@ LIMIT 20 OFFSET 100000;
 EXPLAIN (ANALYZE, BUFFERS)
 SELECT id, transaction_date, amount, description
 FROM transactions
-WHERE user_id = '7afba7e7-5856-4bd5-8cce-57887f4b1947'
+WHERE user_id = :'ballena'
 ORDER BY transaction_date DESC
 LIMIT 20 OFFSET 200000;

@@ -1,3 +1,5 @@
+SELECT user_id AS ballena FROM transactions GROUP BY user_id ORDER BY count(*) DESC LIMIT 1 \gset
+
 SET max_parallel_workers_per_gather = 0;
 
 \echo '======== E17b.0 - EL INDICE QUE PODRIA ENTREGAR EL ORDEN ========'
@@ -9,7 +11,7 @@ ORDER BY indexrelname;
 EXPLAIN (ANALYZE, BUFFERS)
 SELECT id, transaction_date, amount
 FROM transactions
-WHERE user_id = '7afba7e7-5856-4bd5-8cce-57887f4b1947'
+WHERE user_id = :'ballena'
 ORDER BY transaction_date DESC
 LIMIT 20;
 
@@ -17,7 +19,7 @@ LIMIT 20;
 EXPLAIN (ANALYZE, BUFFERS)
 SELECT id, transaction_date, amount
 FROM transactions
-WHERE user_id = '7afba7e7-5856-4bd5-8cce-57887f4b1947'
+WHERE user_id = :'ballena'
 ORDER BY transaction_date ASC
 LIMIT 20;
 
@@ -25,7 +27,7 @@ LIMIT 20;
 EXPLAIN (ANALYZE, BUFFERS)
 SELECT id, transaction_date, amount
 FROM transactions
-WHERE user_id = '7afba7e7-5856-4bd5-8cce-57887f4b1947'
+WHERE user_id = :'ballena'
 ORDER BY amount DESC
 LIMIT 20;
 
@@ -33,7 +35,7 @@ LIMIT 20;
 EXPLAIN (ANALYZE, BUFFERS)
 SELECT id, transaction_date, amount
 FROM transactions
-WHERE user_id = '7afba7e7-5856-4bd5-8cce-57887f4b1947'
+WHERE user_id = :'ballena'
 ORDER BY amount DESC;
 
 \echo '======== E17b.5 - EL DESEMPATE QUE FALTA: (fecha) no es unico ========'
@@ -41,7 +43,7 @@ SELECT count(*) AS timestamps_repetidos
 FROM (
     SELECT transaction_date
     FROM transactions
-    WHERE user_id = '7afba7e7-5856-4bd5-8cce-57887f4b1947'
+    WHERE user_id = :'ballena'
     GROUP BY transaction_date
     HAVING count(*) > 1
 ) x;
@@ -50,7 +52,7 @@ SELECT sum(n) AS filas_con_fecha_ambigua
 FROM (
     SELECT count(*) AS n
     FROM transactions
-    WHERE user_id = '7afba7e7-5856-4bd5-8cce-57887f4b1947'
+    WHERE user_id = :'ballena'
     GROUP BY transaction_date
     HAVING count(*) > 1
 ) y;
@@ -59,6 +61,6 @@ FROM (
 EXPLAIN (ANALYZE, BUFFERS)
 SELECT id, transaction_date, amount
 FROM transactions
-WHERE user_id = '7afba7e7-5856-4bd5-8cce-57887f4b1947'
+WHERE user_id = :'ballena'
 ORDER BY transaction_date DESC, id DESC
 LIMIT 20;

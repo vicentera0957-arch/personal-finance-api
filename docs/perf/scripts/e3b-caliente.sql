@@ -1,10 +1,13 @@
+SELECT user_id AS ballena FROM transactions GROUP BY user_id ORDER BY count(*) DESC LIMIT 1 \gset
+SELECT category_id AS categoria FROM transactions WHERE user_id = :'ballena' AND nature = 'expense' AND transaction_date >= '2026-07-01' AND transaction_date < '2026-08-01' GROUP BY category_id ORDER BY count(*) DESC LIMIT 1 \gset
+
 SET max_parallel_workers_per_gather = 0;
 
 \echo '======== E3.3 - CALIENTE 1 (query chica) ========'
 EXPLAIN (ANALYZE, BUFFERS)
 SELECT sum(amount) FROM transactions
-WHERE user_id          = '7afba7e7-5856-4bd5-8cce-57887f4b1947'
-  AND category_id      = '98de0404-ead4-4c77-9cb3-5875f282a936'
+WHERE user_id          = :'ballena'
+  AND category_id      = :'categoria'
   AND nature           = 'expense'
   AND transaction_date >= '2026-07-01'
   AND transaction_date <  '2026-08-01';
@@ -12,8 +15,8 @@ WHERE user_id          = '7afba7e7-5856-4bd5-8cce-57887f4b1947'
 \echo '======== E3.4 - CALIENTE 2 (query chica) ========'
 EXPLAIN (ANALYZE, BUFFERS)
 SELECT sum(amount) FROM transactions
-WHERE user_id          = '7afba7e7-5856-4bd5-8cce-57887f4b1947'
-  AND category_id      = '98de0404-ead4-4c77-9cb3-5875f282a936'
+WHERE user_id          = :'ballena'
+  AND category_id      = :'categoria'
   AND nature           = 'expense'
   AND transaction_date >= '2026-07-01'
   AND transaction_date <  '2026-08-01';
@@ -21,12 +24,12 @@ WHERE user_id          = '7afba7e7-5856-4bd5-8cce-57887f4b1947'
 \echo '======== E3.5 - CALIENTE 1 (query grande, ballena entera) ========'
 EXPLAIN (ANALYZE, BUFFERS)
 SELECT sum(amount) FROM transactions
-WHERE user_id = '7afba7e7-5856-4bd5-8cce-57887f4b1947';
+WHERE user_id = :'ballena';
 
 \echo '======== E3.6 - CALIENTE 2 (query grande, ballena entera) ========'
 EXPLAIN (ANALYZE, BUFFERS)
 SELECT sum(amount) FROM transactions
-WHERE user_id = '7afba7e7-5856-4bd5-8cce-57887f4b1947';
+WHERE user_id = :'ballena';
 
 \echo '======== E3.7 - QUE HAY EN EL CACHE AHORA ========'
 SELECT relname                                             AS tabla,

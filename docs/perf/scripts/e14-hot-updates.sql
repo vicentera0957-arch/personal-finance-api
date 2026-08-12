@@ -1,3 +1,6 @@
+SELECT user_id AS ballena FROM transactions GROUP BY user_id ORDER BY count(*) DESC LIMIT 1 \gset
+SELECT category_id AS categoria FROM transactions WHERE user_id = :'ballena' AND nature = 'expense' AND transaction_date >= '2026-07-01' AND transaction_date < '2026-08-01' GROUP BY category_id ORDER BY count(*) DESC LIMIT 1 \gset
+
 SET max_parallel_workers_per_gather = 0;
 
 \echo '======== E14.0 - CONTADORES ANTES (reset para medir limpio) ========'
@@ -7,8 +10,8 @@ FROM pg_stat_user_tables WHERE relname = 'transactions';
 
 \echo '======== E14.1 - UPDATE SOBRE COLUMNA **NO** INDEXADA (description) ========'
 UPDATE transactions SET description = 'e14-a'
-WHERE user_id          = '7afba7e7-5856-4bd5-8cce-57887f4b1947'
-  AND category_id      = '98de0404-ead4-4c77-9cb3-5875f282a936'
+WHERE user_id          = :'ballena'
+  AND category_id      = :'categoria'
   AND nature           = 'expense'
   AND transaction_date >= '2026-07-01'
   AND transaction_date <  '2026-08-01';
@@ -22,8 +25,8 @@ FROM pg_stat_user_tables WHERE relname = 'transactions';
 SELECT pg_stat_reset_single_table_counters('transactions'::regclass);
 
 UPDATE transactions SET transaction_date = transaction_date + interval '1 second'
-WHERE user_id          = '7afba7e7-5856-4bd5-8cce-57887f4b1947'
-  AND category_id      = '98de0404-ead4-4c77-9cb3-5875f282a936'
+WHERE user_id          = :'ballena'
+  AND category_id      = :'categoria'
   AND nature           = 'expense'
   AND transaction_date >= '2026-07-01'
   AND transaction_date <  '2026-08-01';
@@ -35,8 +38,8 @@ FROM pg_stat_user_tables WHERE relname = 'transactions';
 
 \echo '======== E14.3 - DEVOLVER LAS FECHAS A SU VALOR ORIGINAL ========'
 UPDATE transactions SET transaction_date = transaction_date - interval '1 second'
-WHERE user_id          = '7afba7e7-5856-4bd5-8cce-57887f4b1947'
-  AND category_id      = '98de0404-ead4-4c77-9cb3-5875f282a936'
+WHERE user_id          = :'ballena'
+  AND category_id      = :'categoria'
   AND nature           = 'expense'
   AND description      = 'e14-a'
   AND transaction_date >= '2026-07-01'
