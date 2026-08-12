@@ -13,7 +13,7 @@ import {
 } from '../../domain/exceptions/auth.exceptions';
 import { sha256 } from '../utils/token-hash.util';
 
-// Salida discriminada de la transacción (PLAN-P3P4 §2.4.b, opción R1). El
+// Salida discriminada de la transacción (docs/history/structural-refactors.md, P3+P4 (§2.4.b del plan archivado), opción R1). El
 // caso replay revoca la familia y termina la transacción de forma NORMAL —
 // el runner commitea — porque la revocación debe persistir aunque la
 // request termine en 401 (CLAUDE.md, "Flows": "the commit is intentional:

@@ -2,7 +2,7 @@
 
 > Record of already **closed** concurrency bugs, kept so future contributors don't redo the analysis. The module's **current** state lives in [notes.md](./notes.md).
 >
-> The races that **cross modules** — Race 1 (`DELETE /budgets/:id` vs `POST /transactions`) and Race 2 (account mutations vs `POST /transactions`) — are documented centrally in [docs/history/race-conditions-fix-2026-05.md](../../../../docs/history/race-conditions-fix-2026-05.md). Only the bugs whose analysis belongs to `transactions` live here.
+> The races that **cross modules** — Race 1 (`DELETE /budgets/:id` vs `POST /transactions`) and Race 2 (account mutations vs `POST /transactions`) — are documented centrally in [docs/history/race-conditions-fix-2026-05.md](../../../docs/history/race-conditions-fix-2026-05.md). Only the bugs whose analysis belongs to `transactions` live here.
 
 ---
 

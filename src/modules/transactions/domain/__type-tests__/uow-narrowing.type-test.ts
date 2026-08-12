@@ -1,4 +1,4 @@
-// Regresión a nivel de tipos para PLAN-P5-narrow-ports.md §2 (la regla de
+// Regresión a nivel de tipos para docs/history/structural-refactors.md, P5 (§2 del plan archivado) (la regla de
 // estrechamiento). No emite JS — solo alias de tipo + `export {}` (requerido
 // por `isolatedModules`). `tsconfig.build.json` excluye `test`/`**/*spec.ts`
 // pero incluye `src/**/*.ts`, así que `npm run build` es el gate: si alguien
@@ -6,7 +6,7 @@
 //
 // El punto de entrada es el tipo de las propiedades de `TCtx` (P3+P4 movió
 // la superficie de "getter en el UoW" a "propiedad del contexto que run()
-// entrega"), no un getter — ver PLAN-P5-narrow-ports.md §10.3.
+// entrega"), no un getter — ver docs/history/structural-refactors.md, P5 (§10.3 del plan archivado)
 import type { TransactionTxContext } from '../ITransactionUnitOfWork';
 import type { AccountTxContext } from '../../../accounts/domain/IAccountUnitOfWork';
 

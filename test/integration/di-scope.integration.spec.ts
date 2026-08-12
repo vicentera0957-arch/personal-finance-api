@@ -13,7 +13,7 @@ import { IAccountUnitOfWork } from '../../src/modules/accounts/domain/IAccountUn
 import { IAuthUnitOfWork } from '../../src/modules/auth/domain/IAuthUnitOfWork';
 
 /**
- * PLAN-P3P4 §3.6 — regression net for P3 (dropping `Scope.REQUEST` from the
+ * docs/history/structural-refactors.md, P3+P4 (§3.6 of the archived plan) — regression net for P3 (dropping `Scope.REQUEST` from the
  * four UoW providers).
  *
  * `Scope.REQUEST` on a provider is contagious: NestJS makes every consumer

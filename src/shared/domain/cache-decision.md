@@ -123,13 +123,13 @@ The short answer: because the **semantic relationship is different**. UoW is spe
 | `IUnitOfWork`     | The **use case** (`uow.run(async (ctx) => ...)`)             | Inheritance |
 | `ICacheStore`     | **Only the cache impl** (`this.store.get(...)`). The use case never sees it. | Composition |
 
-The use case that receives `IBudgetUnitOfWork` **needs** to call `run()` — the one method the port exposes; nothing about the transaction's lifecycle is left for the use case to orchestrate by hand (see §3.2, updated post-`PLAN-P3P4-transactional-runner.md`). The use case that receives `IBudgetsCache` must **not** call `get('some-raw-key')` — it must call `getListByUser(userId, options)`. The low-level API is the impl's private property.
+The use case that receives `IBudgetUnitOfWork` **needs** to call `run()` — the one method the port exposes; nothing about the transaction's lifecycle is left for the use case to orchestrate by hand (see §3.2, updated post-P3+P4, `docs/history/structural-refactors.md`). The use case that receives `IBudgetsCache` must **not** call `get('some-raw-key')` — it must call `getListByUser(userId, options)`. The low-level API is the impl's private property.
 
 Inheritance **exposes**; composition **hides**. For UoW we want to expose. For cache we want to hide.
 
 ### 3.2. UoW — the transactional boundary IS part of the public API
 
-> **Updated post-`PLAN-P3P4-transactional-runner.md`.** `IUnitOfWork` used to expose the raw
+> **Updated post-P3+P4 (`docs/history/structural-refactors.md`).** `IUnitOfWork` used to expose the raw
 > lifecycle (`begin`/`commit`/`rollback`/`release`/`isConnected`) and the use case orchestrated it
 > by hand. It now exposes exactly one method, `run<T>()`, and the lifecycle lives entirely inside
 > `TypeOrmTransactionRunner` (`shared/infrastructure/persistence/typeorm-transaction-runner.ts`).
@@ -210,7 +210,7 @@ This is the rigorous version of the colloquial "is-a vs has-a".
 // one dedicated impl each (BudgetUnitOfWorkImpl, AccountUnitOfWorkImpl, AuthUnitOfWorkImpl)
 ```
 
-No `Scope.REQUEST` and no `useExisting` two-step left anywhere in this graph — `PLAN-P3P4-transactional-runner.md` (P3+P4) removed the mutable `QueryRunner` field that used to force request scoping, so every impl above is a plain singleton bound directly to its port token.
+No `Scope.REQUEST` and no `useExisting` two-step left anywhere in this graph — `docs/history/structural-refactors.md` (P3+P4) removed the mutable `QueryRunner` field that used to force request scoping, so every impl above is a plain singleton bound directly to its port token.
 
 That 1:1 state is a fact about how the domain currently decomposes (every remaining transactional flow touches exactly one aggregate, except `CreateTransaction`/`DeleteTransaction`, which is why `TypeOrmUnitOfWorkImpl` itself still composes the transaction/account/budget scoped repos internally, inside `createContext()`), not a constraint of the pattern. `TypeOrmUnitOfWorkImpl` used to alias both `ITransactionUnitOfWork` and `IBudgetUnitOfWork` (and, earlier still, `IAccountUnitOfWork`) via `useExisting`, precisely the N:1 shape this section is about — see CLAUDE.md's "Why `IBudgetUnitOfWork` is separate" for why that stopped being the case. If a future module's flows ever need to share a `QueryRunner` with another module's, this is still the mechanism: multiple contract inheritance models **different typed views over the same transactional resource** — now expressed as different `TCtx` shapes over the same `run()` call, rather than different getters over the same instance.
 

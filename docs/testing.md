@@ -92,5 +92,15 @@ is gated at **95% lines / 90% functions**.
 
 ## Current state
 
-~595 unit tests (68 suites) + an active integration suite (auth, users, accounts,
-categories, budgets, transactions, concurrency), all green.
+**635 unit tests across 78 suites** and **107 integration tests across 12 specs**, all
+green (verified 2026-08-10). The integration specs:
+
+| Spec | Proves |
+| --- | --- |
+| `auth`, `users`, `accounts`, `categories`, `budgets`, `transactions` | Real HTTP wiring, guards, DTO validation, FK and unique constraints, exception→status mapping |
+| `concurrency/concurrency` | The seven closed races, against real row locks. Treat as the oracle — these must keep passing **unmodified** |
+| `concurrency/rollback-guard` | Real TypeORM transaction-flag semantics that a mocked `QueryRunner` can't reproduce — `commitTransaction()` flips `isTransactionActive`, a second `rollbackTransaction()` throws — and that all four UoW impls honour `run()`'s lifecycle against a real DB |
+| `di-scope` | No provider in the graph is request-scoped; the seven domain controllers resolve once per process |
+| `reports/reports` | `GET /reports/summary`, including the empty period returning zeros with a 200 |
+| `reports/summary-enforcement-equivalence` | The reporting path and the budget-enforcement path agree on "what counts as an expense" — both read `v_period_expenses` |
+| `metrics/metrics` | `/metrics` is exposed, public, and records the HTTP histogram |

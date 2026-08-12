@@ -1,9 +1,14 @@
 # Hardening Audit — 2026-04
 
-> **Status 2026-04-26:** The changes documented here are implemented.
-> The bugs identified in this audit that are still open (Bug A, Bug B, Bug E) are
-> documented with more precision in `CLAUDE.md` ("Active race conditions" section)
-> and in `src/modules/transactions/notes.md` and `src/modules/budgets/notes.md`.
+> **Point-in-time record. Do not read as current status.** The changes documented here
+> were implemented in April 2026.
+>
+> **Bug A, Bug B and Bug E — open when this audit was written — are all closed.** They
+> were closed in May 2026 along with Race 1, Race 2, Race 3 and B4; the analysis for all
+> seven is in [`closed-race-conditions.md`](./closed-race-conditions.md), and the
+> resulting lock map is in [`concurrency-model.md`](../concurrency-model.md). The
+> "Active race conditions" section of `CLAUDE.md` that this header used to point at no
+> longer exists, because there are none.
 
 Log of the changes that took the app from "solid domain" to "production-shape".
 This doc doubles as portfolio material: each section explains **what**, **why** and **how to learn more**.

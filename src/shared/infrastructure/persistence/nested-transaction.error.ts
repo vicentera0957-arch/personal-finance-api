@@ -2,7 +2,7 @@
  * Se lanza cuando una cadena async intenta abrir una segunda transacción
  * mientras la primera sigue activa — el auto-deadlock que el runner sin
  * estado habilita (ver `typeorm-transaction-runner.ts` y el análisis en
- * `PLAN-P3P4-transactional-runner.md` §5).
+ * `docs/history/structural-refactors.md`, P3+P4 (§5 del plan archivado)).
  *
  * Nombra al dueño externo (la transacción ya abierta) y al interno (la que
  * intentó abrirse encima) para que el mensaje señale la causa sin tener que

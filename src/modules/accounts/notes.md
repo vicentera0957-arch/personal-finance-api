@@ -92,7 +92,7 @@ Abstract class. Methods: `findById`, `findByUserId`, `save`, `delete`.
 > `createContext(queryRunner)`, which builds the single scoped account repo exposed as
 > `ctx.accounts` (a property on the object `run()`'s callback receives — there is no
 > `getScopedAccountRepository()` getter to call anymore), typed `IScopedAccountRepository`
-> (`PLAN-P5-narrow-ports.md`: `findByIdWithLock` + `save` only — no `findByUserId`/`delete`, since
+> (P5, `docs/history/structural-refactors.md`: `findByIdWithLock` + `save` only — no `findByUserId`/`delete`, since
 > nothing here ever called them). It used to come from `transactions`, which
 > forced this module to import `TransactionsModule` and closed a dependency cycle — for no domain
 > reason, since `transactions` never injected that token. Competing for the same row lock never
@@ -118,7 +118,7 @@ await updateBalance.execute(command.accountId, amount.getValue(), 'inflow' | 'ou
 
 By using the scoped repository, the balance update runs inside the same PostgreSQL transaction as the `txRepo.save(transaction)`. This guarantees atomicity: if the transaction save fails, the balance is not updated either.
 
-**Bug B (balance lost update) — CLOSED.** `ScopedAccountRepository.findByIdWithLock` takes `FOR UPDATE`, so two concurrent transactions on the same account are serialized: the second one waits for the first one's COMMIT and reads the current balance. Full post-mortem in [transactions/notes-history.md](../../transactions/notes-history.md). The competition between account mutations and transactions (Race 2) is in [docs/history/race-conditions-fix-2026-05.md](../../../docs/history/race-conditions-fix-2026-05.md).
+**Bug B (balance lost update) — CLOSED.** `ScopedAccountRepository.findByIdWithLock` takes `FOR UPDATE`, so two concurrent transactions on the same account are serialized: the second one waits for the first one's COMMIT and reads the current balance. Full post-mortem in [transactions/notes-history.md](../transactions/notes-history.md). The competition between account mutations and transactions (Race 2) is in [docs/history/race-conditions-fix-2026-05.md](../../../docs/history/race-conditions-fix-2026-05.md).
 
 ---
 

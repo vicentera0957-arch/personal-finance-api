@@ -50,9 +50,9 @@ What this port's `TCtx` (`TransactionTxContext`) **adds** are the properties `Cr
 - `ctx.accounts` → scoped `IScopedAccountRepository`
 - `ctx.budgetPeriodReader` → scoped `IScopedBudgetPeriodReader`
 
-These used to be getter methods on the UoW instance (`getScopedTransactionRepository()`, etc.); since `PLAN-P3P4-transactional-runner.md`, they are properties of the object `run()`'s callback receives, built once per call inside `createContext()`.
+These used to be getter methods on the UoW instance (`getScopedTransactionRepository()`, etc.); since P3+P4 (`docs/history/structural-refactors.md`), they are properties of the object `run()`'s callback receives, built once per call inside `createContext()`.
 
-**Since `PLAN-P5-narrow-ports.md` (P5), `ctx.accounts` and `ctx.budgetPeriodReader` are narrow, sibling ports — not the full `IAccountRepository`/`IBudgetRepository`.** `IScopedAccountRepository` keeps only `findByIdWithLock` + `save` (no `findByUserId`/`delete`: nothing in `transactions` ever called them). `ctx.budgetPeriodReader` replaces the old `ctx.budgets`: `CreateTransactionUseCase` only ever reads the budget row by `(user, category, period)` to check the limit — it never writes or deletes a budget, so by type it no longer can. The property was renamed from `budgets` to `budgetPeriodReader` because the old name implied a capability (`save`/`delete`) this consumer never had. `IScopedBudgetPeriodReader` lives in `budgets/domain/repository/budget-period-reader.port.ts`; a compile-only type-test (`domain/__type-tests__/uow-narrowing.type-test.ts`, gated by `npm run build`) fails if either port ever regains a write it shouldn't have.
+**Since `docs/history/structural-refactors.md` (P5), `ctx.accounts` and `ctx.budgetPeriodReader` are narrow, sibling ports — not the full `IAccountRepository`/`IBudgetRepository`.** `IScopedAccountRepository` keeps only `findByIdWithLock` + `save` (no `findByUserId`/`delete`: nothing in `transactions` ever called them). `ctx.budgetPeriodReader` replaces the old `ctx.budgets`: `CreateTransactionUseCase` only ever reads the budget row by `(user, category, period)` to check the limit — it never writes or deletes a budget, so by type it no longer can. The property was renamed from `budgets` to `budgetPeriodReader` because the old name implied a capability (`save`/`delete`) this consumer never had. `IScopedBudgetPeriodReader` lives in `budgets/domain/repository/budget-period-reader.port.ts`; a compile-only type-test (`domain/__type-tests__/uow-narrowing.type-test.ts`, gated by `npm run build`) fails if either port ever regains a write it shouldn't have.
 
 The scoped repos share the active `QueryRunner`'s `EntityManager`, so every read/write runs in the same PostgreSQL transaction. By construction (they are only obtained via the UoW, already inside an open tx) their locked reads take `FOR UPDATE` — see the *Architectural decision — locks in scoped repos* section below.
 
@@ -121,11 +121,11 @@ The third one covers the `sumExpenseAmountByUserCategoryAndPeriod` that runs on 
 
 > The **pattern** (why an impl can satisfy several ports via `useExisting`, why the ports are `abstract class`, why they are counted per *atomic operation* and not per module) lives in [shared/domain/uow-decision.md](../../shared/domain/uow-decision.md) and in CLAUDE.md. This section documents only the **concrete mechanics** of this class — to avoid duplicating the "why" and having it drift again.
 
-A concrete class that satisfies **one** module port today: `ITransactionUnitOfWork`. Since `PLAN-P3P4-transactional-runner.md` it `extends TypeOrmTransactionRunner<TransactionTxContext>` (`shared/infrastructure/persistence/typeorm-transaction-runner.ts`) and separately `implements ITransactionUnitOfWork` — valid because that port declares no members beyond the inherited `run()`. No `Scope.REQUEST`: this class has no `QueryRunner` field, so NestJS provides it as a plain singleton (`{ provide: ITransactionUnitOfWork, useClass: TypeOrmUnitOfWorkImpl }`, no `scope` at all).
+A concrete class that satisfies **one** module port today: `ITransactionUnitOfWork`. Since P3+P4 (`docs/history/structural-refactors.md`) it `extends TypeOrmTransactionRunner<TransactionTxContext>` (`shared/infrastructure/persistence/typeorm-transaction-runner.ts`) and separately `implements ITransactionUnitOfWork` — valid because that port declares no members beyond the inherited `run()`. No `Scope.REQUEST`: this class has no `QueryRunner` field, so NestJS provides it as a plain singleton (`{ provide: ITransactionUnitOfWork, useClass: TypeOrmUnitOfWorkImpl }`, no `scope` at all).
 
 It used to also `implement IBudgetUnitOfWork`, aliased via `useExisting` to the same request-scoped instance so `UpdateBudgetLimitUseCase` / `DeleteBudgetUseCase` shared this class's `QueryRunner` whenever they ran in the same request (which they never actually needed to — `CreateTransactionUseCase` is the only flow that genuinely needs a multi-aggregate `QueryRunner`). `IAccountUnitOfWork` was a third alias here before that. Both moved out the same way: `accounts` now owns `AccountUnitOfWorkImpl`, `budgets` now owns `BudgetUnitOfWorkImpl` — neither's use cases ever needed a `QueryRunner` shared with this class, and serving them from here forced their modules to import `TransactionsModule` (via `forwardRef()`, in the budgets case) just to resolve a token this class's own use cases never inject. Note what `useExisting` actually bought, back when `Scope.REQUEST` still existed — a shared `QueryRunner` **within one request**, which only `CreateTransactionUseCase` needed. Between requests it bought nothing, because `Scope.REQUEST` already yielded one instance per request; what serializes concurrent requests is the Postgres row lock, same as today.
 
-This class still builds a scoped budget reader — `CreateTransactionUseCase` locks the budget row before summing period expenses — exposed as `ctx.budgetPeriodReader` (a property, not a getter, since the run() migration; renamed from `ctx.budgets` by P5, `PLAN-P5-narrow-ports.md`, because the property only ever supports the one read `CreateTransaction` needs, never a write). It goes through `createScopedBudgetPeriodReader()`, built off the SAME underlying class `createScopedBudgetRepository()` hands to `BudgetUnitOfWorkImpl`, just narrowed to a read-only view. Two independent consumers, two independent transactions, same lock semantics, zero duplicated SQL; see `budgets/notes.md` → "Why `budgets` does not depend on `transactions`".
+This class still builds a scoped budget reader — `CreateTransactionUseCase` locks the budget row before summing period expenses — exposed as `ctx.budgetPeriodReader` (a property, not a getter, since the run() migration; renamed from `ctx.budgets` by P5, `docs/history/structural-refactors.md`, because the property only ever supports the one read `CreateTransaction` needs, never a write). It goes through `createScopedBudgetPeriodReader()`, built off the SAME underlying class `createScopedBudgetRepository()` hands to `BudgetUnitOfWorkImpl`, just narrowed to a read-only view. Two independent consumers, two independent transactions, same lock semantics, zero duplicated SQL; see `budgets/notes.md` → "Why `budgets` does not depend on `transactions`".
 
 #### Lifecycle: `createContext()` is the only thing this class writes
 
@@ -217,7 +217,7 @@ The races that **cross modules** — Race 1 (`DELETE /budgets/:id` vs `POST /tra
 
 **Accepted trade-off:** the flexibility of doing a lock-free read inside a transaction is lost. In this domain there is no use case for that — non-mutating reads (validation, listing) use the global repos outside the UoW.
 
-> **Update — P5 (`PLAN-P5-narrow-ports.md`).** Point 3 above used to also say this "doesn't require
+> **Update — P5 (`docs/history/structural-refactors.md`).** Point 3 above used to also say this "doesn't require
 > creating parallel scoped interfaces (`IScopedAccountRepository extends IAccountRepository`)" — that
 > stopped being true. P5 did add `IScopedAccountRepository`, `IScopedBudgetRepository` and
 > `IScopedBudgetPeriodReader`, but **not** as `extends` of the global ports: as sibling interfaces
@@ -226,7 +226,7 @@ The races that **cross modules** — Race 1 (`DELETE /budgets/:id` vs `POST /tra
 > that doesn't own the aggregate. This decision (locks hardcoded, no optional parameter) still holds;
 > what changed is that the *return type* handed to each consumer is now narrower than the concrete
 > `ScopedXRepository` class implements. See CLAUDE.md's locking map and
-> `src/PLAN-P5-narrow-ports.md` for the full rule.
+> P5 in `docs/history/structural-refactors.md` for the full rule.
 
 ---
 

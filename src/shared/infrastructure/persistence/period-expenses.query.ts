@@ -4,7 +4,7 @@ import { monthPeriod } from '../../domain/month-period';
 /**
  * ÚNICA implementación de "Σ gastos del período" contra `v_period_expenses`.
  *
- * Antes de este cierre (PROBLEMS.md P6) esta sentencia existía dos veces,
+ * Antes de este cierre (docs/history/structural-refactors.md, P6) esta sentencia existía dos veces,
  * carácter por carácter: `ScopedTransactionRepository.sumExpenseAmountByUserCategoryAndPeriod`
  * (transactions) y `ScopedExpenseChecker.sumExpenseAmountInPeriod` (budgets). Ambas
  * la llaman ahora; los nombres de método en cada puerto no cambiaron porque

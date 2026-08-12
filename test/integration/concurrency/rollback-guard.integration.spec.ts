@@ -12,7 +12,7 @@ import { BudgetMapper } from '../../../src/modules/budgets/infrastructure/persis
 import { RefreshTokenMapper } from '../../../src/modules/auth/infrastructure/persistence/refresh-token.mapper';
 
 /**
- * REPLACES the pre-PLAN-P3P4 version of this file, which exercised
+ * REPLACES the pre-P3+P4 version of this file, which exercised
  * `begin()` → `commit()` → `rollback()` → `release()` called by hand on the
  * four UoW impls. That public surface is gone: the impls no longer expose a
  * manual lifecycle, only `run()`. This is a deliberate replacement, not an

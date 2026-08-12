@@ -51,11 +51,12 @@ The decisions worth reviewing — each links to the code and, where written, an 
 ### Concurrency-safe money — Unit of Work + pessimistic locks
 
 Multi-aggregate, money-touching invariants (account balance, budget limit, period
-spend) run inside a **request-scoped Unit of Work**: one `QueryRunner`, one PostgreSQL
-transaction. Scoped repositories take `SELECT ... FOR UPDATE` on the rows that gate each
-invariant, and the **budget row acts as a logical mutex** for "Σ period expenses ≤
-limit". A catalogue of races (write skew, lost update, TOCTOU) is documented as
-**reproduced and closed**.
+spend) run inside a **Unit of Work**: every `run()` call opens one `QueryRunner`, one
+PostgreSQL transaction. Scoped repositories take `SELECT ... FOR UPDATE` on the rows
+that gate each invariant, and the **budget row acts as a logical mutex** for "Σ period
+expenses ≤ limit". Seven races (write skew, lost update, TOCTOU) are documented as
+**reproduced and closed** — and the tests bite: removing a lock turns the matching test
+red.
 → [ADR-0002](docs/adr/0002-unit-of-work-pessimistic-locks.md) · [concurrency model](docs/concurrency-model.md) · [`create-transaction.use-case.ts`](src/modules/transactions/application/use-cases/create-transaction.use-case.ts)
 
 ### Strict DDD / Clean architecture
@@ -80,6 +81,26 @@ Transactions are immutable accounting records — no in-place update; correction
 delete + recreate. The model is **single-entry** by design for V1 (documented honestly,
 with trade-offs, not dressed up as a ledger it isn't).
 → [ADR-0005](docs/adr/0005-single-entry-immutable-transactions.md)
+
+### A read model with no domain layer (a documented exception)
+
+`GET /reports/summary` aggregates already-persisted rows and enforces nothing, so
+`reports` deliberately skips the `domain/` layer every other module has — no entities,
+no value objects, no Unit of Work, no locks. One SQL statement means one MVCC snapshot,
+so income and expenses come back mutually consistent without a transaction. The
+"what counts as an expense" definition lives in a single DB view (`v_period_expenses`)
+shared with the three budget-enforcement queries, so the reporting path and the
+enforcement path can't disagree.
+→ [`reports/notes.md`](src/modules/reports/notes.md)
+
+### Measured, not assumed
+
+A PostgreSQL performance lab on a **1,000,000-row** dataset: `EXPLAIN (ANALYZE, BUFFERS)`
+against the query that guards the budget invariant, with the raw psql output committed
+next to the script that produced it. An earlier "missing index" entry in the docs turned
+out to be drift — the index existed, and the benchmark that proved it also killed the
+proposed optimisation.
+→ [PERFORMANCE.md](PERFORMANCE.md) · [period-sum index decision](docs/period-sum-index-decision.md)
 
 ### Defense in depth & production hardening
 
@@ -160,6 +181,7 @@ acting user always comes from the JWT — never from the body or the URL.
 | Categories | `POST /categories` · `GET /categories` · `GET /categories/:id` · `PATCH /categories/:id` · `DELETE /categories/:id` |
 | Budgets | `POST /budgets` · `GET /budgets?month=&year=` · `GET /budgets/:id` · `PATCH /budgets/:id/limit` · `DELETE /budgets/:id` |
 | Transactions | `POST /transactions` · `GET /transactions?page=&limit=&from=&to=` · `GET /transactions/:id` · `GET /transactions/account/:accountId` · `DELETE /transactions/:id` |
+| Reports | `GET /reports/summary?month=&year=` |
 
 Domain rules surface as precise HTTP errors: spending over the budget limit is a `422`,
 deleting a budget with expenses in its period is a `409`, operating on an archived
@@ -174,9 +196,13 @@ npm run test:integration   # integration against a real Postgres
 npm run test:cov           # coverage
 ```
 
-The suite includes a dedicated **concurrency** integration spec that drives the race
-conditions above against a real database. Coverage thresholds are enforced in CI —
-the domain layer is gated at **95% lines / 90% functions**.
+**635 unit tests** (78 suites, no DB) and **107 integration tests** (12 specs, real
+Postgres + Redis). The suite includes a dedicated **concurrency** spec that drives the
+races above against a real database and asserts on the *final state*, not on individual
+responses — and each lock was verified by removing it and watching the matching test go
+red. Coverage thresholds are enforced in CI; the domain layer is gated at **95% lines /
+90% functions**.
+→ [testing strategy](docs/testing.md)
 
 ## Roadmap
 
@@ -195,12 +221,17 @@ module notes).
 - **Email verification & password reset** — token flows backed by a queue (BullMQ) so
   sending mail never blocks the request.
 - **Account-to-account transfers** — two linked transactions sharing a
-  `transferGroupId`, atomic inside the existing Unit of Work.
-- **Monthly reports endpoint** — spending summaries with CTEs and window functions.
+  `transferGroupId`, atomic inside the existing Unit of Work. The one case single-entry
+  genuinely doesn't cover ([ADR-0005](docs/adr/0005-single-entry-immutable-transactions.md)).
+- **Global exception filter** — replace the per-controller `try/catch` mapping with one
+  `@Catch()` filter, so a new domain exception can't fall through as a 500
+  ([ADR-0006](docs/adr/0006-domain-exceptions-vs-http.md) records why it's deferred).
 - **User-deletion integration test** — verify the `CASCADE`/`RESTRICT` FK diamond
   before exposing hard delete to real users; consider soft delete.
 
 ## Documentation
+
+Full index: [docs/README.md](docs/README.md).
 
 | You want… | Read |
 | --- | --- |
@@ -208,6 +239,7 @@ module notes).
 | Why decisions were made | [docs/adr/](docs/adr/) |
 | The concurrency model & lock map | [docs/concurrency-model.md](docs/concurrency-model.md) |
 | The testing strategy (unit + integration) | [docs/testing.md](docs/testing.md) |
+| Query performance, measured | [PERFORMANCE.md](PERFORMANCE.md) |
 | Observability (logs, metrics, traces) | [docs/observability.md](docs/observability.md) |
 | How to deploy | [docs/deployment.md](docs/deployment.md) |
 | Per-module design notes | [src/modules/](src/modules/README.md) |

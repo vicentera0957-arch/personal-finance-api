@@ -51,7 +51,7 @@ Business method: `updateLimit(newLimit: AmountLimit)` — replaces the limit.
 
 **File:** `domain/ports/expense-checker.port.ts` (moved out of `domain/repository/`: it answers a derived query about a period — a `boolean`, a `number` — not an aggregate's persistence lifecycle, so it doesn't belong next to `budgets.repository.ts`. Flat under `ports/`, not `ports/query/`: `ports/cache/` groups by adapter technology, and a single domain query port doesn't warrant its own subfolder yet.)
 
-Defined here, and — as of the `IBudgetUnitOfWork` split — implemented here too: `ScopedExpenseChecker` in `infrastructure/persistence/scoped-expense-checker.ts`, unexported, reached only through `createScopedExpenseChecker(queryRunner)`. Exposed as `ctx.expenses` — a property of `BudgetTxContext`, built inside `BudgetUnitOfWorkImpl.createContext()` (there is no `getScopedExpenseChecker()` getter since `PLAN-P3P4-transactional-runner.md`). `transactions` does not import this port at all.
+Defined here, and — as of the `IBudgetUnitOfWork` split — implemented here too: `ScopedExpenseChecker` in `infrastructure/persistence/scoped-expense-checker.ts`, unexported, reached only through `createScopedExpenseChecker(queryRunner)`. Exposed as `ctx.expenses` — a property of `BudgetTxContext`, built inside `BudgetUnitOfWorkImpl.createContext()` (there is no `getScopedExpenseChecker()` getter since P3+P4, `docs/history/structural-refactors.md`). `transactions` does not import this port at all.
 
 Methods: `hasExpensesInPeriod(userId, categoryId, month, year): Promise<boolean>` and `sumExpenseAmountInPeriod(...): Promise<number>`. **Neither takes `FOR UPDATE`** (Postgres forbids pessimistic locks on `COUNT`/`SUM` aggregates); serialization comes from the lock on the budget row that the consumer (`DeleteBudget` / `UpdateBudgetLimit`) acquires first, inside the same `BudgetUnitOfWorkImpl` transaction.
 
@@ -110,7 +110,7 @@ Imports only `CategoriesModule` (itself a leaf) — `budgets` is a leaf module. 
 { provide: IBudgetUnitOfWork, useClass: BudgetUnitOfWorkImpl }
 ```
 
-No `scope` at all: `BudgetUnitOfWorkImpl` has no `QueryRunner` field to protect (it `extends TypeOrmTransactionRunner<BudgetTxContext>`, so the `QueryRunner` lives on the call stack of `run()`), so it is a plain singleton. Before `PLAN-P3P4-transactional-runner.md`, this was a `useClass`/`useExisting` pair with `scope: Scope.REQUEST` on the concrete token.
+No `scope` at all: `BudgetUnitOfWorkImpl` has no `QueryRunner` field to protect (it `extends TypeOrmTransactionRunner<BudgetTxContext>`, so the `QueryRunner` lives on the call stack of `run()`), so it is a plain singleton. Before P3+P4 (`docs/history/structural-refactors.md`), this was a `useClass`/`useExisting` pair with `scope: Scope.REQUEST` on the concrete token.
 
 Exports: `GetBudgetByUserCategoryPeriodUseCase`, `BudgetMapper` — consumed by `TransactionsModule` (a direct import there now, no `forwardRef`).
 
@@ -134,7 +134,7 @@ Neither port actually needed anything `transactions`-specific: `UpdateBudgetLimi
 
 The one piece that stayed genuinely shared is `ScopedBudgetRepository`: `CreateTransactionUseCase` still locks the budget row (on `TypeOrmUnitOfWorkImpl`'s own `QueryRunner`) before summing period expenses, independent of `UpdateBudgetLimit` / `DeleteBudget` locking it (on `BudgetUnitOfWorkImpl`'s own `QueryRunner`). So `ScopedBudgetRepository` took the shape `ScopedAccountRepository` already used: unexported class, reached only via factories, called independently by both UoWs, each on its own transaction. `transactions → budgets` remains as a plain one-way import (`GetBudgetByUserCategoryPeriodUseCase`, `BudgetMapper`, and the scoped-repository factories).
 
-> **P5 (`PLAN-P5-narrow-ports.md`) split the ONE factory into TWO, same underlying class.**
+> **P5 (`docs/history/structural-refactors.md`) split the ONE factory into TWO, same underlying class.**
 > `createScopedBudgetRepository(queryRunner, mapper)` still returns the full read/write surface
 > (`IScopedBudgetRepository`: `findByIdWithLock`, `save`, `delete`) — the one `BudgetUnitOfWorkImpl`
 > uses, since `UpdateBudgetLimit`/`DeleteBudget` own the aggregate. `transactions` no longer calls it.

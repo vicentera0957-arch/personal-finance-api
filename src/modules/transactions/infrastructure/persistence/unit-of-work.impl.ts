@@ -66,7 +66,7 @@ class ScopedTransactionRepository extends IScopedTransactionRepository {
     // phantom inserts into the range) and would only contend with unrelated reads.
     //
     // Query lives in shared/infrastructure/persistence/period-expenses.query.ts —
-    // the single owner of "Σ gastos del período" (PROBLEMS.md P6), same one
+    // the single owner of "Σ gastos del período" (docs/history/structural-refactors.md, P6), same one
     // ScopedExpenseChecker.sumExpenseAmountInPeriod (budgets) calls. Runs on the
     // SAME this.manager (same QueryRunner → same transaction), so the budget-row
     // lock the caller holds still serializes it.

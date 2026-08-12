@@ -54,7 +54,7 @@ between the `findByIdWithLock` and the `commit`, the row is locked for everyone 
 
 ## 3. The transactional boundary — Unit of Work
 
-> **Updated after `PLAN-P3P4-transactional-runner.md` (P3+P4).** The UoW used to be a stateful
+> **Updated after `docs/history/structural-refactors.md` (P3+P4).** The UoW used to be a stateful
 > object (`begin`/`commit`/`rollback`/`release`/`isConnected`, a mutable `QueryRunner` field,
 > `Scope.REQUEST` on every provider). It is now a stateless runner: one method, `run<T>(work)`, with
 > the `QueryRunner` living on the call stack of that call instead of in a field. Every UoW provider
@@ -419,7 +419,7 @@ guarantees enforced by the compiler or the tests. Two documented cracks remain (
 
 ### 13.1 Implicit locks ("spooky action at a distance") — **CLOSED by P5**
 
-> Closed via `PLAN-P5-narrow-ports.md`. Kept as a record of the risk and why the eventual fix took the
+> Closed by P5 (`docs/history/structural-refactors.md`). Kept as a record of the risk and why the eventual fix took the
 > shape it did — the two fixes proposed below when this section was still open turned out to be wrong
 > in different ways.
 

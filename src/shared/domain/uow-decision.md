@@ -1,6 +1,6 @@
 # Unit of Work — design decisions
 
-> **Updated after PLAN-P3P4-transactional-runner.md (P3+P4).** The UoW used to be a stateful
+> **Updated after docs/history/structural-refactors.md (P3+P4).** The UoW used to be a stateful
 > object: `begin`/`commit`/`rollback`/`release`/`isConnected`, a mutable `QueryRunner` field, and
 > `Scope.REQUEST` on every provider to keep that field from leaking across requests. It is now a
 > stateless runner: one method, `run<T>(work)`, with the `QueryRunner` living on the call stack of
@@ -18,7 +18,7 @@ Example: `TransactionTxContext` (the `TCtx` for `ITransactionUnitOfWork`) expose
 
 `TCtx` lives in the consumer module's domain/ ("port owned by consumer" pattern), even though its properties are repo interfaces of other modules. Those repo interfaces are those of their owning module's domain (e.g. `IScopedAccountRepository` still belongs to `accounts/domain`); the UoW's `createContext()` merely groups them according to what the use case needs.
 
-**Per-consumer narrowing (`PLAN-P5-narrow-ports.md`).** As of P5, the grouping isn't just "which
+**Per-consumer narrowing (`docs/history/structural-refactors.md`).** As of P5, the grouping isn't just "which
 repos" but "how much of each repo": `accounts` and `budgets` each publish a full port (own
 aggregate) alongside a narrower **sibling** port (never a subtype — extending would drag along
 `save`/`delete`) for neighbors that only read or partially write. `TransactionTxContext.accounts` is

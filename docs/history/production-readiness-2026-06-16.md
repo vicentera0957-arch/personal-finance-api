@@ -1,9 +1,13 @@
 # Production Readiness — 2026-06
 
-Log of this session's changes to move the API closer to "production ready":
-hardened CI, secrets fail-fast, Redis as a hard dependency in the readiness check,
-line-ending normalization and dependency scanning. Each section states the **what**,
-the **why** and links the **official documentation** of the technology/detail used.
+> **Point-in-time record.** Log of the changes made on 2026-06-16, not current status.
+> For where the project stands today see the README and
+> [`deployment.md`](../deployment.md).
+
+Changes that moved the API closer to "production ready": hardened CI, secrets fail-fast,
+Redis as a hard dependency in the readiness check, line-ending normalization and
+dependency scanning. Each section states the **what**, the **why** and links the
+**official documentation** of the technology/detail used.
 
 ---
 
@@ -17,7 +21,7 @@ the **why** and links the **official documentation** of the technology/detail us
 | `.github/dependabot.yml` | Automatic update PRs (npm + GitHub Actions) |
 | `src/shared/infrastructure/health/redis-health.indicator.ts` | Redis health indicator for `/ready` |
 | `src/shared/infrastructure/health/redis-health.indicator.spec.ts` | Indicator tests (up/down) |
-| `docs/production-readiness-2026-06-16.md` | This document |
+| `docs/history/production-readiness-2026-06-16.md` | This document |
 
 **Modified**
 
@@ -83,7 +87,7 @@ early, with layer caching via GitHub Actions.
 
 ### `security-audit` job (#4)
 
-`npm audit --audit-level=high`, a **real (blocking) gate**. After this session's
+`npm audit --audit-level=high`, a **real (blocking) gate**. After the
 `npm audit fix` the project sits at **0 high / 0 critical** (see §6), so the gate passes.
 It gates on high/critical, not on moderate.
 
@@ -184,10 +188,15 @@ Dependabot PRs when healthy upstream versions exist.
 
 ---
 
-## Pending (non-blocking, outside this session)
+## Pending at the time of writing (2026-06-16)
 
 - **20 dev-tooling moderates** — wait for upstream / Dependabot PRs; don't force a downgrade.
 - **Error tracking** (Sentry or similar) — today there are metrics + logs; grouping stack
   traces and alerting on new 500s is missing.
 - **Partial index** for the period-sum query — decision consciously deferred
   (see `docs/period-sum-index-decision.md`).
+
+> **Since then:** the partial index question was settled on 2026-07-02 — *don't add it*,
+> the composite index already covers the query
+> ([period-sum-index-decision.md](../period-sum-index-decision.md)). Error tracking is
+> still open; see [observability.md](../observability.md) for what it would take.

@@ -177,7 +177,7 @@ what closed the cycle.
 Back when `Scope.REQUEST` still existed, it already meant **one instance per request**: an
 `archive` request and a `POST /transactions` request always had distinct instances, distinct
 `QueryRunner`s and distinct DB transactions. Today there is no `Scope.REQUEST` at all — every UoW
-provider is a plain singleton (`PLAN-P3P4-transactional-runner.md`), and a fresh `QueryRunner` is
+provider is a plain singleton (P3+P4, `docs/history/structural-refactors.md`), and a fresh `QueryRunner` is
 created on every `run()` call instead. Either way, what serializes concurrent callers is Postgres
 holding the row lock until commit — visible to any concurrent transaction, on any connection.
 Sharing the class (or, now, the singleton instance) never entered into it.
@@ -218,7 +218,7 @@ flowchart LR
 
 Cross-aggregate, money-touching invariants run inside a Unit of Work whose `run()` opens one
 `QueryRunner` = one PostgreSQL transaction per call (no `Scope.REQUEST` — every UoW provider is a
-plain singleton; see `PLAN-P3P4-transactional-runner.md`), and use `SELECT ... FOR UPDATE` to
+plain singleton; see P3+P4 in `docs/history/structural-refactors.md`), and use `SELECT ... FOR UPDATE` to
 serialize. The budget row is the **logical mutex** for the "Σ period expenses ≤ limit"
 invariant. Full rationale: [ADR-0002](./adr/0002-unit-of-work-pessimistic-locks.md)
 and [`concurrency-model.md`](./concurrency-model.md).

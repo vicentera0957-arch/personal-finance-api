@@ -1,7 +1,7 @@
 # ADR-0003: "Port owned by consumer" to break module cycles
 
 - **Status:** Superseded by [ADR-0009](./0009-scoped-repositories-as-guarded-factories.md)
-- **Date:** YYYY-MM-DD
+- **Date:** 2026-06-20 · superseded 2026-08-01
 - **Deciders:** Vicente Cristobal Rivas Avello
 
 > **Superseded — kept as a record, not as guidance.** Both examples this ADR rested on are gone:
@@ -40,17 +40,40 @@ dependency direction at the domain layer stays one-way; `forwardRef()` only patc
 
 ## Why this option
 
-<!--
-Did you arrive at this after a circular-dependency error blew up, or design it
-up front? Why keep the port with the consumer instead of, say, extracting a third
-shared module, or merging the two modules?
--->
+The reasoning at the time: `budgets` needed an answer only `transactions` could give
+("are there expenses in this period?"), and `transactions` already imported `budgets`.
+Defining the port in `budgets` keeps the **domain** dependency one-way — `budgets`
+declares what it needs, `transactions` supplies it — and confines the cycle to the DI
+layer, where `forwardRef()` can patch it.
+
+That reasoning is sound for the situation it describes. **It was the wrong diagnosis of
+this situation**, and naming the error is the useful part of keeping this ADR:
+`transactions` was declaring DI providers for tokens it never injected. Nothing in
+`budgets` or `accounts` imported anything from `transactions` at the domain,
+application or persistence layer. There was no bidirectional *need* — only a
+bidirectional *wiring*, which this ADR then rationalised as a pattern instead of
+questioning.
+
+The tell was available and missed: a genuine two-way dependency shows up in the code
+that does the work, not only in the `.module.ts` files. When a cycle exists **only** in
+composition, the fix is to move the implementation, not to justify the cycle.
 
 ## Alternatives considered
 
-- **Extract a shared/third module for the contract:** <!-- Why rejected? over-engineering? -->
-- **Merge the two modules:** <!-- Why rejected? loss of boundaries? -->
-- **Domain events / mediator instead of a direct port:** <!-- Why rejected? -->
+- **Move the implementation into the module that owns the port.** Not seriously
+  considered at the time, on the mistaken belief that competing for the same row lock
+  required the same UoW instance. It doesn't — the lock lives in Postgres and is visible
+  across connections. **This is what eventually shipped**; see
+  [ADR-0009](./0009-scoped-repositories-as-guarded-factories.md).
+- **Extract a shared/third module for the contract.** Rejected: a module that exists
+  only to hold one port is indirection without a reader, and it would still leave the
+  implementation in the wrong place.
+- **Merge `budgets` and `transactions`.** Rejected: they have genuinely separate
+  aggregates, invariants and lifecycles. Merging would dissolve a boundary that carries
+  real meaning to remove a DI artefact.
+- **Domain events / a mediator instead of a direct port.** Rejected: the call is a
+  synchronous *guard* (block the delete if expenses exist), not a notification. An event
+  turns "reject" into "accept, then discover, then compensate".
 
 ## Consequences
 
@@ -61,7 +84,11 @@ shared module, or merging the two modules?
 **Negative / trade-offs**
 
 - `forwardRef()` is a known NestJS sharp edge; readers must understand the pattern.
+- The `FOR UPDATE` protecting the budget row ended up in a file belonging to
+  `transactions` — where no maintainer of `budgets` would look for it. That misplacement
+  is the concrete cost this ADR's framing hid, and the main reason ADR-0009 replaced it.
 
 **Follow-ups**
 
--
+- Superseded. The pattern stays documented as the correct fix *if* a genuine
+  bidirectional dependency ever appears; it has no live instance in this codebase.
