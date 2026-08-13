@@ -1,9 +1,9 @@
 # Personal Finance API
 
-> A personal-finance REST API built to get the hard part right: **money that stays
-> correct under concurrent writes.** NestJS + PostgreSQL + Redis, strict DDD / Clean
-> architecture, with every multi-aggregate invariant protected by a Unit of Work and
-> pessimistic row locks.
+> Una API REST de finanzas personales construida para resolver bien la parte difícil:
+> **que la plata siga siendo correcta bajo escrituras concurrentes.** NestJS + PostgreSQL
+> + Redis, DDD / Clean architecture estricta, con cada invariante multi-agregado
+> protegido por un Unit of Work y locks pesimistas de fila.
 
 <p>
   <img alt="CI" src="https://github.com/vicentera0957-arch/personal-finance-api/actions/workflows/ci.yml/badge.svg">
@@ -15,70 +15,81 @@
   <img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-green.svg">
 </p>
 
-Built by [Vicente Rivas Avello](https://www.linkedin.com/in/vicente-rivas-avello/) —
-my first backend project.
+Hecho por [Vicente Rivas Avello](https://www.linkedin.com/in/vicente-rivas-avello/) —
+mi primer proyecto de backend.
 
-## See it running
+> **Nota sobre el idioma.** Este README está en español; **toda la documentación técnica
+> está en inglés a propósito** — los ADRs, el modelo de concurrencia, la arquitectura y
+> las notas de cada módulo. La escribí así para practicar escritura técnica en inglés,
+> que es el idioma en el que se documenta y se discute diseño en la mayoría de los
+> equipos. Los términos de concurrencia que aparecen más abajo (*write skew*, *lost
+> update*, *Unit of Work*) también van en inglés: traducirlos pierde precisión y no es
+> como se buscan.
 
-**Live demo (Railway):**
+## Verlo funcionando
+
+**Demo en vivo (Railway):**
 
 - **Swagger UI:** https://personal-finance-api-production-b32b.up.railway.app/api/docs
-- **Demo login:** `demo-recruiter@finanzas.dev` / `DemoRecruiter2026!` — call
-  `POST /auth/login`, click *Authorize* with the `accessToken`, and browse a seeded
-  month of data: two accounts, four budgets (one exactly at 100% of its limit — one
-  more peso on it returns a 422) and a month of transactions.
-- **Guided tour:** [`requests/demo-flow.http`](requests/demo-flow.http) walks the whole
-  API in 19 chained requests — including the budget gate rejecting an over-limit
-  expense (422) and refresh-token **replay detection** revoking an entire token family.
+- **Login de demo:** `demo-recruiter@finanzas.dev` / `DemoRecruiter2026!` — llamá a
+  `POST /auth/login`, hacé clic en *Authorize* con el `accessToken`, y recorré un mes de
+  datos sembrados: dos cuentas, cuatro presupuestos (uno exactamente al 100% de su
+  límite — un peso más devuelve `422`) y un mes de transacciones.
+- **Recorrido guiado:** [`requests/demo-flow.http`](requests/demo-flow.http) recorre toda
+  la API en 19 requests encadenados — incluyendo el gate del presupuesto rechazando un
+  gasto que se pasa (`422`) y la **detección de replay** de un refresh token revocando
+  una familia entera.
 
-The API also documents itself locally: every controller is decorated for **Swagger /
-OpenAPI**, so the same browsable, executable contract lives at `/api/docs` on any
-running instance (see [Run it locally](#run-it-locally) — two commands and it's up).
-Demo data is reproducible: `npm run seed:demo` ([scripts/seed-demo.mjs](scripts/seed-demo.mjs))
-seeds through the public API, so it can never produce a state the domain wouldn't allow.
+La API también se documenta sola: cada controller está decorado para **Swagger /
+OpenAPI**, así que el mismo contrato navegable y ejecutable vive en `/api/docs` de
+cualquier instancia (ver [Correrlo localmente](#correrlo-localmente) — dos comandos y
+está arriba). Los datos de demo son reproducibles: `npm run seed:demo`
+([scripts/seed-demo.mjs](scripts/seed-demo.mjs)) siembra a través de la API pública, así
+que nunca puede producir un estado que el dominio no permitiría.
 
-## About this project
+## Sobre este proyecto
 
-My first backend project, built between **March and August 2026** while learning NestJS
-and PostgreSQL. It started as a CRUD API and became a study of what breaks under
-concurrent writes: reading *Designing Data-Intensive Applications* alongside it is what
-made me stop asking *"does this work?"* and start asking *"what does this do when it
-runs twice, at the same time?"*
+Mi primer proyecto de backend, construido entre **marzo y agosto de 2026** mientras
+aprendía NestJS y PostgreSQL. Empezó como una API CRUD y terminó siendo un estudio de
+qué se rompe bajo escrituras concurrentes: leer *Designing Data-Intensive Applications*
+en paralelo fue lo que me hizo dejar de preguntar *"¿esto funciona?"* y empezar a
+preguntar *"¿qué hace esto cuando corre dos veces, al mismo tiempo?"*.
 
-Every design decision here is written down, including the ones that turned out wrong.
-Four I'd want to be asked about — chosen for the judgement rather than the trivia:
+Cada decisión de diseño está escrita, incluidas las que resultaron equivocadas. Cuatro
+sobre las que me gustaría que me preguntaran — elegidas por el criterio, no por el dato:
 
-- **Choosing not to use the more powerful tool.** `SERIALIZABLE` would close the write
-  skew in one line. It was rejected because of *where it moves the failure*: into retry
-  logic on every write path, with idempotency and backoff to get right, failing only
-  under load. Targeted pessimistic locks keep the cost visible and local.
+- **Elegir no usar la herramienta más potente.** `SERIALIZABLE` cerraría el write skew en
+  una línea. Se descartó por *dónde mueve la falla*: a lógica de reintentos en cada ruta
+  de escritura, con idempotencia y backoff que hay que hacer bien, y que falla solo bajo
+  carga. Los locks pesimistas puntuales mantienen el costo visible y local.
   ([ADR-0002](docs/adr/0002-unit-of-work-pessimistic-locks.md))
-- **Making the dangerous mistake impossible instead of documenting it.** A scoped
-  repository built on the wrong `EntityManager` compiles, runs, and returns
-  correct-looking rows — Postgres grants the `FOR UPDATE` and releases it when the
-  `SELECT` ends. Nothing throws, nothing logs, and no integration test catches it
-  reliably. So the class is unexported and the only door is a factory that takes a
-  `QueryRunner`: passing the wrong thing stops compiling.
+- **Hacer imposible el error peligroso en vez de documentarlo.** Un repositorio scoped
+  construido sobre el `EntityManager` equivocado compila, corre y devuelve filas que se
+  ven bien — Postgres otorga el `FOR UPDATE` y lo suelta apenas termina el `SELECT`. No
+  lanza nada, no loguea nada, y ningún test de integración lo agarra de forma confiable.
+  Por eso la clase no se exporta y la única puerta es una factory que recibe un
+  `QueryRunner`: pasarle lo incorrecto **deja de compilar**.
   ([ADR-0009](docs/adr/0009-scoped-repositories-as-guarded-factories.md))
-- **Superseding my own ADR.** [ADR-0003](docs/adr/0003-port-owned-by-consumer.md)
-  rationalised a module cycle as a pattern. The cycle was an artefact of composition and
-  the diagnosis was wrong;
-  [ADR-0009](docs/adr/0009-scoped-repositories-as-guarded-factories.md) replaced it.
-  Both are kept, and 0003 now states plainly why it was wrong.
-- **Knowing where this is still fragile.** The lock model is correct today but relies on
-  convention in two places the compiler cannot check: the acquisition order that makes it
-  deadlock-free, and the agreement that every writer of period expenses takes the budget
-  lock first. Both are documented as known debt rather than left for someone to discover.
-  ([concurrency model §13](docs/concurrency-model.md))
+- **Superseder mi propio ADR.** El [ADR-0003](docs/adr/0003-port-owned-by-consumer.md)
+  racionalizaba un ciclo de módulos como si fuera un patrón. El ciclo era un artefacto de
+  composición y el diagnóstico estaba mal; el
+  [ADR-0009](docs/adr/0009-scoped-repositories-as-guarded-factories.md) lo reemplazó.
+  Los dos se conservan, y el 0003 ahora dice explícitamente por qué estaba equivocado.
+- **Saber dónde esto sigue siendo frágil.** El modelo de locks es correcto hoy, pero
+  descansa en convención en dos puntos que el compilador no puede verificar: el orden de
+  adquisición que lo hace libre de deadlocks, y el acuerdo de que todo escritor de gastos
+  del período tome primero el lock del presupuesto. Los dos están documentados como deuda
+  conocida, en vez de dejarlos para que alguien los descubra.
+  ([modelo de concurrencia §13](docs/concurrency-model.md))
 
-**Vicente Cristobal Rivas Avello** · [LinkedIn](https://www.linkedin.com/in/vicente-rivas-avello/)
+**Vicente Cristóbal Rivas Avello** · [LinkedIn](https://www.linkedin.com/in/vicente-rivas-avello/)
 
-## API overview
+## La API
 
-All routes except `/auth/*`, `/health` and `/ready` require a Bearer access token. The
-acting user always comes from the JWT — never from the body or the URL.
+Todas las rutas salvo `/auth/*`, `/health` y `/ready` requieren un access token Bearer.
+El usuario que actúa **siempre** sale del JWT — nunca del body ni de la URL.
 
-| Resource | Endpoints |
+| Recurso | Endpoints |
 | --- | --- |
 | Auth | `POST /auth/register` · `POST /auth/login` · `POST /auth/refresh` · `POST /auth/logout` |
 | Users | `GET /users/:id` · `PATCH /users/:id/profile` · `DELETE /users/:id` |
@@ -88,86 +99,89 @@ acting user always comes from the JWT — never from the body or the URL.
 | Transactions | `POST /transactions` · `GET /transactions?page=&limit=&from=&to=` · `GET /transactions/:id` · `GET /transactions/account/:accountId` · `DELETE /transactions/:id` |
 | Reports | `GET /reports/summary?month=&year=` |
 
-Domain rules surface as precise HTTP errors: spending over the budget limit is a `422`,
-deleting a budget with expenses in its period is a `409`, operating on an archived
-account is a `409`, touching another user's resource is a `403`. The full
-exception-to-status table lives in [CLAUDE.md](CLAUDE.md).
+Las reglas de dominio se traducen en errores HTTP precisos: gastar por encima del límite
+del presupuesto es un `422`, borrar un presupuesto con gastos en su período es un `409`,
+operar sobre una cuenta archivada es un `409`, y tocar el recurso de otro usuario es un
+`403`. La tabla completa de excepción → status vive en [CLAUDE.md](CLAUDE.md).
 
-## Engineering decisions
+## Decisiones de ingeniería
 
-The decisions worth reviewing — each links to the code and, where written, an ADR.
+Las decisiones que vale la pena revisar — cada una linkea al código y, donde está
+escrito, a un ADR.
 
-### Concurrency-safe money — Unit of Work + pessimistic locks
+### Plata segura bajo concurrencia — Unit of Work + locks pesimistas
 
-Multi-aggregate, money-touching invariants (account balance, budget limit, period
-spend) run inside a **Unit of Work**: every `run()` call opens one `QueryRunner`, one
-PostgreSQL transaction. Scoped repositories take `SELECT ... FOR UPDATE` on the rows
-that gate each invariant, and the **budget row acts as a logical mutex** for "Σ period
-expenses ≤ limit". Seven races (write skew, lost update, TOCTOU) are documented as
-**reproduced and closed** — and the tests bite: removing a lock turns the matching test
-red.
-→ [ADR-0002](docs/adr/0002-unit-of-work-pessimistic-locks.md) · [concurrency model](docs/concurrency-model.md) · [`create-transaction.use-case.ts`](src/modules/transactions/application/use-cases/create-transaction.use-case.ts)
+Los invariantes multi-agregado que tocan plata (balance de la cuenta, límite del
+presupuesto, gasto del período) corren dentro de un **Unit of Work**: cada llamada a
+`run()` abre un `QueryRunner`, una transacción de PostgreSQL. Los repositorios scoped
+toman `SELECT ... FOR UPDATE` sobre las filas que resguardan cada invariante, y la **fila
+del presupuesto funciona como mutex lógico** de "Σ gastos del período ≤ límite". Siete
+carreras (*write skew*, *lost update*, TOCTOU) están documentadas como **reproducidas y
+cerradas** — y los tests muerden: sacar un lock pone en rojo el test correspondiente.
+→ [ADR-0002](docs/adr/0002-unit-of-work-pessimistic-locks.md) · [modelo de concurrencia](docs/concurrency-model.md) · [`create-transaction.use-case.ts`](src/modules/transactions/application/use-cases/create-transaction.use-case.ts)
 
-### Strict DDD / Clean architecture
+### DDD / Clean architecture estricta
 
-Three layers per module with dependencies pointing inward; the domain has **zero**
-NestJS/TypeORM/HTTP imports. Ports are `abstract class` so they serve as both type and
-DI token. Rich entities with private constructors and `create()` / `reconstitute()`
-factories; immutable, self-validating value objects.
-→ [architecture](docs/architecture.md) · [ADR-0001](docs/adr/0001-ports-as-abstract-classes.md)
+Tres capas por módulo con las dependencias apuntando hacia adentro; el dominio tiene
+**cero** imports de NestJS, TypeORM o HTTP. Los puertos son `abstract class` para servir
+a la vez como tipo y como token de DI. Entidades ricas con constructor privado y
+factories `create()` / `reconstitute()`; value objects inmutables y auto-validados.
+→ [arquitectura](docs/architecture.md) · [ADR-0001](docs/adr/0001-ports-as-abstract-classes.md)
 
-### Refresh-token rotation with replay detection
+### Rotación de refresh tokens con detección de replay
 
-Refresh tokens are persisted as `sha256(token)` (never plaintext), grouped into a
-**family** per login. Every refresh rotates the token; a replayed token revokes the
-**entire family** atomically. Login is timing-safe (constant-time even for unknown
-emails) to prevent enumeration.
+Los refresh tokens se persisten como `sha256(token)` (nunca en texto plano), agrupados en
+una **familia** por login. Cada refresh rota el token; un token replayeado revoca la
+**familia entera** de forma atómica. El login es *timing-safe* (tiempo constante incluso
+para emails que no existen) para evitar enumeración.
 → [ADR-0004](docs/adr/0004-refresh-token-rotation.md)
 
-### Immutable, single-entry transactions
+### Transacciones inmutables de partida simple
 
-Transactions are immutable accounting records — no in-place update; corrections are
-delete + recreate. The model is **single-entry** by design for V1 (documented honestly,
-with trade-offs, not dressed up as a ledger it isn't).
+Las transacciones son registros contables inmutables — no hay update in-place; las
+correcciones son borrar y recrear. El modelo es de **partida simple** por diseño en la
+V1 (documentado con honestidad, con sus trade-offs, sin disfrazarlo de un libro contable
+que no es).
 → [ADR-0005](docs/adr/0005-single-entry-immutable-transactions.md)
 
-### A read model with no domain layer (a documented exception)
+### Un read model sin capa de dominio (excepción documentada)
 
-`GET /reports/summary` aggregates already-persisted rows and enforces nothing, so
-`reports` deliberately skips the `domain/` layer every other module has — no entities,
-no value objects, no Unit of Work, no locks. One SQL statement means one MVCC snapshot,
-so income and expenses come back mutually consistent without a transaction. The
-"what counts as an expense" definition lives in a single DB view (`v_period_expenses`)
-shared with the three budget-enforcement queries, so the reporting path and the
-enforcement path can't disagree.
+`GET /reports/summary` agrega filas ya persistidas y no impone ningún invariante, así que
+`reports` se saltea a propósito la capa `domain/` que tienen todos los demás módulos — sin
+entidades, sin value objects, sin Unit of Work, sin locks. Una sola sentencia SQL implica
+un solo snapshot MVCC, así que ingresos y gastos vuelven mutuamente consistentes sin
+abrir una transacción. La definición de "qué cuenta como gasto" vive en una única vista de
+la base (`v_period_expenses`), compartida con las tres consultas que hacen cumplir los
+presupuestos: el camino que reporta y el que impone el límite no pueden contradecirse.
 → [`reports/notes.md`](src/modules/reports/notes.md)
 
-### Measured, not assumed
+### Medido, no supuesto
 
-A PostgreSQL performance lab on a **1,000,000-row** dataset: `EXPLAIN (ANALYZE, BUFFERS)`
-against the query that guards the budget invariant, with the raw psql output committed
-next to the script that produced it. An earlier "missing index" entry in the docs turned
-out to be drift — the index existed, and the benchmark that proved it also killed the
-proposed optimisation.
-→ [PERFORMANCE.md](PERFORMANCE.md) · [period-sum index decision](docs/period-sum-index-decision.md)
+Un laboratorio de performance de PostgreSQL sobre un dataset de **1.000.000 de filas**:
+`EXPLAIN (ANALYZE, BUFFERS)` contra la consulta que resguarda el invariante del
+presupuesto, con la salida cruda de psql commiteada al lado del script que la produjo. Una
+entrada vieja en la documentación que hablaba de un "índice faltante" resultó ser deriva
+— el índice ya existía, y el benchmark que lo demostró también mató la optimización que
+se proponía.
+→ [PERFORMANCE.md](PERFORMANCE.md) · [decisión sobre el índice del período](docs/period-sum-index-decision.md)
 
-### Defense in depth & production hardening
+### Defensa en profundidad y hardening de producción
 
-Uniqueness enforced in three layers (DB constraint + `23505` catch → domain exception +
-application pre-check). Helmet, env validation with Joi (fail-fast on missing prod
-secrets), Redis-backed per-IP throttling, Prometheus metrics, structured logging,
-liveness/readiness probes, multi-stage non-root Docker image, migrations run as a
-release phase.
-→ [deployment runbook](docs/deployment.md)
+Unicidad garantizada en tres capas (constraint de base + catch de `23505` → excepción de
+dominio + pre-chequeo en la aplicación). Helmet, validación de entorno con Joi (fail-fast
+si falta un secreto en producción), throttling por IP respaldado en Redis, métricas
+Prometheus, logging estructurado, probes de liveness y readiness, imagen Docker
+multi-stage sin root, y migraciones que corren como fase de release.
+→ [runbook de despliegue](docs/deployment.md)
 
-## Architecture at a glance
+## Arquitectura de un vistazo
 
-Dependencies flow one way — every edge below is a direct import, zero `forwardRef()`
-calls anywhere in the module graph. The two cycles that used to exist here
-(`accounts ↔ transactions`, `budgets ↔ transactions`) both closed the same way: the
-shared port's implementation moved into the module that owns the port, instead of
-keeping a "port owned by consumer" cross-module split. Full diagrams and request flow
-in [docs/architecture.md](docs/architecture.md).
+Las dependencias fluyen en una sola dirección — cada arista de abajo es un import directo,
+y no hay **ni un** `forwardRef()` en todo el grafo de módulos. Los dos ciclos que existían
+acá (`accounts ↔ transactions`, `budgets ↔ transactions`) se cerraron de la misma forma:
+la implementación del puerto compartido se mudó al módulo dueño del puerto, en vez de
+sostener una división cruzada del tipo "puerto propiedad del consumidor". Diagramas
+completos y flujo de request en [docs/architecture.md](docs/architecture.md).
 
 ```mermaid
 graph TD
@@ -178,115 +192,121 @@ graph TD
     budgets --> categories
 ```
 
-## The problem (and why it isn't trivial)
+## El problema (y por qué no es trivial)
 
-A finance backend is easy to build and hard to make **correct**. The interesting bugs
-aren't CRUD — they're concurrency: two requests spending against the same budget at the
-same time, a balance updated twice, a budget deleted while a transaction lands in its
-period. This project treats those as the core engineering problem and closes them at the
-database layer, not by hoping requests don't overlap.
+Un backend de finanzas es fácil de construir y difícil de hacer **correcto**. Los bugs
+interesantes no son de CRUD — son de concurrencia: dos requests gastando contra el mismo
+presupuesto al mismo tiempo, un balance actualizado dos veces, un presupuesto borrado
+mientras una transacción cae en su período. Este proyecto los trata como el problema
+central de ingeniería y los cierra en la capa de base de datos, no esperando que los
+requests no se solapen.
 
 ---
 
-## Tech stack
+## Stack
 
-| Layer | Choice |
+| Capa | Elección |
 | --- | --- |
 | Runtime | Node 20, NestJS 11, TypeScript 5 |
-| Persistence | PostgreSQL 15, TypeORM 0.3 (migrations) |
-| Cache / rate-limit | Redis 7 (cache + throttler storage) |
-| Auth | JWT access + rotating refresh, bcrypt, Passport |
-| Validation | class-validator (HTTP), Joi (env) |
-| Observability | Prometheus (`prom-client`), pino, Terminus health checks |
-| Packaging | Docker (multi-stage, non-root, tini) |
-| CI | GitHub Actions (lint, build, unit, integration, migration smoke, docker build, security audit) |
+| Persistencia | PostgreSQL 15, TypeORM 0.3 (migraciones) |
+| Caché / rate-limit | Redis 7 (caché + storage del throttler) |
+| Auth | JWT access + refresh rotativo, bcrypt, Passport |
+| Validación | class-validator (HTTP), Joi (entorno) |
+| Observabilidad | Prometheus (`prom-client`), pino, health checks con Terminus |
+| Empaquetado | Docker (multi-stage, sin root, tini) |
+| CI | GitHub Actions (lint, build, unit, integración, migration smoke, docker build, security audit) |
 
-## Run it locally
+## Correrlo localmente
 
-**Requirements:** Docker Desktop, Node 20+
+**Requisitos:** Docker Desktop, Node 20+
 
 ```bash
-# 1. Environment
+# 1. Entorno
 cp .env.example .env
-# Generate the two JWT secrets (the app won't boot without them):
+# Generá los dos secretos JWT (la app no arranca sin ellos):
 node -e "console.log('JWT_SECRET=' + require('crypto').randomBytes(64).toString('hex'))"
 node -e "console.log('JWT_REFRESH_SECRET=' + require('crypto').randomBytes(64).toString('hex'))"
-# Note: set DB_PORT=5433 in .env (the compose Postgres is published on 5433, not 5432).
+# Ojo: poné DB_PORT=5433 en .env (el Postgres del compose se publica en 5433, no 5432).
 
-# 2. Infrastructure (Postgres :5433 · Redis :6379 · pgAdmin :5051)
+# 2. Infraestructura (Postgres :5433 · Redis :6379 · pgAdmin :5051)
 docker compose up -d
 
-# 3. Install, migrate, run
+# 3. Instalar, migrar, correr
 npm install
-npm run migration:run      # schema via migrations (synchronize is off by default)
+npm run migration:run      # el schema sale de migraciones (synchronize está apagado por defecto)
 npm run start:dev
 ```
 
 - API → `http://localhost:3000/api/v1`
 - Swagger → `http://localhost:3000/api/docs`
 - Health / readiness → `http://localhost:3000/health` · `http://localhost:3000/ready`
-- Metrics (Prometheus) → `http://localhost:3000/metrics`
+- Métricas (Prometheus) → `http://localhost:3000/metrics`
 
-## Testing
+## Tests
 
 ```bash
-npm test                   # unit (domain + use cases), no DB
-npm run test:integration   # integration against a real Postgres
-npm run test:cov           # coverage
+npm test                   # unitarios (dominio + use cases), sin base
+npm run test:integration   # integración contra un Postgres real
+npm run test:cov           # cobertura
 ```
 
-**635 unit tests** (78 suites, no DB) and **107 integration tests** (12 specs, real
-Postgres + Redis). The suite includes a dedicated **concurrency** spec that drives the
-races above against a real database and asserts on the *final state*, not on individual
-responses — and each lock was verified by removing it and watching the matching test go
-red. Coverage thresholds are enforced in CI; the domain layer is gated at **95% lines /
-90% functions**.
-→ [testing strategy](docs/testing.md)
+**635 tests unitarios** (78 suites, sin base) y **107 tests de integración** (12 specs,
+Postgres + Redis reales). La suite incluye un spec dedicado a **concurrencia** que corre
+las carreras de arriba contra una base real y asierta sobre el *estado final*, no sobre
+las respuestas individuales — y cada lock se verificó sacándolo y viendo que el test
+correspondiente se pusiera en rojo. Los umbrales de cobertura se imponen en CI; la capa
+de dominio está gateada en **95% de líneas / 90% de funciones**.
+→ [estrategia de testing](docs/testing.md)
 
 ---
 
-## Roadmap (later...)
+## Roadmap (más adelante...)
 
-Ordered by intent, not by date. Items come from the documented gap analysis
-([deployment runbook](docs/deployment.md), [observability](docs/observability.md),
-module notes).
+Ordenado por intención, no por fecha. Los ítems salen del análisis de gaps documentado
+([runbook de despliegue](docs/deployment.md), [observabilidad](docs/observability.md),
+notas de módulo).
 
-- **CD pipeline** — CI already builds the Docker image; publish it to a registry and
-  deploy automatically on push to `main`.
-- **Distributed tracing (OpenTelemetry)** — spans per request and per query; for a
-  system built on pessimistic locks, seeing lock-wait time in production is the payoff.
-- **Error tracking (Sentry)** — group and alert on unexpected 5xx; metrics and
-  structured logs are already in place.
-- **OAuth login (Google / GitHub)** — Passport strategies plugging into the existing
-  auth architecture without touching the domain.
-- **Email verification & password reset** — token flows backed by a queue (BullMQ) so
-  sending mail never blocks the request.
-- **Account-to-account transfers** — two linked transactions sharing a
-  `transferGroupId`, atomic inside the existing Unit of Work. The one case single-entry
-  genuinely doesn't cover ([ADR-0005](docs/adr/0005-single-entry-immutable-transactions.md)).
-- **Global exception filter** — replace the per-controller `try/catch` mapping with one
-  `@Catch()` filter, so a new domain exception can't fall through as a 500
-  ([ADR-0006](docs/adr/0006-domain-exceptions-vs-http.md) records why it's deferred).
-- **User-deletion integration test** — verify the `CASCADE`/`RESTRICT` FK diamond
-  before exposing hard delete to real users; consider soft delete.
+- **Pipeline de CD** — el CI ya construye la imagen Docker; falta publicarla en un
+  registry y desplegar automáticamente al pushear a `main`.
+- **Tracing distribuido (OpenTelemetry)** — spans por request y por query; en un sistema
+  construido sobre locks pesimistas, ver el tiempo de espera de lock en producción es el
+  premio.
+- **Error tracking (Sentry)** — agrupar y alertar sobre 5xx inesperados; las métricas y
+  los logs estructurados ya están.
+- **Login con OAuth (Google / GitHub)** — estrategias de Passport enchufadas a la
+  arquitectura de auth existente, sin tocar el dominio.
+- **Verificación de email y reset de contraseña** — flujos de token respaldados por una
+  cola (BullMQ) para que mandar mail nunca bloquee el request.
+- **Transferencias entre cuentas** — dos transacciones enlazadas compartiendo un
+  `transferGroupId`, atómicas dentro del Unit of Work existente. Es el único caso que la
+  partida simple genuinamente no cubre
+  ([ADR-0005](docs/adr/0005-single-entry-immutable-transactions.md)).
+- **Filtro global de excepciones** — reemplazar el mapeo `try/catch` por controller con un
+  único filtro `@Catch()`, para que una excepción de dominio nueva no se escape como un
+  500 ([el ADR-0006](docs/adr/0006-domain-exceptions-vs-http.md) registra por qué está
+  diferido).
+- **Test de integración de borrado de usuario** — verificar el diamante de FKs
+  `CASCADE`/`RESTRICT` antes de exponer el borrado duro a usuarios reales; evaluar borrado
+  lógico.
 
-## Documentation
+## Documentación
 
-Full index: [docs/README.md](docs/README.md).
+**Toda la documentación técnica está en inglés, a propósito** — ver la nota sobre el
+idioma al principio. Índice completo: [docs/README.md](docs/README.md).
 
-| You want… | Read |
+| Si querés… | Leé |
 | --- | --- |
-| The architecture & request flow | [docs/architecture.md](docs/architecture.md) |
-| Why decisions were made | [docs/adr/](docs/adr/) |
-| The concurrency model & lock map | [docs/concurrency-model.md](docs/concurrency-model.md) |
-| The testing strategy (unit + integration) | [docs/testing.md](docs/testing.md) |
-| Query performance, measured | [PERFORMANCE.md](PERFORMANCE.md) |
-| Observability (logs, metrics, traces) | [docs/observability.md](docs/observability.md) |
-| How to deploy | [docs/deployment.md](docs/deployment.md) |
-| Per-module design notes | [src/modules/](src/modules/README.md) |
-| How the hard bugs were found and closed | [docs/history/](docs/history/) |
-| The exhaustive reference (patterns, rules, anti-patterns) | [CLAUDE.md](CLAUDE.md) |
+| La arquitectura y el flujo de un request | [docs/architecture.md](docs/architecture.md) |
+| Por qué se tomó cada decisión | [docs/adr/](docs/adr/) |
+| El modelo de concurrencia y el mapa de locks | [docs/concurrency-model.md](docs/concurrency-model.md) |
+| La estrategia de testing (unitarios + integración) | [docs/testing.md](docs/testing.md) |
+| Performance de queries, medida | [PERFORMANCE.md](PERFORMANCE.md) |
+| Observabilidad (logs, métricas, traces) | [docs/observability.md](docs/observability.md) |
+| Cómo desplegarlo | [docs/deployment.md](docs/deployment.md) |
+| Notas de diseño por módulo | [src/modules/](src/modules/README.md) |
+| Cómo se encontraron y cerraron los bugs difíciles | [docs/history/](docs/history/) |
+| La referencia exhaustiva (patrones, reglas, anti-patrones) | [CLAUDE.md](CLAUDE.md) |
 
-## License
+## Licencia
 
-[MIT](LICENSE) © 2026 Vicente Cristobal Rivas Avello
+[MIT](LICENSE) © 2026 Vicente Cristóbal Rivas Avello
