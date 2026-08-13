@@ -208,7 +208,7 @@ red. Coverage thresholds are enforced in CI; the domain layer is gated at **95% 
 90% functions**.
 → [testing strategy](docs/testing.md)
 
-## Roadmap
+## Roadmap (later...)
 
 Ordered by intent, not by date. Items come from the documented gap analysis
 ([deployment runbook](docs/deployment.md), [observability](docs/observability.md),
