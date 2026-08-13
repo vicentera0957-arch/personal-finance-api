@@ -15,6 +15,10 @@
   <img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-green.svg">
 </p>
 
+Built by [Vicente Rivas Avello](https://www.linkedin.com/in/vicente-rivas-avello/) —
+my first backend project. See [About this project](#about-this-project) for the context
+and what I'd most want to be asked about.
+
 ## See it running
 
 **Live demo (Railway):**
@@ -245,6 +249,30 @@ Full index: [docs/README.md](docs/README.md).
 | Per-module design notes | [src/modules/](src/modules/README.md) |
 | How the hard bugs were found and closed | [docs/history/](docs/history/) |
 | The exhaustive reference (patterns, rules, anti-patterns) | [CLAUDE.md](CLAUDE.md) |
+
+## About this project
+
+My first backend project, built between **March and August 2026** while learning NestJS
+and PostgreSQL. It started as a CRUD API and became a study of what breaks under
+concurrent writes: reading *Designing Data-Intensive Applications* alongside it is what
+made me stop asking *"does this work?"* and start asking *"what does this do when it
+runs twice, at the same time?"*
+
+Every design decision here is written down, including the ones that turned out wrong.
+The three I'd most want to be asked about:
+
+- **Why pessimistic locks and not `SERIALIZABLE`** — the trade-off is where the failure
+  lands: `SERIALIZABLE` moves it into retry logic on every write path.
+  ([ADR-0002](docs/adr/0002-unit-of-work-pessimistic-locks.md))
+- **Why you cannot lock a `SUM`** — Postgres forbids it, and locking existing rows
+  wouldn't stop phantom inserts anyway. The aggregate inherits its consistency from a
+  guardian row locked first. ([concurrency model](docs/concurrency-model.md))
+- **The ADR I had to supersede** — [ADR-0003](docs/adr/0003-port-owned-by-consumer.md)
+  rationalised a module cycle as a pattern. The real problem was simpler and the
+  diagnosis was wrong; [ADR-0009](docs/adr/0009-scoped-repositories-as-guarded-factories.md)
+  replaced it. Both are kept.
+
+**Vicente Cristobal Rivas Avello** · [LinkedIn](https://www.linkedin.com/in/vicente-rivas-avello/)
 
 ## License
 
