@@ -259,18 +259,30 @@ made me stop asking *"does this work?"* and start asking *"what does this do whe
 runs twice, at the same time?"*
 
 Every design decision here is written down, including the ones that turned out wrong.
-The three I'd most want to be asked about:
+Four I'd want to be asked about — chosen for the judgement rather than the trivia:
 
-- **Why pessimistic locks and not `SERIALIZABLE`** — the trade-off is where the failure
-  lands: `SERIALIZABLE` moves it into retry logic on every write path.
+- **Choosing not to use the more powerful tool.** `SERIALIZABLE` would close the write
+  skew in one line. It was rejected because of *where it moves the failure*: into retry
+  logic on every write path, with idempotency and backoff to get right, failing only
+  under load. Targeted pessimistic locks keep the cost visible and local.
   ([ADR-0002](docs/adr/0002-unit-of-work-pessimistic-locks.md))
-- **Why you cannot lock a `SUM`** — Postgres forbids it, and locking existing rows
-  wouldn't stop phantom inserts anyway. The aggregate inherits its consistency from a
-  guardian row locked first. ([concurrency model](docs/concurrency-model.md))
-- **The ADR I had to supersede** — [ADR-0003](docs/adr/0003-port-owned-by-consumer.md)
-  rationalised a module cycle as a pattern. The real problem was simpler and the
-  diagnosis was wrong; [ADR-0009](docs/adr/0009-scoped-repositories-as-guarded-factories.md)
-  replaced it. Both are kept.
+- **Making the dangerous mistake impossible instead of documenting it.** A scoped
+  repository built on the wrong `EntityManager` compiles, runs, and returns
+  correct-looking rows — Postgres grants the `FOR UPDATE` and releases it when the
+  `SELECT` ends. Nothing throws, nothing logs, and no integration test catches it
+  reliably. So the class is unexported and the only door is a factory that takes a
+  `QueryRunner`: passing the wrong thing stops compiling.
+  ([ADR-0009](docs/adr/0009-scoped-repositories-as-guarded-factories.md))
+- **Superseding my own ADR.** [ADR-0003](docs/adr/0003-port-owned-by-consumer.md)
+  rationalised a module cycle as a pattern. The cycle was an artefact of composition and
+  the diagnosis was wrong;
+  [ADR-0009](docs/adr/0009-scoped-repositories-as-guarded-factories.md) replaced it.
+  Both are kept, and 0003 now states plainly why it was wrong.
+- **Knowing where this is still fragile.** The lock model is correct today but relies on
+  convention in two places the compiler cannot check: the acquisition order that makes it
+  deadlock-free, and the agreement that every writer of period expenses takes the budget
+  lock first. Both are documented as known debt rather than left for someone to discover.
+  ([concurrency model §13](docs/concurrency-model.md))
 
 **Vicente Cristobal Rivas Avello** · [LinkedIn](https://www.linkedin.com/in/vicente-rivas-avello/)
 
