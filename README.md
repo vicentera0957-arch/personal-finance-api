@@ -1,9 +1,10 @@
 # Personal Finance API
 
-> Una API REST de finanzas personales construida para resolver bien la parte difícil:
-> **que la plata siga siendo correcta bajo escrituras concurrentes.** NestJS + PostgreSQL
-> + Redis, DDD / Clean architecture estricta, con cada invariante multi-agregado
-> protegido por un Unit of Work y locks pesimistas de fila.
+> **Un laboratorio de ingeniería con forma de API REST de finanzas personales.** Lo que
+> se estudia acá son las **escrituras concurrentes sobre dinero**: qué se rompe cuando
+> dos requests gastan contra el mismo presupuesto al mismo tiempo, y qué patrones de
+> diseño hacen falta para impedirlo — Unit of Work, locks pesimistas de fila, DDD /
+> Clean architecture estricta. Construido sobre NestJS, PostgreSQL y Redis.
 
 <p>
   <img alt="CI" src="https://github.com/vicentera0957-arch/personal-finance-api/actions/workflows/ci.yml/badge.svg">
@@ -194,12 +195,15 @@ graph TD
 
 ## El problema (y por qué no es trivial)
 
-Un backend de finanzas es fácil de construir y difícil de hacer **correcto**. Los bugs
-interesantes no son de CRUD — son de concurrencia: dos requests gastando contra el mismo
-presupuesto al mismo tiempo, un balance actualizado dos veces, un presupuesto borrado
-mientras una transacción cae en su período. Este proyecto los trata como el problema
-central de ingeniería y los cierra en la capa de base de datos, no esperando que los
-requests no se solapen.
+Un backend de finanzas es fácil de construir y difícil de hacer **correcto**. Todo lo de
+arriba existe por una sola razón: los bugs interesantes acá no son de CRUD, son de
+concurrencia. Un balance actualizado dos veces. Un presupuesto borrado mientras una
+transacción cae en su período. Una transacción revertida dos veces porque llegaron dos
+`DELETE` juntos.
+
+Ninguno de esos se ve con un request a la vez, y ninguno se arregla revisando el código
+con más cuidado. Se cierran en la capa de base de datos, o no se cierran — y por eso el
+proyecto está organizado alrededor de ellos en lugar de alrededor de sus endpoints.
 
 ---
 
