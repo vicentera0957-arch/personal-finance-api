@@ -17,8 +17,8 @@
 # ============================================================================
 
 # -- Live (Railway)
-@baseUrl = https://personal-finance-api-production-cbfe.up.railway.app/api/v1
-@healthUrl = https://personal-finance-api-production-cbfe.up.railway.app
+@baseUrl = https://personal-finance-api-production-b32b.up.railway.app/api/v1
+@healthUrl = https://personal-finance-api-production-b32b.up.railway.app
 
 # -- Local — comment the block above and uncomment this one
 # @baseUrl = http://localhost:3000/api/v1
