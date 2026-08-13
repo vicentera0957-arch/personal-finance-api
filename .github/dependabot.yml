@@ -19,6 +19,46 @@ updates:
           - 'patch'
     labels:
       - 'dependencies'
+    # Majors que NO queremos que Dependabot vuelva a proponer solo.
+    #
+    # Cerrar un PR de Dependabot NO lo silencia: solo descarta ESA version.
+    # Cuando sale la siguiente, reabre. Estas reglas son el cierre permanente.
+    # Cada una es una decision tomada, no pereza: el major se hace a mano,
+    # con su PR y su verificacion, cuando valga la pena.
+    ignore:
+      # El modelo transaccional entero esta construido sobre la 0.3
+      # (createQueryRunner + startTransaction + pessimistic_write) y hay
+      # decisiones documentadas que dependen de sus limites: @Index no expresa
+      # indices parciales, y una vista en SQL crudo es invisible a
+      # migration:generate. La 1.x se evalua con la suite de concurrencia
+      # como criterio de aceptacion.
+      - dependency-name: 'typeorm'
+        update-types: ['version-update:semver-major']
+      # `npm run build` es un gate de correctitud, no solo compilacion: corre
+      # el type-test que falla si un contexto escopado recupera save/delete
+      # sobre un agregado ajeno. Cambiar de compilador exige re-verificarlo.
+      - dependency-name: 'typescript'
+        update-types: ['version-update:semver-major']
+      # Runtime: genera el jti que es PK de refresh_tokens y replacedById en
+      # la cadena de rotacion.
+      - dependency-name: 'uuid'
+        update-types: ['version-update:semver-major']
+      # Runtime: unico cliente Redis (cache + storage del throttler, que es
+      # dependencia dura de /ready).
+      - dependency-name: 'ioredis'
+        update-types: ['version-update:semver-major']
+      # engines fija node >=20 <21. Tipar contra APIs de una major superior
+      # dejaria compilar codigo que no corre.
+      - dependency-name: '@types/node'
+        update-types: ['version-update:semver-major']
+      # Los tres son un mismo ecosistema de flat config: se mueven juntos en
+      # un PR unico o el lint queda a medio migrar.
+      - dependency-name: 'eslint'
+        update-types: ['version-update:semver-major']
+      - dependency-name: '@eslint/js'
+        update-types: ['version-update:semver-major']
+      - dependency-name: 'globals'
+        update-types: ['version-update:semver-major']
 
   # Las propias versiones de las GitHub Actions usadas en los workflows
   # (actions/checkout, setup-node, docker/*). Sin esto quedan pinneadas y se
