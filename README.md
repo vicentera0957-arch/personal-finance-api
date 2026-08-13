@@ -16,8 +16,7 @@
 </p>
 
 Built by [Vicente Rivas Avello](https://www.linkedin.com/in/vicente-rivas-avello/) —
-my first backend project. See [About this project](#about-this-project) for the context
-and what I'd most want to be asked about.
+my first backend project.
 
 ## See it running
 
@@ -38,15 +37,61 @@ running instance (see [Run it locally](#run-it-locally) — two commands and it'
 Demo data is reproducible: `npm run seed:demo` ([scripts/seed-demo.mjs](scripts/seed-demo.mjs))
 seeds through the public API, so it can never produce a state the domain wouldn't allow.
 
----
+## About this project
 
-## The problem (and why it isn't trivial)
+My first backend project, built between **March and August 2026** while learning NestJS
+and PostgreSQL. It started as a CRUD API and became a study of what breaks under
+concurrent writes: reading *Designing Data-Intensive Applications* alongside it is what
+made me stop asking *"does this work?"* and start asking *"what does this do when it
+runs twice, at the same time?"*
 
-A finance backend is easy to build and hard to make **correct**. The interesting bugs
-aren't CRUD — they're concurrency: two requests spending against the same budget at the
-same time, a balance updated twice, a budget deleted while a transaction lands in its
-period. This project treats those as the core engineering problem and closes them at the
-database layer, not by hoping requests don't overlap.
+Every design decision here is written down, including the ones that turned out wrong.
+Four I'd want to be asked about — chosen for the judgement rather than the trivia:
+
+- **Choosing not to use the more powerful tool.** `SERIALIZABLE` would close the write
+  skew in one line. It was rejected because of *where it moves the failure*: into retry
+  logic on every write path, with idempotency and backoff to get right, failing only
+  under load. Targeted pessimistic locks keep the cost visible and local.
+  ([ADR-0002](docs/adr/0002-unit-of-work-pessimistic-locks.md))
+- **Making the dangerous mistake impossible instead of documenting it.** A scoped
+  repository built on the wrong `EntityManager` compiles, runs, and returns
+  correct-looking rows — Postgres grants the `FOR UPDATE` and releases it when the
+  `SELECT` ends. Nothing throws, nothing logs, and no integration test catches it
+  reliably. So the class is unexported and the only door is a factory that takes a
+  `QueryRunner`: passing the wrong thing stops compiling.
+  ([ADR-0009](docs/adr/0009-scoped-repositories-as-guarded-factories.md))
+- **Superseding my own ADR.** [ADR-0003](docs/adr/0003-port-owned-by-consumer.md)
+  rationalised a module cycle as a pattern. The cycle was an artefact of composition and
+  the diagnosis was wrong;
+  [ADR-0009](docs/adr/0009-scoped-repositories-as-guarded-factories.md) replaced it.
+  Both are kept, and 0003 now states plainly why it was wrong.
+- **Knowing where this is still fragile.** The lock model is correct today but relies on
+  convention in two places the compiler cannot check: the acquisition order that makes it
+  deadlock-free, and the agreement that every writer of period expenses takes the budget
+  lock first. Both are documented as known debt rather than left for someone to discover.
+  ([concurrency model §13](docs/concurrency-model.md))
+
+**Vicente Cristobal Rivas Avello** · [LinkedIn](https://www.linkedin.com/in/vicente-rivas-avello/)
+
+## API overview
+
+All routes except `/auth/*`, `/health` and `/ready` require a Bearer access token. The
+acting user always comes from the JWT — never from the body or the URL.
+
+| Resource | Endpoints |
+| --- | --- |
+| Auth | `POST /auth/register` · `POST /auth/login` · `POST /auth/refresh` · `POST /auth/logout` |
+| Users | `GET /users/:id` · `PATCH /users/:id/profile` · `DELETE /users/:id` |
+| Accounts | `POST /accounts` · `GET /accounts` · `GET /accounts/:id` · `PATCH /accounts/:id/{name,archive,unarchive}` · `DELETE /accounts/:id` |
+| Categories | `POST /categories` · `GET /categories` · `GET /categories/:id` · `PATCH /categories/:id` · `DELETE /categories/:id` |
+| Budgets | `POST /budgets` · `GET /budgets?month=&year=` · `GET /budgets/:id` · `PATCH /budgets/:id/limit` · `DELETE /budgets/:id` |
+| Transactions | `POST /transactions` · `GET /transactions?page=&limit=&from=&to=` · `GET /transactions/:id` · `GET /transactions/account/:accountId` · `DELETE /transactions/:id` |
+| Reports | `GET /reports/summary?month=&year=` |
+
+Domain rules surface as precise HTTP errors: spending over the budget limit is a `422`,
+deleting a budget with expenses in its period is a `409`, operating on an archived
+account is a `409`, touching another user's resource is a `403`. The full
+exception-to-status table lives in [CLAUDE.md](CLAUDE.md).
 
 ## Engineering decisions
 
@@ -133,6 +178,16 @@ graph TD
     budgets --> categories
 ```
 
+## The problem (and why it isn't trivial)
+
+A finance backend is easy to build and hard to make **correct**. The interesting bugs
+aren't CRUD — they're concurrency: two requests spending against the same budget at the
+same time, a balance updated twice, a budget deleted while a transaction lands in its
+period. This project treats those as the core engineering problem and closes them at the
+database layer, not by hoping requests don't overlap.
+
+---
+
 ## Tech stack
 
 | Layer | Choice |
@@ -172,26 +227,6 @@ npm run start:dev
 - Health / readiness → `http://localhost:3000/health` · `http://localhost:3000/ready`
 - Metrics (Prometheus) → `http://localhost:3000/metrics`
 
-## API overview
-
-All routes except `/auth/*`, `/health` and `/ready` require a Bearer access token. The
-acting user always comes from the JWT — never from the body or the URL.
-
-| Resource | Endpoints |
-| --- | --- |
-| Auth | `POST /auth/register` · `POST /auth/login` · `POST /auth/refresh` · `POST /auth/logout` |
-| Users | `GET /users/:id` · `PATCH /users/:id/profile` · `DELETE /users/:id` |
-| Accounts | `POST /accounts` · `GET /accounts` · `GET /accounts/:id` · `PATCH /accounts/:id/{name,archive,unarchive}` · `DELETE /accounts/:id` |
-| Categories | `POST /categories` · `GET /categories` · `GET /categories/:id` · `PATCH /categories/:id` · `DELETE /categories/:id` |
-| Budgets | `POST /budgets` · `GET /budgets?month=&year=` · `GET /budgets/:id` · `PATCH /budgets/:id/limit` · `DELETE /budgets/:id` |
-| Transactions | `POST /transactions` · `GET /transactions?page=&limit=&from=&to=` · `GET /transactions/:id` · `GET /transactions/account/:accountId` · `DELETE /transactions/:id` |
-| Reports | `GET /reports/summary?month=&year=` |
-
-Domain rules surface as precise HTTP errors: spending over the budget limit is a `422`,
-deleting a budget with expenses in its period is a `409`, operating on an archived
-account is a `409`, touching another user's resource is a `403`. The full
-exception-to-status table lives in [CLAUDE.md](CLAUDE.md).
-
 ## Testing
 
 ```bash
@@ -207,6 +242,8 @@ responses — and each lock was verified by removing it and watching the matchin
 red. Coverage thresholds are enforced in CI; the domain layer is gated at **95% lines /
 90% functions**.
 → [testing strategy](docs/testing.md)
+
+---
 
 ## Roadmap (later...)
 
@@ -249,42 +286,6 @@ Full index: [docs/README.md](docs/README.md).
 | Per-module design notes | [src/modules/](src/modules/README.md) |
 | How the hard bugs were found and closed | [docs/history/](docs/history/) |
 | The exhaustive reference (patterns, rules, anti-patterns) | [CLAUDE.md](CLAUDE.md) |
-
-## About this project
-
-My first backend project, built between **March and August 2026** while learning NestJS
-and PostgreSQL. It started as a CRUD API and became a study of what breaks under
-concurrent writes: reading *Designing Data-Intensive Applications* alongside it is what
-made me stop asking *"does this work?"* and start asking *"what does this do when it
-runs twice, at the same time?"*
-
-Every design decision here is written down, including the ones that turned out wrong.
-Four I'd want to be asked about — chosen for the judgement rather than the trivia:
-
-- **Choosing not to use the more powerful tool.** `SERIALIZABLE` would close the write
-  skew in one line. It was rejected because of *where it moves the failure*: into retry
-  logic on every write path, with idempotency and backoff to get right, failing only
-  under load. Targeted pessimistic locks keep the cost visible and local.
-  ([ADR-0002](docs/adr/0002-unit-of-work-pessimistic-locks.md))
-- **Making the dangerous mistake impossible instead of documenting it.** A scoped
-  repository built on the wrong `EntityManager` compiles, runs, and returns
-  correct-looking rows — Postgres grants the `FOR UPDATE` and releases it when the
-  `SELECT` ends. Nothing throws, nothing logs, and no integration test catches it
-  reliably. So the class is unexported and the only door is a factory that takes a
-  `QueryRunner`: passing the wrong thing stops compiling.
-  ([ADR-0009](docs/adr/0009-scoped-repositories-as-guarded-factories.md))
-- **Superseding my own ADR.** [ADR-0003](docs/adr/0003-port-owned-by-consumer.md)
-  rationalised a module cycle as a pattern. The cycle was an artefact of composition and
-  the diagnosis was wrong;
-  [ADR-0009](docs/adr/0009-scoped-repositories-as-guarded-factories.md) replaced it.
-  Both are kept, and 0003 now states plainly why it was wrong.
-- **Knowing where this is still fragile.** The lock model is correct today but relies on
-  convention in two places the compiler cannot check: the acquisition order that makes it
-  deadlock-free, and the agreement that every writer of period expenses takes the budget
-  lock first. Both are documented as known debt rather than left for someone to discover.
-  ([concurrency model §13](docs/concurrency-model.md))
-
-**Vicente Cristobal Rivas Avello** · [LinkedIn](https://www.linkedin.com/in/vicente-rivas-avello/)
 
 ## License
 
