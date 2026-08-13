@@ -240,8 +240,11 @@ lock de fila, y al revés?
 
 ## Entregable
 
-`docs/CONCURRENCY.md` con las cuatro anomalías reproducidas (pasos + salida real
-+ mensajes de error textuales) y la justificación del lock del UoW.
+Las cuatro anomalías reproducidas a mano (pasos + salida real + mensajes de error
+textuales). **No hace falta un `docs/CONCURRENCY.md` nuevo**: el análisis ya vive
+en `docs/concurrency-model.md` y `docs/history/closed-race-conditions.md`. El
+objetivo de este bloque es la experiencia sensorial de verlas bloquear en dos
+sesiones psql — para poder contarlas sin notas —, no producir otro documento.
 
 **Checkpoint en inglés:** *"Walk me through how two concurrent transfers could
 double-spend, and what you did about it."*

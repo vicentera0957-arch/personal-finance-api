@@ -10,6 +10,34 @@ Gate: `docs/perf/salida/setup.txt`.
 
 ---
 
+## Qué encontró este lab
+
+El detalle de abajo es largo a propósito — la regla que gobierna todo esto es que
+un `EXPLAIN` sin su salida cruda es una afirmación sin respaldo. Los cuatro
+hallazgos, para quien no va a leer las 500 líneas:
+
+- **El planner elige por fracción, no por volumen.** La misma consulta pasa de
+  Index Scan a Bitmap Heap a Seq Scan **solo cambiando el `user_id`** — del
+  0,003% al 94,6% de la tabla, sin tocar una letra del SQL.
+  ([E2](#e2--la-selectividad-decide-no-el-volumen))
+- **Los buffers son el invariante; los milisegundos son el ruido.** Mismo trabajo
+  (982 buffers), **29× de diferencia en tiempo** según de dónde salieron las
+  páginas. Y `shared read` no significa disco: significa "no estaba en
+  `shared_buffers`". ([E3](#e3--leer-buffers-no-milisegundos))
+- **La causa número uno de una mala estimación no son las estadísticas viejas.**
+  Es la independencia que el planner asume entre columnas. Erraba 4,7× y
+  `ANALYZE` no podía arreglarlo; `CREATE STATISTICS` lo bajó a 3,3%.
+  ([E4](#e4--estimado-vs-real))
+- **El índice que protege el invariante del presupuesto ya estaba bien.** La
+  consulta que corre bajo el `FOR UPDATE` de `CreateTransaction` resuelve en
+  sub-milisegundo sobre 1.000.000 de filas. ([E1](#e1--baseline-crudo))
+
+**Lo que salió de acá para el producto:** `CREATE STATISTICS` sobre
+`(user_id, category_id, nature)` es un candidato real de migración — ver el
+cierre de E4.
+
+---
+
 ## §1 — Antes
 
 ### E1 · Baseline crudo
@@ -144,7 +172,7 @@ Hechos leídos de la salida. Sin interpretación: E1 no explica, registra.
 **Salida cruda:** `docs/perf/salida/e2-selectividad.txt`
 **Fechas:** 2026-08-11 (A–G) · 2026-08-12 (mediciones de seguimiento)
 
-> ⚠️ **Procedencia.** A–G se midieron antes de que la suite de integración
+> **Procedencia.** A–G se midieron antes de que la suite de integración
 > truncara la tabla (ver la nota de incidente al pie). El re-seed posterior
 > generó UUID nuevos, así que los identificadores del `.txt` ya no existen —
 > los scripts ahora derivan sus parámetros con `\gset` y sobreviven cualquier
@@ -496,14 +524,19 @@ seguido.
 > filas un Nested Loop parece razonable; con 4.028, no.
 
 ---
-## §2 — Índices
 
-<!-- Bloque 2 · E5–E8 -->
+## En curso
 
-## §4 — Keyset pagination
+El bloque 1 está cerrado: E1–E4 cubren cómo se lee un plan y qué mueve de verdad
+al planner.
 
-<!-- Bloque 4 · E17a–c -->
+Los bloques siguientes — índices (E5–E8), paginación keyset (E17) y SQL analítico
+con joins (E19–E21) — ya tienen sus scripts escritos en
+[`docs/perf/scripts/`](docs/perf/scripts/), pero **no se publican acá hasta tener
+número medido**. Es la misma regla que gobierna todo lo de arriba: ejercicio sin
+evidencia cruda no cuenta, y una sección vacía no es un adelanto, es una promesa.
 
-## §5 — SQL analítico y joins
-
-<!-- Bloque 5 · E19–E21 -->
+Las anomalías de concurrencia (el bloque 3 del plan original) no se repiten acá:
+ya viven en [`docs/concurrency-model.md`](docs/concurrency-model.md) y en
+[`docs/history/closed-race-conditions.md`](docs/history/closed-race-conditions.md),
+con su red de regresión en `test/integration/concurrency/`.

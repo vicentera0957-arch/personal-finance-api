@@ -372,8 +372,11 @@ pgq docs\perf\scripts\setup.sql
 
 No es haber corrido los ejercicios. Es tener los artefactos:
 
-- [ ] `PERFORMANCE.md` con ≥2 EXPLAIN antes/después con números propios
-- [ ] `docs/CONCURRENCY.md` con las 4 anomalías reproducidas
+- [x] `PERFORMANCE.md` con ≥2 EXPLAIN antes/después con números propios — bloque 1 (E1–E4)
+- [x] Las anomalías de concurrencia documentadas — ya estaban: `docs/concurrency-model.md`
+      + `docs/history/closed-race-conditions.md`, con red de regresión en
+      `test/integration/concurrency/`. No hace falta un `CONCURRENCY.md` aparte
+- [x] Endpoint de reportes — `GET /reports/summary` ya existe (módulo `reports`).
+      Lo que queda pendiente ahí son las CTEs y window functions, no el endpoint
 - [ ] Keyset en producción + **ADR-0010**
-- [ ] Endpoint de reportes con CTEs + window functions
 - [ ] Poder explicar los tres primeros en inglés sin notas

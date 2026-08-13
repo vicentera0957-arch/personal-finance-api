@@ -3,8 +3,28 @@
 Cómo levantar el laboratorio de medición en una máquina nueva, y qué convenciones
 gobiernan los artefactos que produce.
 
+> Este archivo es el **runbook del lab**, escrito para operarlo. Las conclusiones
+> publicables viven en [`PERFORMANCE.md`](../../PERFORMANCE.md); acá está cómo se
+> producen.
+
+## Estado de los ejercicios
+
+Los `.sql` de todos los ejercicios están escritos. Lo que distingue a uno cerrado
+es que tenga su `.txt` de evidencia en `salida/` **y** su sección en
+`PERFORMANCE.md`.
+
+| Bloque | Ejercicios | Estado |
+| --- | --- | --- |
+| 1 · Leer un plan | E1 · E2 · E3a/b · E4 | **cerrado** — evidencia + narrativa |
+| 2 · Índices | E5 | medido (`salida/e5-partial-index.txt`), sin narrativa |
+| 2 · Índices | E6 · E7a/b · E8 | script escrito, sin correr |
+| 3 · Concurrencia | — | **no aplica**: ya cubierto por `docs/concurrency-model.md` y la suite de `test/integration/concurrency/` |
+| 4 · Keyset | E17a/b/c | script escrito, sin correr |
+| 5 · Analítico y joins | E19 · E20 · E21 | script escrito, sin correr |
+| 6 · MVCC y bloat | E13 · E14 · E15 · E16 | script escrito, sin correr |
+
 **La regla que gobierna todo:** ejercicio sin número medido no cuenta. Cada bloque
-cierra con algo escrito en `PERFORMANCE.md` / `docs/CONCURRENCY.md` o un commit.
+cierra con algo escrito en `PERFORMANCE.md` o un commit.
 
 ---
 
@@ -16,8 +36,7 @@ cierra con algo escrito en `PERFORMANCE.md` / `docs/CONCURRENCY.md` o un commit.
 | `docs/perf/scripts/*.sql` | El experimento. Reproducible por cualquiera. | sí |
 | `docs/perf/scripts/*.md` | Runbooks de los ejercicios que necesitan dos sesiones y no se pueden scriptear | sí |
 | `docs/perf/salida/*.txt` | La salida cruda de psql. **Es la evidencia.** | sí |
-| `PERFORMANCE.md` | La narrativa con las conclusiones (§1 baseline · §2 índices · §4 keyset · §5 analítico) | sí |
-| `docs/CONCURRENCY.md` | Las 4 anomalías de concurrencia | ver "Bloque 3" abajo |
+| `PERFORMANCE.md` | La narrativa con las conclusiones. **Solo se publica ahí lo que tiene número medido** | sí |
 
 Este README es la **puesta en marcha** (infraestructura, datos, convenciones).
 Para correr los ejercicios andá a [GUIA.md](GUIA.md).
@@ -289,9 +308,25 @@ Además `idx_tx_user_cat_nature_date` **ya cubre** la query de E1. Consecuencia:
 "antes" del Bloque 2 **no va a ser un Seq Scan**, y E5 deja de demostrar "índice vs.
 sin índice" para demostrar "índice general vs. índice especializado".
 
-Decisión pendiente al llegar al Bloque 2: correr E5 como experimento
-(crear → medir → `DROP`, sin migration commiteada) o revertir la decisión documentada.
-Si se crea la migration, hay que actualizar ese doc y `CLAUDE.md` en el mismo PR.
+**E5 ya se corrió** (evidencia en `salida/e5-partial-index.txt`), como experimento
+efimero: crear → medir → `DROP`, sin migration commiteada. La decisión de
+`period-sum-index-decision.md` sigue en pie — no hay ninguna migration con
+`idx_tx_expense_period`. Falta escribir su sección en `PERFORMANCE.md`. Si alguna
+vez se decide crear la migration, hay que actualizar ese doc y `CLAUDE.md` en el
+mismo PR.
+
+> **Verificá los índices antes de medir el Bloque 2.** El `DROP` del final de
+> `e5-partial-index.sql` puede no haber corrido — si el script aborta antes
+> (`ON_ERROR_STOP`), el índice queda vivo. Una base con un índice de más no está
+> midiendo el esquema real: cambia el tamaño total de índices (E8) y la
+> amplificación de escritura. Contra lo que definen las migraciones deben existir
+> exactamente **tres**: `idx_tx_user_cat_nature_date`, `idx_tx_user_date`,
+> `idx_tx_account_date` (más la PK).
+>
+> ```sql
+> SELECT indexname FROM pg_indexes WHERE tablename = 'transactions' ORDER BY 1;
+> DROP INDEX IF EXISTS idx_tx_expense_period;  -- si aparece de más
+> ```
 
 Nota adicional del dataset: con **94,60% de filas `expense`**, un índice parcial
 `WHERE nature = 'expense'` excluye apenas el 5,40%. No maquillar ese número — y
