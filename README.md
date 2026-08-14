@@ -27,12 +27,17 @@ mi primer proyecto de backend.
 
 Demo desplegada en Railway:
 
-Swagger UI: https://personal-finance-api-production-b32b.up.railway.app/api/docs
-Demo flow: requests/demo-flow.http — recorrido reproducible de la API con autenticación, presupuestos, transacciones y detección de replay de refresh tokens.
+- **Swagger UI:** https://personal-finance-api-production-b32b.up.railway.app/api/docs
+- **Login de demo:** `demo-recruiter@finanzas.dev` / `DemoRecruiter2026!` — sin esto,
+  toda ruta protegida responde `401`.
+- **Demo flow:** [`requests/demo-flow.http`](requests/demo-flow.http) — recorrido
+  reproducible de la API con autenticación, presupuestos, transacciones y detección de
+  replay de refresh tokens.
 
-La API expone su contrato mediante Swagger / OpenAPI, por lo que todas las rutas pueden explorarse y ejecutarse directamente desde /api/docs.
+La API expone su contrato mediante Swagger / OpenAPI, por lo que todas las rutas pueden
+explorarse y ejecutarse directamente desde `/api/docs`.
 
-Para ejecutar el proyecto localmente, ver Correrlo localmente
+Para ejecutar el proyecto localmente, ver [Correrlo localmente](#correrlo-localmente).
 
 ## Sobre este proyecto
 
