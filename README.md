@@ -107,12 +107,12 @@ operar sobre una cuenta archivada es un `409`, y tocar el recurso de otro usuari
 
 ## Decisiones de ingeniería
 
-Las decisiones que vale la pena revisar — cada una linkea al código y, donde está
+Las decisiones que vale la pena revisar — cada una enlaza al código y, donde está
 escrito, a un ADR.
 
-### Plata segura bajo concurrencia — Unit of Work + locks pesimistas
+### Dinero seguro bajo concurrencia — Unit of Work + locks pesimistas
 
-Los invariantes multi-agregado que tocan plata (balance de la cuenta, límite del
+Los invariantes multi-agregado que tocan dinero (balance de la cuenta, límite del
 presupuesto, gasto del período) corren dentro de un **Unit of Work**: cada llamada a
 `run()` abre un `QueryRunner`, una transacción de PostgreSQL. Los repositorios scoped
 toman `SELECT ... FOR UPDATE` sobre las filas que resguardan cada invariante, y la **fila
@@ -216,7 +216,7 @@ cp .env.example .env
 # Generá los dos secretos JWT (la app no arranca sin ellos):
 node -e "console.log('JWT_SECRET=' + require('crypto').randomBytes(64).toString('hex'))"
 node -e "console.log('JWT_REFRESH_SECRET=' + require('crypto').randomBytes(64).toString('hex'))"
-# Ojo: poné DB_PORT=5433 en .env (el Postgres del compose se publica en 5433, no 5432).
+# Importante: usar DB_PORT=5433 en .env (el Postgres del compose se publica en 5433, no 5432).
 
 # 2. Infraestructura (Postgres :5433 · Redis :6379 · pgAdmin :5051)
 docker compose up -d
