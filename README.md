@@ -25,28 +25,18 @@ mi primer proyecto de backend.
 
 ## Verlo funcionando
 
-**Demo en vivo (Railway):**
+Demo desplegada en Railway:
 
-- **Swagger UI:** https://personal-finance-api-production-b32b.up.railway.app/api/docs
-- **Login de demo:** `demo-recruiter@finanzas.dev` / `DemoRecruiter2026!` — llamá a
-  `POST /auth/login`, hacé clic en *Authorize* con el `accessToken`, y recorré un mes de
-  datos sembrados: dos cuentas, cuatro presupuestos (uno exactamente al 100% de su
-  límite — un peso más devuelve `422`) y un mes de transacciones.
-- **Recorrido guiado:** [`requests/demo-flow.http`](requests/demo-flow.http) recorre toda
-  la API en 19 requests encadenados — incluyendo el gate del presupuesto rechazando un
-  gasto que se pasa (`422`) y la **detección de replay** de un refresh token revocando
-  una familia entera.
+Swagger UI: https://personal-finance-api-production-b32b.up.railway.app/api/docs
+Demo flow: requests/demo-flow.http — recorrido reproducible de la API con autenticación, presupuestos, transacciones y detección de replay de refresh tokens.
 
-La API también se documenta sola: cada controller está decorado para **Swagger /
-OpenAPI**, así que el mismo contrato navegable y ejecutable vive en `/api/docs` de
-cualquier instancia (ver [Correrlo localmente](#correrlo-localmente) — dos comandos y
-está arriba). Los datos de demo son reproducibles: `npm run seed:demo`
-([scripts/seed-demo.mjs](scripts/seed-demo.mjs)) siembra a través de la API pública, así
-que nunca puede producir un estado que el dominio no permitiría.
+La API expone su contrato mediante Swagger / OpenAPI, por lo que todas las rutas pueden explorarse y ejecutarse directamente desde /api/docs.
+
+Para ejecutar el proyecto localmente, ver Correrlo localmente
 
 ## Sobre este proyecto
 
-Mi primer proyecto de backend, construido entre **marzo y agosto de 2026** mientras
+Mi proyecto/lab personal de backend, construido entre **marzo y agosto de 2026** mientras
 aprendía NestJS y PostgreSQL. Empezó como una API CRUD y terminó siendo un estudio de
 qué se rompe bajo escrituras concurrentes: leer *Designing Data-Intensive Applications*
 en paralelo fue lo que me hizo dejar de preguntar *"¿esto funciona?"* y empezar a
@@ -80,6 +70,20 @@ sobre las que me gustaría que me preguntaran — elegidas por el criterio, no p
   ([modelo de concurrencia §13](docs/concurrency-model.md))
 
 **Vicente Cristóbal Rivas Avello** · [LinkedIn](https://www.linkedin.com/in/vicente-rivas-avello/)
+
+## El problema (y por qué no es trivial)
+
+Un backend de finanzas es fácil de construir y difícil de hacer **correcto**. Todo lo de
+arriba existe por una sola razón: los bugs interesantes acá no son de CRUD, son de
+concurrencia. Un balance actualizado dos veces. Un presupuesto borrado mientras una
+transacción cae en su período. Una transacción revertida dos veces porque llegaron dos
+`DELETE` juntos.
+
+Ninguno de esos se ve con un request a la vez, y ninguno se arregla revisando el código
+con más cuidado. Se cierran en la capa de base de datos, o no se cierran — y por eso el
+proyecto está organizado alrededor de ellos en lugar de alrededor de sus endpoints.
+
+---
 
 ## La API
 
@@ -189,20 +193,6 @@ graph TD
     budgets --> categories
 ```
 
-## El problema (y por qué no es trivial)
-
-Un backend de finanzas es fácil de construir y difícil de hacer **correcto**. Todo lo de
-arriba existe por una sola razón: los bugs interesantes acá no son de CRUD, son de
-concurrencia. Un balance actualizado dos veces. Un presupuesto borrado mientras una
-transacción cae en su período. Una transacción revertida dos veces porque llegaron dos
-`DELETE` juntos.
-
-Ninguno de esos se ve con un request a la vez, y ninguno se arregla revisando el código
-con más cuidado. Se cierran en la capa de base de datos, o no se cierran — y por eso el
-proyecto está organizado alrededor de ellos en lugar de alrededor de sus endpoints.
-
----
-
 ## Stack
 
 | Capa | Elección |
@@ -259,35 +249,6 @@ de dominio está gateada en **95% de líneas / 90% de funciones**.
 → [estrategia de testing](docs/testing.md)
 
 ---
-
-## Roadmap (más adelante...)
-
-Ordenado por intención, no por fecha. Los ítems salen del análisis de gaps documentado
-([runbook de despliegue](docs/deployment.md), [observabilidad](docs/observability.md),
-notas de módulo).
-
-- **Pipeline de CD** — el CI ya construye la imagen Docker; falta publicarla en un
-  registry y desplegar automáticamente al pushear a `main`.
-- **Tracing distribuido (OpenTelemetry)** — spans por request y por query; en un sistema
-  construido sobre locks pesimistas, ver el tiempo de espera de lock en producción es el
-  premio.
-- **Error tracking (Sentry)** — agrupar y alertar sobre 5xx inesperados; las métricas y
-  los logs estructurados ya están.
-- **Login con OAuth (Google / GitHub)** — estrategias de Passport enchufadas a la
-  arquitectura de auth existente, sin tocar el dominio.
-- **Verificación de email y reset de contraseña** — flujos de token respaldados por una
-  cola (BullMQ) para que mandar mail nunca bloquee el request.
-- **Transferencias entre cuentas** — dos transacciones enlazadas compartiendo un
-  `transferGroupId`, atómicas dentro del Unit of Work existente. Es el único caso que la
-  partida simple genuinamente no cubre
-  ([ADR-0005](docs/adr/0005-single-entry-immutable-transactions.md)).
-- **Filtro global de excepciones** — reemplazar el mapeo `try/catch` por controller con un
-  único filtro `@Catch()`, para que una excepción de dominio nueva no se escape como un
-  500 ([el ADR-0006](docs/adr/0006-domain-exceptions-vs-http.md) registra por qué está
-  diferido).
-- **Test de integración de borrado de usuario** — verificar el diamante de FKs
-  `CASCADE`/`RESTRICT` antes de exponer el borrado duro a usuarios reales; evaluar borrado
-  lógico.
 
 ## Documentación
 
