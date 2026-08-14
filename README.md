@@ -1,10 +1,6 @@
 # Personal Finance API
 
-> **Un laboratorio de ingeniería con forma de API REST de finanzas personales.** Lo que
-> se estudia acá son las **escrituras concurrentes sobre dinero**: qué se rompe cuando
-> dos requests gastan contra el mismo presupuesto al mismo tiempo, y qué patrones de
-> diseño hacen falta para impedirlo — Unit of Work, locks pesimistas de fila, DDD /
-> Clean architecture estricta. Construido sobre NestJS, PostgreSQL y Redis.
+Laboratorio de ingeniería backend construido con NestJS, PostgreSQL y TypeORM, utilizado para experimentar con internals de bases de datos, concurrencia, testing, arquitectura y rendimiento. Aplica patrones y prácticas de diseño como Unit of Work, locks pesimistas de fila, DDD y Clean Architecture estricta.
 
 <p>
   <img alt="CI" src="https://github.com/vicentera0957-arch/personal-finance-api/actions/workflows/ci.yml/badge.svg">
