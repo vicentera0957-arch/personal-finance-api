@@ -1,0 +1,189 @@
+-- e5-partial-index
+-- corrido: 2026-08-12 19:06:00
+-- fuente:  e5-partial-index.sql
+
+\timing on
+Timing is on.
+\pset pager off
+Pager usage is off.
+\set ON_ERROR_STOP on
+\pset null '(null)'
+Null display is "(null)".
+SELECT user_id AS ballena FROM transactions GROUP BY user_id ORDER BY count(*) DESC LIMIT 1 \gset
+Time: 258.695 ms
+SELECT category_id AS categoria FROM transactions WHERE user_id = :'ballena' AND nature = 'expense' AND transaction_date >= '2026-07-01' AND transaction_date < '2026-08-01' GROUP BY category_id ORDER BY count(*) DESC LIMIT 1 \gset
+Time: 240.224 ms
+SET max_parallel_workers_per_gather = 0;
+SET
+Time: 0.283 ms
+\echo '======== E5.0 - INDICES ANTES ========'
+======== E5.0 - INDICES ANTES ========
+SELECT indexrelname AS indice,
+       pg_size_pretty(pg_relation_size(indexrelid)) AS tamano,
+       idx_scan AS veces_usado
+FROM pg_stat_user_indexes WHERE relname = 'transactions'
+ORDER BY pg_relation_size(indexrelid) DESC;
+             indice             | tamano | veces_usado 
+--------------------------------+--------+-------------
+ idx_tx_user_cat_nature_date    | 114 MB |          14
+ idx_tx_account_date            | 69 MB  |           0
+ idx_tx_user_date               | 69 MB  |          17
+ PK_a219afd8dd77ed80f5a862f1db9 | 39 MB  |           0
+(4 rows)
+
+Time: 23.062 ms
+\echo '======== E5.1 - CREAR EL INDICE PARCIAL (CONCURRENTLY, sin BEGIN) ========'
+======== E5.1 - CREAR EL INDICE PARCIAL (CONCURRENTLY, sin BEGIN) ========
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_tx_expense_period
+  ON transactions (user_id, category_id, transaction_date)
+  WHERE nature = 'expense';
+CREATE INDEX
+Time: 3809.845 ms (00:03.810)
+ANALYZE transactions;
+ANALYZE
+Time: 276.808 ms
+\echo '======== E5.2 - TAMANOS: parcial vs. completo ========'
+======== E5.2 - TAMANOS: parcial vs. completo ========
+SELECT indexrelname AS indice,
+       pg_size_pretty(pg_relation_size(indexrelid)) AS tamano,
+       pg_relation_size(indexrelid)                 AS bytes
+FROM pg_stat_user_indexes WHERE relname = 'transactions'
+ORDER BY pg_relation_size(indexrelid) DESC;
+             indice             | tamano |   bytes   
+--------------------------------+--------+-----------
+ idx_tx_user_cat_nature_date    | 114 MB | 119054336
+ idx_tx_account_date            | 69 MB  |  72466432
+ idx_tx_user_date               | 69 MB  |  72458240
+ idx_tx_expense_period          | 53 MB  |  55869440
+ PK_a219afd8dd77ed80f5a862f1db9 | 39 MB  |  40493056
+(5 rows)
+
+Time: 2.753 ms
+\echo '======== E5.3 - RE-MEDIR LA QUERY DE E1 ========'
+======== E5.3 - RE-MEDIR LA QUERY DE E1 ========
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT COALESCE(SUM(e.amount), 0) AS total
+FROM v_period_expenses e
+WHERE e.user_id          = :'ballena'
+  AND e.category_id      = :'categoria'
+  AND e.transaction_date >= '2026-07-01'
+  AND e.transaction_date <  '2026-08-01';
+                                                                                                                                                                    QUERY PLAN                                                                                                                                                                     
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=2693.20..2693.21 rows=1 width=8) (actual time=25.245..25.247 rows=1 loops=1)
+   Buffers: shared hit=95 read=855
+   I/O Timings: shared read=19.895
+   ->  Bitmap Heap Scan on transactions  (cost=36.67..2691.19 rows=803 width=4) (actual time=0.578..24.416 rows=4028 loops=1)
+         Recheck Cond: ((user_id = '0898fb97-6631-48b3-9968-6bb3cb56a399'::uuid) AND (category_id = '4ab66006-6631-4966-941e-041666d26010'::uuid) AND (transaction_date >= '2026-07-01 00:00:00'::timestamp without time zone) AND (transaction_date < '2026-08-01 00:00:00'::timestamp without time zone) AND ((nature)::text = 'expense'::text))
+         Heap Blocks: exact=919
+         Buffers: shared hit=95 read=855
+         I/O Timings: shared read=19.895
+         ->  Bitmap Index Scan on idx_tx_expense_period  (cost=0.00..36.47 rows=803 width=0) (actual time=0.449..0.449 rows=4028 loops=1)
+               Index Cond: ((user_id = '0898fb97-6631-48b3-9968-6bb3cb56a399'::uuid) AND (category_id = '4ab66006-6631-4966-941e-041666d26010'::uuid) AND (transaction_date >= '2026-07-01 00:00:00'::timestamp without time zone) AND (transaction_date < '2026-08-01 00:00:00'::timestamp without time zone))
+               Buffers: shared hit=31
+ Planning:
+   Buffers: shared hit=58 read=5
+   I/O Timings: shared read=0.264
+ Planning Time: 1.209 ms
+ Execution Time: 25.347 ms
+(16 rows)
+
+Time: 29.616 ms
+\echo '======== E5.4 - MISMA QUERY FORZANDO EL INDICE VIEJO (comparacion) ========'
+======== E5.4 - MISMA QUERY FORZANDO EL INDICE VIEJO (comparacion) ========
+BEGIN;
+BEGIN
+Time: 0.231 ms
+DROP INDEX IF EXISTS idx_tx_expense_period;
+DROP INDEX
+Time: 3.674 ms
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT COALESCE(SUM(e.amount), 0) AS total
+FROM v_period_expenses e
+WHERE e.user_id          = :'ballena'
+  AND e.category_id      = :'categoria'
+  AND e.transaction_date >= '2026-07-01'
+  AND e.transaction_date <  '2026-08-01';
+                                                                                                                                                                      QUERY PLAN                                                                                                                                                                       
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=2719.33..2719.34 rows=1 width=8) (actual time=2.747..2.748 rows=1 loops=1)
+   Buffers: shared hit=1057
+   ->  Bitmap Heap Scan on transactions  (cost=62.80..2717.32 rows=803 width=4) (actual time=1.159..2.413 rows=4028 loops=1)
+         Recheck Cond: ((user_id = '0898fb97-6631-48b3-9968-6bb3cb56a399'::uuid) AND (category_id = '4ab66006-6631-4966-941e-041666d26010'::uuid) AND ((nature)::text = 'expense'::text) AND (transaction_date >= '2026-07-01 00:00:00'::timestamp without time zone) AND (transaction_date < '2026-08-01 00:00:00'::timestamp without time zone))
+         Heap Blocks: exact=919
+         Buffers: shared hit=1057
+         ->  Bitmap Index Scan on idx_tx_user_cat_nature_date  (cost=0.00..62.60 rows=803 width=0) (actual time=1.044..1.045 rows=4028 loops=1)
+               Index Cond: ((user_id = '0898fb97-6631-48b3-9968-6bb3cb56a399'::uuid) AND (category_id = '4ab66006-6631-4966-941e-041666d26010'::uuid) AND ((nature)::text = 'expense'::text) AND (transaction_date >= '2026-07-01 00:00:00'::timestamp without time zone) AND (transaction_date < '2026-08-01 00:00:00'::timestamp without time zone))
+               Buffers: shared hit=138
+ Planning:
+   Buffers: shared hit=6
+ Planning Time: 0.312 ms
+ Execution Time: 2.992 ms
+(13 rows)
+
+Time: 4.084 ms
+ROLLBACK;
+ROLLBACK
+Time: 0.398 ms
+\echo '======== E5.5 - LA COLUMNA DE RANGO VA ULTIMA: contraejemplo ========'
+======== E5.5 - LA COLUMNA DE RANGO VA ULTIMA: contraejemplo ========
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_tx_mal_orden
+  ON transactions (transaction_date, user_id, category_id)
+  WHERE nature = 'expense';
+CREATE INDEX
+Time: 1708.818 ms (00:01.709)
+ANALYZE transactions;
+ANALYZE
+Time: 510.622 ms
+BEGIN;
+BEGIN
+Time: 0.432 ms
+DROP INDEX IF EXISTS idx_tx_expense_period;
+DROP INDEX
+Time: 1.335 ms
+DROP INDEX IF EXISTS idx_tx_user_cat_nature_date;
+DROP INDEX
+Time: 1.032 ms
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT COALESCE(SUM(e.amount), 0) AS total
+FROM v_period_expenses e
+WHERE e.user_id          = :'ballena'
+  AND e.category_id      = :'categoria'
+  AND e.transaction_date >= '2026-07-01'
+  AND e.transaction_date <  '2026-08-01';
+                                                                                                                                                QUERY PLAN                                                                                                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=3824.95..3824.96 rows=1 width=8) (actual time=4.955..4.957 rows=1 loops=1)
+   Buffers: shared hit=1290
+   ->  Index Scan using idx_tx_mal_orden on transactions  (cost=0.42..3822.85 rows=842 width=4) (actual time=0.036..4.489 rows=4028 loops=1)
+         Index Cond: ((transaction_date >= '2026-07-01 00:00:00'::timestamp without time zone) AND (transaction_date < '2026-08-01 00:00:00'::timestamp without time zone) AND (user_id = '0898fb97-6631-48b3-9968-6bb3cb56a399'::uuid) AND (category_id = '4ab66006-6631-4966-941e-041666d26010'::uuid))
+         Buffers: shared hit=1290
+ Planning:
+   Buffers: shared hit=42 read=1
+   I/O Timings: shared read=0.009
+ Planning Time: 2.996 ms
+ Execution Time: 5.027 ms
+(10 rows)
+
+Time: 9.198 ms
+ROLLBACK;
+ROLLBACK
+Time: 0.544 ms
+DROP INDEX CONCURRENTLY IF EXISTS idx_tx_mal_orden;
+DROP INDEX
+Time: 39.241 ms
+\echo '======== E5.6 - ESTADO FINAL DE LOS INDICES ========'
+======== E5.6 - ESTADO FINAL DE LOS INDICES ========
+SELECT indexrelname AS indice, pg_size_pretty(pg_relation_size(indexrelid)) AS tamano
+FROM pg_stat_user_indexes WHERE relname = 'transactions'
+ORDER BY pg_relation_size(indexrelid) DESC;
+             indice             | tamano 
+--------------------------------+--------
+ idx_tx_user_cat_nature_date    | 114 MB
+ idx_tx_account_date            | 69 MB
+ idx_tx_user_date               | 69 MB
+ idx_tx_expense_period          | 53 MB
+ PK_a219afd8dd77ed80f5a862f1db9 | 39 MB
+(5 rows)
+
+Time: 6.368 ms

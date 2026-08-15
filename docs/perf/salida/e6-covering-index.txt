@@ -1,0 +1,164 @@
+-- e6-covering-index
+-- corrido: 2026-08-14 21:47:50
+-- fuente:  e6-covering-index.sql
+
+\timing on
+Timing is on.
+\pset pager off
+Pager usage is off.
+\set ON_ERROR_STOP on
+\pset null '(null)'
+Null display is "(null)".
+SELECT user_id AS ballena FROM transactions GROUP BY user_id ORDER BY count(*) DESC LIMIT 1 \gset
+Time: 731.508 ms
+SELECT category_id AS categoria FROM transactions WHERE user_id = :'ballena' AND nature = 'expense' AND transaction_date >= '2026-07-01' AND transaction_date < '2026-08-01' GROUP BY category_id ORDER BY count(*) DESC LIMIT 1 \gset
+Time: 62.254 ms
+SET max_parallel_workers_per_gather = 0;
+SET
+Time: 0.451 ms
+\echo '======== E6.0 - LINEA BASE: el plan que dejo E5 ========'
+======== E6.0 - LINEA BASE: el plan que dejo E5 ========
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT COALESCE(SUM(e.amount), 0) AS total
+FROM v_period_expenses e
+WHERE e.user_id          = :'ballena'
+  AND e.category_id      = :'categoria'
+  AND e.transaction_date >= '2026-07-01'
+  AND e.transaction_date <  '2026-08-01';
+                                                                                                                                                                    QUERY PLAN                                                                                                                                                                     
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=2926.52..2926.53 rows=1 width=8) (actual time=21.694..21.701 rows=1 loops=1)
+   Buffers: shared hit=30 read=920
+   I/O Timings: shared read=15.645
+   ->  Bitmap Heap Scan on transactions  (cost=41.88..2924.31 rows=882 width=4) (actual time=0.586..20.956 rows=4028 loops=1)
+         Recheck Cond: ((user_id = '0898fb97-6631-48b3-9968-6bb3cb56a399'::uuid) AND (category_id = '4ab66006-6631-4966-941e-041666d26010'::uuid) AND (transaction_date >= '2026-07-01 00:00:00'::timestamp without time zone) AND (transaction_date < '2026-08-01 00:00:00'::timestamp without time zone) AND ((nature)::text = 'expense'::text))
+         Heap Blocks: exact=919
+         Buffers: shared hit=30 read=920
+         I/O Timings: shared read=15.645
+         ->  Bitmap Index Scan on idx_tx_expense_period  (cost=0.00..41.65 rows=882 width=0) (actual time=0.428..0.428 rows=4028 loops=1)
+               Index Cond: ((user_id = '0898fb97-6631-48b3-9968-6bb3cb56a399'::uuid) AND (category_id = '4ab66006-6631-4966-941e-041666d26010'::uuid) AND (transaction_date >= '2026-07-01 00:00:00'::timestamp without time zone) AND (transaction_date < '2026-08-01 00:00:00'::timestamp without time zone))
+               Buffers: shared hit=30 read=1
+               I/O Timings: shared read=0.019
+ Planning:
+   Buffers: shared hit=29 read=5
+   I/O Timings: shared read=4.793
+ Planning Time: 5.768 ms
+ Execution Time: 22.425 ms
+(17 rows)
+
+Time: 34.721 ms
+\echo '======== E6.1 - CREAR EL COVERING INDEX (INCLUDE amount) ========'
+======== E6.1 - CREAR EL COVERING INDEX (INCLUDE amount) ========
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_tx_expense_period_cover
+  ON transactions (user_id, category_id, transaction_date)
+  INCLUDE (amount)
+  WHERE nature = 'expense';
+CREATE INDEX
+Time: 1833.340 ms (00:01.833)
+ANALYZE transactions;
+ANALYZE
+Time: 203.522 ms
+\echo '======== E6.2 - TAMANO: cuanto cuesta el INCLUDE ========'
+======== E6.2 - TAMANO: cuanto cuesta el INCLUDE ========
+SELECT indexrelname AS indice,
+       pg_size_pretty(pg_relation_size(indexrelid)) AS tamano,
+       pg_relation_size(indexrelid)                 AS bytes,
+       pg_get_indexdef(indexrelid)                  AS definicion
+FROM pg_stat_user_indexes
+WHERE relname = 'transactions'
+  AND indexrelname IN ('idx_tx_expense_period', 'idx_tx_expense_period_cover');
+           indice            | tamano |  bytes   |                                                                                   definicion                                                                                   
+-----------------------------+--------+----------+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ idx_tx_expense_period       | 53 MB  | 55869440 | CREATE INDEX idx_tx_expense_period ON public.transactions USING btree (user_id, category_id, transaction_date) WHERE ((nature)::text = 'expense'::text)
+ idx_tx_expense_period_cover | 61 MB  | 64126976 | CREATE INDEX idx_tx_expense_period_cover ON public.transactions USING btree (user_id, category_id, transaction_date) INCLUDE (amount) WHERE ((nature)::text = 'expense'::text)
+(2 rows)
+
+Time: 25.282 ms
+\echo '======== E6.3 - LA MISMA QUERY: aparece Index Only Scan? ========'
+======== E6.3 - LA MISMA QUERY: aparece Index Only Scan? ========
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT COALESCE(SUM(e.amount), 0) AS total
+FROM v_period_expenses e
+WHERE e.user_id          = :'ballena'
+  AND e.category_id      = :'categoria'
+  AND e.transaction_date >= '2026-07-01'
+  AND e.transaction_date <  '2026-08-01';
+                                                                                                                                                QUERY PLAN                                                                                                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=70.88..70.89 rows=1 width=8) (actual time=0.808..0.809 rows=1 loops=1)
+   Buffers: shared hit=37
+   ->  Index Only Scan using idx_tx_expense_period_cover on transactions  (cost=0.42..68.83 rows=818 width=4) (actual time=0.041..0.609 rows=4028 loops=1)
+         Index Cond: ((user_id = '0898fb97-6631-48b3-9968-6bb3cb56a399'::uuid) AND (category_id = '4ab66006-6631-4966-941e-041666d26010'::uuid) AND (transaction_date >= '2026-07-01 00:00:00'::timestamp without time zone) AND (transaction_date < '2026-08-01 00:00:00'::timestamp without time zone))
+         Heap Fetches: 0
+         Buffers: shared hit=37
+ Planning:
+   Buffers: shared hit=34 read=1
+   I/O Timings: shared read=0.022
+ Planning Time: 0.951 ms
+ Execution Time: 0.866 ms
+(11 rows)
+
+Time: 2.246 ms
+\echo '======== E6.4 - QUERY QUE ROMPE EL INDEX ONLY (pide una columna fuera del indice) ========'
+======== E6.4 - QUERY QUE ROMPE EL INDEX ONLY (pide una columna fuera del indice) ========
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT COALESCE(SUM(e.amount), 0) AS total, count(DISTINCT t.account_id) AS cuentas
+FROM v_period_expenses e
+JOIN transactions t ON t.id = e.id
+WHERE e.user_id          = :'ballena'
+  AND e.category_id      = :'categoria'
+  AND e.transaction_date >= '2026-07-01'
+  AND e.transaction_date <  '2026-08-01';
+                                                                                                                                                                       QUERY PLAN                                                                                                                                                                        
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=9320.28..9320.29 rows=1 width=16) (actual time=810.157..810.158 rows=1 loops=1)
+   Buffers: shared hit=14309 read=2753
+   I/O Timings: shared read=764.224
+   ->  Nested Loop  (cost=37.32..9316.19 rows=818 width=20) (actual time=1.329..805.364 rows=4028 loops=1)
+         Buffers: shared hit=14309 read=2753
+         I/O Timings: shared read=764.224
+         ->  Bitmap Heap Scan on transactions  (cost=36.90..2734.23 rows=818 width=20) (actual time=0.487..3.128 rows=4028 loops=1)
+               Recheck Cond: ((user_id = '0898fb97-6631-48b3-9968-6bb3cb56a399'::uuid) AND (category_id = '4ab66006-6631-4966-941e-041666d26010'::uuid) AND (transaction_date >= '2026-07-01 00:00:00'::timestamp without time zone) AND (transaction_date < '2026-08-01 00:00:00'::timestamp without time zone) AND ((nature)::text = 'expense'::text))
+               Heap Blocks: exact=919
+               Buffers: shared hit=950
+               ->  Bitmap Index Scan on idx_tx_expense_period  (cost=0.00..36.69 rows=818 width=0) (actual time=0.376..0.377 rows=4028 loops=1)
+                     Index Cond: ((user_id = '0898fb97-6631-48b3-9968-6bb3cb56a399'::uuid) AND (category_id = '4ab66006-6631-4966-941e-041666d26010'::uuid) AND (transaction_date >= '2026-07-01 00:00:00'::timestamp without time zone) AND (transaction_date < '2026-08-01 00:00:00'::timestamp without time zone))
+                     Buffers: shared hit=31
+         ->  Index Scan using "PK_a219afd8dd77ed80f5a862f1db9" on transactions t  (cost=0.42..8.05 rows=1 width=32) (actual time=0.198..0.198 rows=1 loops=4028)
+               Index Cond: (id = transactions.id)
+               Buffers: shared hit=13359 read=2753
+               I/O Timings: shared read=764.224
+ Planning:
+   Buffers: shared hit=28 read=6
+   I/O Timings: shared read=1.762
+ Planning Time: 2.507 ms
+ Execution Time: 810.261 ms
+(22 rows)
+
+Time: 813.493 ms
+\echo '======== E6.5 - INCLUDE NO SIRVE PARA BUSCAR: filtrar por amount ========'
+======== E6.5 - INCLUDE NO SIRVE PARA BUSCAR: filtrar por amount ========
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT count(*) FROM v_period_expenses e
+WHERE e.user_id          = :'ballena'
+  AND e.category_id      = :'categoria'
+  AND e.transaction_date >= '2026-07-01'
+  AND e.transaction_date <  '2026-08-01'
+  AND e.amount > 20000;
+                                                                                                                                                QUERY PLAN                                                                                                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=72.39..72.40 rows=1 width=8) (actual time=0.755..0.756 rows=1 loops=1)
+   Buffers: shared hit=37
+   ->  Index Only Scan using idx_tx_expense_period_cover on transactions  (cost=0.42..70.88 rows=605 width=0) (actual time=0.040..0.571 rows=3676 loops=1)
+         Index Cond: ((user_id = '0898fb97-6631-48b3-9968-6bb3cb56a399'::uuid) AND (category_id = '4ab66006-6631-4966-941e-041666d26010'::uuid) AND (transaction_date >= '2026-07-01 00:00:00'::timestamp without time zone) AND (transaction_date < '2026-08-01 00:00:00'::timestamp without time zone))
+         Filter: (amount > 20000)
+         Rows Removed by Filter: 352
+         Heap Fetches: 0
+         Buffers: shared hit=37
+ Planning:
+   Buffers: shared hit=3
+ Planning Time: 0.332 ms
+ Execution Time: 0.822 ms
+(12 rows)
+
+Time: 1.928 ms

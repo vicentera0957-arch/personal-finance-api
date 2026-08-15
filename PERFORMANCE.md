@@ -32,6 +32,15 @@ hallazgos, para quien no va a leer las 500 líneas:
   consulta que corre bajo el `FOR UPDATE` de `CreateTransaction` resuelve en
   sub-milisegundo sobre 1.000.000 de filas. ([E1](#e1--baseline-crudo))
 
+- **La única forma de bajar las páginas de heap es no ir al heap.** Un índice
+  mejor optimiza el camino y compra 3%; un índice que contiene todo lo que la
+  consulta pide elimina el destino y compra **96%** — de 982 buffers a 37.
+  ([E6](#e6--covering-index--index-only-scan))
+- **El índice del schema está 43% inflado**, y no por uso: `InitialSchema` lo crea
+  antes de que existan los datos, así que se llena por page splits. El bloat
+  costaba **20× más buffers que la optimización que estaba probando**.
+  ([E5](#e5--índice-parcial))
+
 **Lo que salió de acá para el producto:** `CREATE STATISTICS` sobre
 `(user_id, category_id, nature)` es un candidato real de migración — ver el
 cierre de E4.
@@ -525,13 +534,196 @@ seguido.
 
 ---
 
+## §2 — Índices
+
+Los dos ejercicios de este bloque atacan el mismo número desde lados opuestos: las
+**919 páginas de heap** que E1 dejó como piso.
+
+| | Nodo | índice | heap | **total** | vs. E1 |
+| --- | --- | --- | --- | --- | --- |
+| **E1** baseline | Bitmap Heap Scan | 63 | 919 | **982** | — |
+| **E5** índice parcial | Bitmap Heap Scan | 31 | 919 | **950** | −3,3% |
+| **E6** covering index | **Index Only Scan** | **37** | **0** | **37** | **−96,2%** |
+
+### E5 · Índice parcial
+
+**Experimento:** `docs/perf/scripts/e5-partial-index.sql`
+**Salida cruda:** `docs/perf/salida/e5-partial-index.txt`
+**Fecha:** 2026-08-12
+
+```sql
+CREATE INDEX CONCURRENTLY idx_tx_expense_period
+  ON transactions (user_id, category_id, transaction_date)
+  WHERE nature = 'expense';
+```
+
+#### El resultado, y la variable que lo estaba contaminando
+
+A primera vista el índice parcial parecía una mejora del 53% en tamaño (114 MB → 53 MB) y
+del 50% en páginas de índice leídas (63 → 31). **Los dos números mezclaban dos causas.**
+Un tercer índice de control —completo, pero construido *después* de los datos— las separa:
+
+| Índice | Tamaño | Páginas de índice leídas | Buffers totales |
+| --- | --- | --- | --- |
+| **A** parcial, construido ahora | 53 MB | **31** | **950** |
+| **B** completo, construido ahora | 65 MB | **36** | 955 |
+| **C** completo, del schema | 114 MB | **138** | 1.057 |
+
+- **A contra B** — eso es el índice parcial: **5 páginas, 14%**.
+- **B contra C** — eso es **bloat**: 102 páginas, **3,8×**.
+
+**El índice parcial ahorró 5 buffers de 982 (0,5%). El bloat costaba 102.**
+
+La causa del bloat es que `InitialSchema` crea los índices **antes** de que existan los
+datos, así que se llenan por inserción: cada página se parte al medio y queda al ~50-70%
+de ocupación. Un `CREATE INDEX` sobre datos ya presentes ordena y llena al 90%.
+
+> Corolario práctico: restaurar esta base desde un dump dejaría los índices 43% más
+> chicos, porque `pg_restore` los crea después de los datos.
+
+El 18% de diferencia de tamaño entre A y B cierra con la teoría:
+
+```text
+entrada del parcial:  8(header) + 16 + 16 + 8      = 48 bytes
+entrada del completo: 8 + 16 + 16 + 8(nature) + 8  = 56 bytes
+48/56 × 0,946 (5,4% menos filas) = 0,81  →  19% más chico
+medido: 18%
+```
+
+#### El contraejemplo: igualdades primero, rango último
+
+Mismo predicado, mismas 4.028 filas, orden de columnas invertido:
+
+| Índice | Nodo | páginas de índice | buffers | `cost` |
+| --- | --- | --- | --- | --- |
+| `(user, cat, fecha)` | Bitmap | **31** | **950** | 2.691 |
+| `(fecha, user, cat)` | Index Scan | **~383** | 1.290 | 3.823 |
+
+Los dos planes muestran las tres condiciones en `Index Cond`, y **no las usan igual**:
+
+```text
+Bueno:  user=X ∧ cat=Y  →  salta al tramo del índice  →  lee julio de ESE grupo
+Malo:   fecha ∈ julio   →  salta al tramo de julio    →  lee TODO julio (54.000 filas
+                                                          de 200 usuarios) y filtra
+```
+
+**En un B-tree, desde la primera columna de rango las siguientes dejan de posicionar y
+solo filtran.** Es la distinción *access predicate* vs *filter predicate*, y son 12× de
+diferencia en páginas de índice.
+
+#### Conclusiones
+
+**1 · Un índice cambia cómo encontrás las filas, nunca dónde están.** Con el costo
+dominado por el heap (97%), el mejor índice posible da 3%.
+
+**2 · Igualdades primero, rango último.** `idx_tx_user_cat_nature_date` ya lo respetaba.
+
+**3 · Un índice parcial vale por especialización, no por tamaño.** Excluir el 5,4% no
+compra nada; sacar `nature` de la clave sí (entradas 14% más angostas).
+
+**4 · Cuándo construís un índice cambia su tamaño 43%.**
+
+**5 · Toda mejora necesita un control.** Sin el índice B, la conclusión habría sido
+"el índice parcial mejoró 50%" — falsa, con evidencia real al lado.
+
+---
+
+### E6 · Covering index → Index Only Scan
+
+**Experimento:** `docs/perf/scripts/e6-covering-index.sql`
+**Salida cruda:** `docs/perf/salida/e6-covering-index.txt`
+**Fecha:** 2026-08-12
+
+```sql
+CREATE INDEX CONCURRENTLY idx_tx_expense_period_cover
+  ON transactions (user_id, category_id, transaction_date)
+  INCLUDE (amount)
+  WHERE nature = 'expense';
+```
+
+#### El resultado
+
+| | Nodo | buffers | `cost` | Tiempo |
+| --- | --- | --- | --- | --- |
+| E5 (índice parcial) | Bitmap Heap Scan | **950** | 2.924 | 22,4 ms |
+| E6 (covering) | **Index Only Scan** | **37** | **68,8** | **0,87 ms** |
+
+**25,7× menos buffers.** Las 919 páginas de heap desaparecieron por completo:
+
+```text
+Index Only Scan using idx_tx_expense_period_cover
+  Heap Fetches: 0
+  Buffers: shared hit=37
+```
+
+El costo estimado cayó de 2.924 a 68,8 — **42×**. Es el único ejercicio del lab donde el
+planner y la realidad coinciden en la magnitud.
+
+**Qué costó:** 53 MB → **61 MB**, un 15% más de índice. `amount` es un `int4`: 4 bytes por
+entrada sobre ~946.000 entradas.
+
+#### `INCLUDE` no sirve para buscar — la prueba
+
+Agregar `AND amount > 20000` al predicado:
+
+```text
+Index Only Scan using idx_tx_expense_period_cover
+  Filter: (amount > 20000)        ← Filter, NO Index Cond
+  Rows Removed by Filter: 352
+  Heap Fetches: 0
+  Buffers: shared hit=37
+```
+
+`amount` está en el índice —por eso `Heap Fetches` sigue en 0— pero aparece como
+**`Filter`**, no como `Index Cond`. Leyó las 4.028 entradas y descartó 352 después. Una
+columna en la clave habría posicionado el scan; una en `INCLUDE` solo evita el heap.
+
+Ese es exactamente el trade-off: las columnas incluidas **no engordan los nodos internos
+del árbol**, porque solo viven en las hojas. Pagás espacio en las hojas, no profundidad.
+
+#### Qué pasa cuando la query pide algo fuera del índice
+
+E6.4 agrega `count(DISTINCT account_id)`, una columna que el índice no tiene:
+
+| | buffers | Tiempo |
+| --- | --- | --- |
+| Index Only Scan (E6.3) | **37** | 0,87 ms |
+| pidiendo `account_id` (E6.4) | **17.062** | **810 ms** |
+
+461× más buffers. Y el plan muestra por qué:
+
+```text
+Index Scan using PK on transactions t  (actual rows=1 loops=4028)
+  Buffers: shared hit=13359 read=2753
+```
+
+**`loops=4028`.** Un Nested Loop que va al heap una vez por fila, por primary key. Es un
+N+1 dentro de un solo `SELECT` — el mismo patrón que E21 busca en el ORM, acá visible en
+el plan.
+
+#### Conclusiones
+
+**1 · La única forma de bajar las páginas de heap es no ir al heap.** E5 optimizó el
+camino y ganó 3%; E6 eliminó el destino y ganó 96%.
+
+**2 · Un índice es un covering index respecto de una query, no en abstracto.** Basta que
+la query pida una columna de más para volver a los 17.000 buffers.
+
+**3 · `INCLUDE` evita el heap, no posiciona el scan.** Se ve en el plan: `Filter` en vez
+de `Index Cond`.
+
+**4 · `Heap Fetches: 0` no es gratis ni permanente.** Depende del visibility map, y eso
+es E7.
+
+---
+
 ## En curso
 
 El bloque 1 está cerrado: E1–E4 cubren cómo se lee un plan y qué mueve de verdad
-al planner.
+al planner. El bloque 2 va por la mitad: E5 y E6 están medidos arriba.
 
-Los bloques siguientes — índices (E5–E8), paginación keyset (E17) y SQL analítico
-con joins (E19–E21) — ya tienen sus scripts escritos en
+Los bloques siguientes — el resto de índices (E7–E8), paginación keyset (E17) y
+SQL analítico con joins (E19–E21) — ya tienen sus scripts escritos en
 [`docs/perf/scripts/`](docs/perf/scripts/), pero **no se publican acá hasta tener
 número medido**. Es la misma regla que gobierna todo lo de arriba: ejercicio sin
 evidencia cruda no cuenta, y una sección vacía no es un adelanto, es una promesa.
