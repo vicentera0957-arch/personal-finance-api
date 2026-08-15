@@ -1,0 +1,320 @@
+-- e8-costo-escritura
+-- corrido: 2026-08-14 21:52:02
+-- fuente:  e8-costo-escritura.sql
+
+\timing on
+Timing is on.
+\pset pager off
+Pager usage is off.
+\set ON_ERROR_STOP on
+\pset null '(null)'
+Null display is "(null)".
+SELECT user_id AS ballena FROM transactions GROUP BY user_id ORDER BY count(*) DESC LIMIT 1 \gset
+Time: 86.453 ms
+SELECT category_id AS categoria FROM transactions WHERE user_id = :'ballena' AND nature = 'expense' AND transaction_date >= '2026-07-01' AND transaction_date < '2026-08-01' GROUP BY category_id ORDER BY count(*) DESC LIMIT 1 \gset
+Time: 11.785 ms
+SET max_parallel_workers_per_gather = 0;
+SET
+Time: 0.269 ms
+\echo '======== E8.0 - INDICES VIGENTES ========'
+======== E8.0 - INDICES VIGENTES ========
+SELECT indexrelname AS indice,
+       pg_size_pretty(pg_relation_size(indexrelid)) AS tamano,
+       pg_get_indexdef(indexrelid)                  AS definicion
+FROM pg_stat_user_indexes WHERE relname = 'transactions'
+ORDER BY pg_relation_size(indexrelid) DESC;
+             indice             | tamano |                                                                                   definicion                                                                                   
+--------------------------------+--------+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ idx_tx_user_cat_nature_date    | 114 MB | CREATE INDEX idx_tx_user_cat_nature_date ON public.transactions USING btree (user_id, category_id, nature, transaction_date)
+ idx_tx_account_date            | 69 MB  | CREATE INDEX idx_tx_account_date ON public.transactions USING btree (account_id, transaction_date)
+ idx_tx_user_date               | 69 MB  | CREATE INDEX idx_tx_user_date ON public.transactions USING btree (user_id, transaction_date)
+ idx_tx_expense_period_cover    | 62 MB  | CREATE INDEX idx_tx_expense_period_cover ON public.transactions USING btree (user_id, category_id, transaction_date) INCLUDE (amount) WHERE ((nature)::text = 'expense'::text)
+ idx_tx_expense_period          | 54 MB  | CREATE INDEX idx_tx_expense_period ON public.transactions USING btree (user_id, category_id, transaction_date) WHERE ((nature)::text = 'expense'::text)
+ PK_a219afd8dd77ed80f5a862f1db9 | 39 MB  | CREATE UNIQUE INDEX "PK_a219afd8dd77ed80f5a862f1db9" ON public.transactions USING btree (id)
+(6 rows)
+
+Time: 10.310 ms
+\echo '======== E8.1 - UPDATE sobre columna NO indexada (description) ========'
+======== E8.1 - UPDATE sobre columna NO indexada (description) ========
+BEGIN;
+BEGIN
+Time: 0.340 ms
+EXPLAIN (ANALYZE, BUFFERS)
+UPDATE transactions SET description = 'e8-a'
+WHERE user_id          = :'ballena'
+  AND category_id      = :'categoria'
+  AND nature           = 'expense'
+  AND transaction_date >= '2026-07-01'
+  AND transaction_date <  '2026-08-01';
+                                                                                                                                                                    QUERY PLAN                                                                                                                                                                     
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Update on transactions  (cost=36.85..2729.10 rows=0 width=0) (actual time=97.635..97.636 rows=0 loops=1)
+   Buffers: shared hit=98998
+   ->  Bitmap Heap Scan on transactions  (cost=36.85..2729.10 rows=815 width=522) (actual time=0.378..1.720 rows=4028 loops=1)
+         Recheck Cond: ((user_id = '0898fb97-6631-48b3-9968-6bb3cb56a399'::uuid) AND (category_id = '4ab66006-6631-4966-941e-041666d26010'::uuid) AND (transaction_date >= '2026-07-01 00:00:00'::timestamp without time zone) AND (transaction_date < '2026-08-01 00:00:00'::timestamp without time zone) AND ((nature)::text = 'expense'::text))
+         Heap Blocks: exact=71
+         Buffers: shared hit=131
+         ->  Bitmap Index Scan on idx_tx_expense_period  (cost=0.00..36.65 rows=815 width=0) (actual time=0.356..0.356 rows=4028 loops=1)
+               Index Cond: ((user_id = '0898fb97-6631-48b3-9968-6bb3cb56a399'::uuid) AND (category_id = '4ab66006-6631-4966-941e-041666d26010'::uuid) AND (transaction_date >= '2026-07-01 00:00:00'::timestamp without time zone) AND (transaction_date < '2026-08-01 00:00:00'::timestamp without time zone))
+               Buffers: shared hit=60
+ Planning Time: 0.231 ms
+ Execution Time: 97.912 ms
+(11 rows)
+
+Time: 99.307 ms
+ROLLBACK;
+ROLLBACK
+Time: 0.570 ms
+\echo '======== E8.2 - UPDATE sobre columna INDEXADA (transaction_date) ========'
+======== E8.2 - UPDATE sobre columna INDEXADA (transaction_date) ========
+BEGIN;
+BEGIN
+Time: 0.183 ms
+EXPLAIN (ANALYZE, BUFFERS)
+UPDATE transactions SET transaction_date = transaction_date + interval '1 second'
+WHERE user_id          = :'ballena'
+  AND category_id      = :'categoria'
+  AND nature           = 'expense'
+  AND transaction_date >= '2026-07-01'
+  AND transaction_date <  '2026-08-01';
+                                                                                                                                                                    QUERY PLAN                                                                                                                                                                     
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Update on transactions  (cost=36.85..2731.14 rows=0 width=0) (actual time=78.443..78.444 rows=0 loops=1)
+   Buffers: shared hit=102263 dirtied=121 written=119
+   ->  Bitmap Heap Scan on transactions  (cost=36.85..2731.14 rows=815 width=14) (actual time=1.187..2.764 rows=4028 loops=1)
+         Recheck Cond: ((user_id = '0898fb97-6631-48b3-9968-6bb3cb56a399'::uuid) AND (category_id = '4ab66006-6631-4966-941e-041666d26010'::uuid) AND (transaction_date >= '2026-07-01 00:00:00'::timestamp without time zone) AND (transaction_date < '2026-08-01 00:00:00'::timestamp without time zone) AND ((nature)::text = 'expense'::text))
+         Heap Blocks: exact=931
+         Buffers: shared hit=991
+         ->  Bitmap Index Scan on idx_tx_expense_period  (cost=0.00..36.65 rows=815 width=0) (actual time=0.570..0.571 rows=8030 loops=1)
+               Index Cond: ((user_id = '0898fb97-6631-48b3-9968-6bb3cb56a399'::uuid) AND (category_id = '4ab66006-6631-4966-941e-041666d26010'::uuid) AND (transaction_date >= '2026-07-01 00:00:00'::timestamp without time zone) AND (transaction_date < '2026-08-01 00:00:00'::timestamp without time zone))
+               Buffers: shared hit=60
+ Planning Time: 0.102 ms
+ Execution Time: 78.540 ms
+(11 rows)
+
+Time: 81.419 ms
+ROLLBACK;
+ROLLBACK
+Time: 0.234 ms
+\echo '======== E8.3 - EL MISMO UPDATE INDEXADO, PERO SIN LOS INDICES DE E5/E6 ========'
+======== E8.3 - EL MISMO UPDATE INDEXADO, PERO SIN LOS INDICES DE E5/E6 ========
+BEGIN;
+BEGIN
+Time: 0.093 ms
+DROP INDEX IF EXISTS idx_tx_expense_period;
+DROP INDEX
+Time: 14.415 ms
+DROP INDEX IF EXISTS idx_tx_expense_period_cover;
+DROP INDEX
+Time: 0.690 ms
+EXPLAIN (ANALYZE, BUFFERS)
+UPDATE transactions SET transaction_date = transaction_date + interval '1 second'
+WHERE user_id          = :'ballena'
+  AND category_id      = :'categoria'
+  AND nature           = 'expense'
+  AND transaction_date >= '2026-07-01'
+  AND transaction_date <  '2026-08-01';
+                                                                                                                                                                      QUERY PLAN                                                                                                                                                                       
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Update on transactions  (cost=63.02..2757.30 rows=0 width=0) (actual time=54.768..54.769 rows=0 loops=1)
+   Buffers: shared hit=77918 dirtied=48 written=48
+   ->  Bitmap Heap Scan on transactions  (cost=63.02..2757.30 rows=815 width=14) (actual time=2.066..3.576 rows=4028 loops=1)
+         Recheck Cond: ((user_id = '0898fb97-6631-48b3-9968-6bb3cb56a399'::uuid) AND (category_id = '4ab66006-6631-4966-941e-041666d26010'::uuid) AND ((nature)::text = 'expense'::text) AND (transaction_date >= '2026-07-01 00:00:00'::timestamp without time zone) AND (transaction_date < '2026-08-01 00:00:00'::timestamp without time zone))
+         Heap Blocks: exact=1055
+         Buffers: shared hit=1179
+         ->  Bitmap Index Scan on idx_tx_user_cat_nature_date  (cost=0.00..62.81 rows=815 width=0) (actual time=1.306..1.306 rows=12058 loops=1)
+               Index Cond: ((user_id = '0898fb97-6631-48b3-9968-6bb3cb56a399'::uuid) AND (category_id = '4ab66006-6631-4966-941e-041666d26010'::uuid) AND ((nature)::text = 'expense'::text) AND (transaction_date >= '2026-07-01 00:00:00'::timestamp without time zone) AND (transaction_date < '2026-08-01 00:00:00'::timestamp without time zone))
+               Buffers: shared hit=124
+ Planning:
+   Buffers: shared hit=4
+ Planning Time: 0.227 ms
+ Execution Time: 54.872 ms
+(13 rows)
+
+Time: 55.796 ms
+ROLLBACK;
+ROLLBACK
+Time: 0.247 ms
+\echo '======== E8.4 - EL MISMO UPDATE SIN NINGUN INDICE SALVO LA PK ========'
+======== E8.4 - EL MISMO UPDATE SIN NINGUN INDICE SALVO LA PK ========
+BEGIN;
+BEGIN
+Time: 0.172 ms
+DROP INDEX IF EXISTS idx_tx_expense_period;
+DROP INDEX
+Time: 1.227 ms
+DROP INDEX IF EXISTS idx_tx_expense_period_cover;
+DROP INDEX
+Time: 0.968 ms
+DROP INDEX IF EXISTS idx_tx_user_cat_nature_date;
+DROP INDEX
+Time: 1.016 ms
+DROP INDEX IF EXISTS idx_tx_user_date;
+DROP INDEX
+Time: 0.982 ms
+DROP INDEX IF EXISTS idx_tx_account_date;
+DROP INDEX
+Time: 0.702 ms
+EXPLAIN (ANALYZE, BUFFERS)
+UPDATE transactions SET transaction_date = transaction_date + interval '1 second'
+WHERE user_id          = :'ballena'
+  AND category_id      = :'categoria'
+  AND nature           = 'expense'
+  AND transaction_date >= '2026-07-01'
+  AND transaction_date <  '2026-08-01';
+                                                                                                                                                                 QUERY PLAN                                                                                                                                                                  
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Update on transactions  (cost=0.00..39745.45 rows=0 width=0) (actual time=127.170..127.171 rows=0 loops=1)
+   Buffers: shared hit=37869 read=15728 dirtied=69 written=69
+   I/O Timings: shared read=17.909
+   ->  Seq Scan on transactions  (cost=0.00..39745.45 rows=817 width=14) (actual time=102.427..104.259 rows=4028 loops=1)
+         Filter: ((transaction_date >= '2026-07-01 00:00:00'::timestamp without time zone) AND (transaction_date < '2026-08-01 00:00:00'::timestamp without time zone) AND (user_id = '0898fb97-6631-48b3-9968-6bb3cb56a399'::uuid) AND (category_id = '4ab66006-6631-4966-941e-041666d26010'::uuid) AND ((nature)::text = 'expense'::text))
+         Rows Removed by Filter: 995972
+         Buffers: shared hit=1560 read=15728
+         I/O Timings: shared read=17.909
+ Planning:
+   Buffers: shared hit=4
+ Planning Time: 0.194 ms
+ Execution Time: 127.197 ms
+(12 rows)
+
+Time: 127.994 ms
+ROLLBACK;
+ROLLBACK
+Time: 0.236 ms
+\echo '======== E8.5 - INSERT masivo: mismo contraste ========'
+======== E8.5 - INSERT masivo: mismo contraste ========
+BEGIN;
+BEGIN
+Time: 0.199 ms
+EXPLAIN (ANALYZE, BUFFERS)
+INSERT INTO transactions (id, user_id, account_id, category_id, nature, amount, description, transaction_date, created_at)
+SELECT gen_random_uuid(),
+       :'ballena',
+       (SELECT id FROM accounts WHERE user_id = :'ballena' AND is_archived = false ORDER BY id LIMIT 1),
+       :'categoria',
+       'expense', 1000, 'e8-insert',
+       TIMESTAMP '2026-07-15 00:00:00' + (g || ' seconds')::interval,
+       now()
+FROM generate_series(1, 20000) AS g;
+                                                                         QUERY PLAN                                                                         
+------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Insert on transactions  (cost=8.18..858.18 rows=0 width=0) (actual time=568.360..568.362 rows=0 loops=1)
+   Buffers: shared hit=401455 read=2132 dirtied=3740 written=1591
+   I/O Timings: shared read=40.707 write=0.014
+   ->  Subquery Scan on "*SELECT*"  (cost=8.18..858.18 rows=20000 width=658) (actual time=2.790..71.137 rows=20000 loops=1)
+         Buffers: shared read=2
+         I/O Timings: shared read=0.471
+         ->  Function Scan on generate_series g  (cost=8.18..608.18 rows=20000 width=180) (actual time=2.749..62.074 rows=20000 loops=1)
+               Buffers: shared read=2
+               I/O Timings: shared read=0.471
+               InitPlan 1 (returns $0)
+                 ->  Limit  (cost=8.18..8.18 rows=1 width=16) (actual time=0.519..0.521 rows=1 loops=1)
+                       Buffers: shared read=2
+                       I/O Timings: shared read=0.471
+                       ->  Sort  (cost=8.18..8.18 rows=1 width=16) (actual time=0.518..0.519 rows=1 loops=1)
+                             Sort Key: accounts.id
+                             Sort Method: quicksort  Memory: 25kB
+                             Buffers: shared read=2
+                             I/O Timings: shared read=0.471
+                             ->  Index Scan using idx_account_user on accounts  (cost=0.15..8.17 rows=1 width=16) (actual time=0.498..0.500 rows=1 loops=1)
+                                   Index Cond: (user_id = '0898fb97-6631-48b3-9968-6bb3cb56a399'::uuid)
+                                   Filter: (NOT is_archived)
+                                   Buffers: shared read=2
+                                   I/O Timings: shared read=0.471
+ Planning:
+   Buffers: shared hit=53 read=6
+   I/O Timings: shared read=1.735
+ Planning Time: 2.851 ms
+ Trigger for constraint FK_e9acc6efa76de013e8c1553ed2b: time=202.816 calls=20000
+ Trigger for constraint FK_49c0d6e8ba4bfb5582000d851f0: time=589.403 calls=20000
+ Trigger for constraint FK_c9e41213ca42d50132ed7ab2b0f: time=639.198 calls=20000
+ Execution Time: 2007.454 ms
+(31 rows)
+
+Time: 2016.799 ms (00:02.017)
+ROLLBACK;
+ROLLBACK
+Time: 0.271 ms
+BEGIN;
+BEGIN
+Time: 0.185 ms
+DROP INDEX IF EXISTS idx_tx_expense_period;
+DROP INDEX
+Time: 1.092 ms
+DROP INDEX IF EXISTS idx_tx_expense_period_cover;
+DROP INDEX
+Time: 0.720 ms
+DROP INDEX IF EXISTS idx_tx_user_cat_nature_date;
+DROP INDEX
+Time: 0.961 ms
+DROP INDEX IF EXISTS idx_tx_user_date;
+DROP INDEX
+Time: 1.032 ms
+DROP INDEX IF EXISTS idx_tx_account_date;
+DROP INDEX
+Time: 0.885 ms
+EXPLAIN (ANALYZE, BUFFERS)
+INSERT INTO transactions (id, user_id, account_id, category_id, nature, amount, description, transaction_date, created_at)
+SELECT gen_random_uuid(),
+       :'ballena',
+       (SELECT id FROM accounts WHERE user_id = :'ballena' AND is_archived = false ORDER BY id LIMIT 1),
+       :'categoria',
+       'expense', 1000, 'e8-insert',
+       TIMESTAMP '2026-07-15 00:00:00' + (g || ' seconds')::interval,
+       now()
+FROM generate_series(1, 20000) AS g;
+                                                                         QUERY PLAN                                                                         
+------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Insert on transactions  (cost=8.18..858.18 rows=0 width=0) (actual time=148.561..148.563 rows=0 loops=1)
+   Buffers: shared hit=81033 read=52 dirtied=460 written=407
+   I/O Timings: shared read=0.836
+   ->  Subquery Scan on "*SELECT*"  (cost=8.18..858.18 rows=20000 width=658) (actual time=2.670..55.492 rows=20000 loops=1)
+         Buffers: shared hit=2
+         ->  Function Scan on generate_series g  (cost=8.18..608.18 rows=20000 width=180) (actual time=2.667..48.592 rows=20000 loops=1)
+               Buffers: shared hit=2
+               InitPlan 1 (returns $0)
+                 ->  Limit  (cost=8.18..8.18 rows=1 width=16) (actual time=0.045..0.047 rows=1 loops=1)
+                       Buffers: shared hit=2
+                       ->  Sort  (cost=8.18..8.18 rows=1 width=16) (actual time=0.044..0.045 rows=1 loops=1)
+                             Sort Key: accounts.id
+                             Sort Method: quicksort  Memory: 25kB
+                             Buffers: shared hit=2
+                             ->  Index Scan using idx_account_user on accounts  (cost=0.15..8.17 rows=1 width=16) (actual time=0.026..0.027 rows=1 loops=1)
+                                   Index Cond: (user_id = '0898fb97-6631-48b3-9968-6bb3cb56a399'::uuid)
+                                   Filter: (NOT is_archived)
+                                   Buffers: shared hit=2
+ Planning Time: 0.201 ms
+ Trigger for constraint FK_e9acc6efa76de013e8c1553ed2b: time=232.040 calls=20000
+ Trigger for constraint FK_49c0d6e8ba4bfb5582000d851f0: time=612.091 calls=20000
+ Trigger for constraint FK_c9e41213ca42d50132ed7ab2b0f: time=653.189 calls=20000
+ Execution Time: 1655.507 ms
+(23 rows)
+
+Time: 1657.688 ms (00:01.658)
+ROLLBACK;
+ROLLBACK
+Time: 1.076 ms
+\echo '======== E8.6 - VERIFICAR QUE LOS ROLLBACK DEVOLVIERON TODO ========'
+======== E8.6 - VERIFICAR QUE LOS ROLLBACK DEVOLVIERON TODO ========
+SELECT indexrelname AS indice, pg_size_pretty(pg_relation_size(indexrelid)) AS tamano
+FROM pg_stat_user_indexes WHERE relname = 'transactions'
+ORDER BY indexrelname;
+             indice             | tamano 
+--------------------------------+--------
+ PK_a219afd8dd77ed80f5a862f1db9 | 40 MB
+ idx_tx_account_date            | 70 MB
+ idx_tx_expense_period          | 56 MB
+ idx_tx_expense_period_cover    | 64 MB
+ idx_tx_user_cat_nature_date    | 116 MB
+ idx_tx_user_date               | 70 MB
+(6 rows)
+
+Time: 13.539 ms
+SELECT count(*) AS filas_totales FROM transactions;
+ filas_totales 
+---------------
+       1000000
+(1 row)
+
+Time: 161.854 ms

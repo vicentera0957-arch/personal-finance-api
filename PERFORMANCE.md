@@ -13,8 +13,8 @@ Gate: `docs/perf/salida/setup.txt`.
 ## Qué encontró este lab
 
 El detalle de abajo es largo a propósito — la regla que gobierna todo esto es que
-un `EXPLAIN` sin su salida cruda es una afirmación sin respaldo. Los cuatro
-hallazgos, para quien no va a leer las 500 líneas:
+un `EXPLAIN` sin su salida cruda es una afirmación sin respaldo. Los hallazgos,
+para quien no va a leer el resto:
 
 - **El planner elige por fracción, no por volumen.** La misma consulta pasa de
   Index Scan a Bitmap Heap a Seq Scan **solo cambiando el `user_id`** — del
@@ -31,7 +31,6 @@ hallazgos, para quien no va a leer las 500 líneas:
 - **El índice que protege el invariante del presupuesto ya estaba bien.** La
   consulta que corre bajo el `FOR UPDATE` de `CreateTransaction` resuelve en
   sub-milisegundo sobre 1.000.000 de filas. ([E1](#e1--baseline-crudo))
-
 - **La única forma de bajar las páginas de heap es no ir al heap.** Un índice
   mejor optimiza el camino y compra 3%; un índice que contiene todo lo que la
   consulta pide elimina el destino y compra **96%** — de 982 buffers a 37.
@@ -40,6 +39,9 @@ hallazgos, para quien no va a leer las 500 líneas:
   antes de que existan los datos, así que se llena por page splits. El bloat
   costaba **20× más buffers que la optimización que estaba probando**.
   ([E5](#e5--índice-parcial))
+- **Un índice cuesta ~3-4 páginas de buffer por cada fila que escribís**, lineal
+  en la cantidad de índices. Sobre una tabla append-only como `transactions` eso
+  se paga en cada `INSERT`, y hoy son cinco. ([E8](#e8--el-costo-del-índice))
 
 **Lo que salió de acá para el producto:** `CREATE STATISTICS` sobre
 `(user_id, category_id, nature)` es un candidato real de migración — ver el
@@ -815,13 +817,109 @@ operativo — y las páginas medio vacías se siguen leyendo.
 
 ---
 
+### E8 · El costo del índice
+
+**Experimento:** `docs/perf/scripts/e8-costo-escritura.sql`
+**Salida cruda:** `docs/perf/salida/e8-costo-escritura.txt`
+**Fecha:** 2026-08-15
+
+E5, E6 y E7 midieron lo que un índice **compra**. Este mide lo que **cuesta**. Todo
+dentro de `BEGIN`/`ROLLBACK`; el conteo final confirma 1.000.000 de filas intactas.
+
+#### `UPDATE` de 4.028 filas
+
+| | Índices | Buffers | Tiempo |
+| --- | --- | --- | --- |
+| E8.1 · columna **no** indexada (`description`) | 5 | 98.998 | 97,9 ms |
+| E8.2 · columna **indexada** (`transaction_date`) | 5 | **102.263** | 78,5 ms |
+| E8.3 · la misma, sin los índices de E5/E6 | 3 | **77.918** | 54,9 ms |
+| E8.4 · la misma, solo con la PK | 1 | 37.869 + **15.728 read** | 127,2 ms |
+
+**E8.2 contra E8.3 es la comparación limpia** — mismo `UPDATE`, mismo camino de acceso,
+dos índices de diferencia: **24.345 buffers menos**. Sobre 4.028 filas y 2 índices:
+
+```text
+24.345 ÷ 4.028 ÷ 2 = 3,0 páginas por índice, por fila modificada
+```
+
+Es la altura del B-tree: para insertar una entrada hay que descender raíz → interno →
+hoja, y a veces partir la hoja.
+
+**E8.4 no es un control limpio, y conviene decirlo.** Sin índices el `UPDATE` es más
+barato de mantener pero más caro de *encontrar*: los 15.728 `read` son un Seq Scan
+buscando las filas. Por eso tarda más que E8.2 con cinco índices. El experimento cambió
+dos variables a la vez.
+
+#### Lo que no pasó: la columna indexada casi no costó más
+
+E8.1 (columna no indexada) contra E8.2 (indexada) son **98.998 contra 102.263 buffers**,
+apenas **3,3%**. La expectativa era mucho más: modificar una columna indexada obliga a
+reescribir todos los índices, mientras que una columna no indexada *podría* resolverse
+con un **HOT update** — versión nueva en la misma página, sin tocar ningún índice.
+
+Que la diferencia sea de 3,3% sugiere que el `UPDATE` de `description` **tampoco fue HOT**,
+probablemente por falta de espacio libre en las páginas. Es una hipótesis, no una
+medición: `n_tup_hot_upd` es lo que la confirmaría, y eso es E14.
+
+#### `INSERT` de 20.000 filas — el caso que importa en un ledger
+
+| | Índices | Buffers | `dirtied` | Tiempo |
+| --- | --- | --- | --- | --- |
+| con todos los índices | 5 | **403.587** | 3.740 | 2.007 ms |
+| solo con la PK | 1 | **81.085** | 460 | 1.655 ms |
+
+**5× menos buffers** sin los cuatro índices secundarios. Y el mismo número redondo:
+
+```text
+403.587 ÷ 20.000 = 20,2 páginas por fila insertada (5 índices)
+ 81.085 ÷ 20.000 =  4,1 páginas por fila insertada (1 índice)
+        diferencia ÷ 4 índices =  4,0 páginas por índice, por fila
+```
+
+Coincide con lo que dio el `UPDATE`. **Cada índice cuesta ~3 o 4 páginas de buffer por
+cada fila que escribís**, y ese costo es lineal en la cantidad de índices.
+
+**El tiempo no escala con los buffers**: 5× de trabajo se tradujo en 17% de tiempo
+(2.007 contra 1.655 ms). Casi todos esos buffers son `hit` — trabajo de CPU sobre páginas
+que ya estaban en memoria. Lo que domina el reloj es el WAL, que el plan no reporta.
+**Los buffers miden el trabajo; no siempre miden el reloj.**
+
+#### Conclusiones
+
+**1 · Un índice no es gratis: cuesta ~3-4 páginas por fila escrita.** Lineal en la
+cantidad de índices, y se paga en cada `INSERT`, `UPDATE` y `DELETE`.
+
+**2 · En un ledger la asimetría importa más que en un CRUD.** `transactions` es
+append-only: cada fila se escribe una vez y se lee muchas. Pero también se escribe
+*constantemente*, y hoy son cinco índices sobre la tabla.
+
+**3 · El covering index de E6 hay que juzgarlo con los dos números.** Compra **25,7×** en
+la consulta del invariante del presupuesto y cuesta **~4 páginas por INSERT**. En este
+dominio conviene: esa consulta corre bajo un `FOR UPDATE`, y cada milisegundo que tarda
+es un milisegundo de lock retenido.
+
+**4 · Quitar índices para medir el costo de escritura contamina la medición de
+lectura.** E8.4 lo muestra: sin índices el `UPDATE` tardó más, no menos.
+
+#### El balance del Bloque 2
+
+| Índice | Tamaño | Lo que compra | Lo que cuesta |
+| --- | --- | --- | --- |
+| `idx_tx_expense_period` | 53 MB | 982 → 950 buffers (**3%**) | ~3 páginas por escritura |
+| `idx_tx_expense_period_cover` | 61 MB | 950 → 37 buffers (**25,7×**) | ~4 páginas por escritura |
+
+El primero no se justifica: lo hace redundante el segundo, que lo contiene. **Si esto
+fuera a producción iría un solo índice — el covering — y no los dos.**
+
+---
+
 ## En curso
 
 El bloque 1 está cerrado: E1–E4 cubren cómo se lee un plan y qué mueve de verdad
-al planner. Del bloque 2 falta solo E8: E5, E6 y E7 están medidos arriba.
+al planner. El bloque 2 también: E5–E8 miden qué compra y qué cuesta un índice.
 
-Los bloques siguientes — el cierre de índices (E8), paginación keyset (E17) y
-SQL analítico con joins (E19–E21) — ya tienen sus scripts escritos en
+Los bloques siguientes — paginación keyset (E17) y SQL analítico con joins
+(E19–E21) — ya tienen sus scripts escritos en
 [`docs/perf/scripts/`](docs/perf/scripts/), pero **no se publican acá hasta tener
 número medido**. Es la misma regla que gobierna todo lo de arriba: ejercicio sin
 evidencia cruda no cuenta, y una sección vacía no es un adelanto, es una promesa.
