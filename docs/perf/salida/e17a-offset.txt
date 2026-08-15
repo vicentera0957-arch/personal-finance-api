@@ -1,0 +1,148 @@
+-- e17a-offset
+-- corrido: 2026-08-15 15:50:23
+-- fuente:  e17a-offset.sql
+
+\timing on
+Timing is on.
+\pset pager off
+Pager usage is off.
+\set ON_ERROR_STOP on
+\pset null '(null)'
+Null display is "(null)".
+SELECT user_id AS ballena FROM transactions GROUP BY user_id ORDER BY count(*) DESC LIMIT 1 \gset
+Time: 1642.901 ms (00:01.643)
+SET max_parallel_workers_per_gather = 0;
+SET
+Time: 0.571 ms
+\echo '======== E17a.0 - CUANTAS FILAS TIENE LA BALLENA ========'
+======== E17a.0 - CUANTAS FILAS TIENE LA BALLENA ========
+SELECT count(*) AS filas FROM transactions
+WHERE user_id = :'ballena';
+ filas  
+--------
+ 212817
+(1 row)
+
+Time: 1553.856 ms (00:01.554)
+\echo '======== E17a.1 - OFFSET 0 ========'
+======== E17a.1 - OFFSET 0 ========
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT id, transaction_date, amount, description
+FROM transactions
+WHERE user_id = :'ballena'
+ORDER BY transaction_date DESC
+LIMIT 20 OFFSET 0;
+                                                                       QUERY PLAN                                                                        
+---------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=0.42..8.04 rows=20 width=43) (actual time=0.982..1.041 rows=20 loops=1)
+   Buffers: shared hit=3 read=3
+   I/O Timings: shared read=0.925
+   ->  Index Scan Backward using idx_tx_user_date on transactions  (cost=0.42..83287.34 rows=218824 width=43) (actual time=0.980..1.034 rows=20 loops=1)
+         Index Cond: (user_id = '0898fb97-6631-48b3-9968-6bb3cb56a399'::uuid)
+         Buffers: shared hit=3 read=3
+         I/O Timings: shared read=0.925
+ Planning:
+   Buffers: shared hit=12 read=4
+   I/O Timings: shared read=3.782
+ Planning Time: 4.710 ms
+ Execution Time: 1.137 ms
+(12 rows)
+
+Time: 10.748 ms
+\echo '======== E17a.2 - OFFSET 1000 ========'
+======== E17a.2 - OFFSET 1000 ========
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT id, transaction_date, amount, description
+FROM transactions
+WHERE user_id = :'ballena'
+ORDER BY transaction_date DESC
+LIMIT 20 OFFSET 1000;
+                                                                        QUERY PLAN                                                                         
+-----------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=381.04..388.65 rows=20 width=43) (actual time=5.386..5.451 rows=20 loops=1)
+   Buffers: shared hit=26 read=76
+   I/O Timings: shared read=4.575
+   ->  Index Scan Backward using idx_tx_user_date on transactions  (cost=0.42..83287.34 rows=218824 width=43) (actual time=0.141..5.373 rows=1020 loops=1)
+         Index Cond: (user_id = '0898fb97-6631-48b3-9968-6bb3cb56a399'::uuid)
+         Buffers: shared hit=26 read=76
+         I/O Timings: shared read=4.575
+ Planning Time: 0.120 ms
+ Execution Time: 5.515 ms
+(9 rows)
+
+Time: 6.178 ms
+\echo '======== E17a.3 - OFFSET 10000 ========'
+======== E17a.3 - OFFSET 10000 ========
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT id, transaction_date, amount, description
+FROM transactions
+WHERE user_id = :'ballena'
+ORDER BY transaction_date DESC
+LIMIT 20 OFFSET 10000;
+                                                                         QUERY PLAN                                                                          
+-------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=3806.54..3814.15 rows=20 width=43) (actual time=31.239..31.325 rows=20 loops=1)
+   Buffers: shared hit=275 read=720
+   I/O Timings: shared read=24.355
+   ->  Index Scan Backward using idx_tx_user_date on transactions  (cost=0.42..83287.34 rows=218824 width=43) (actual time=0.058..30.567 rows=10020 loops=1)
+         Index Cond: (user_id = '0898fb97-6631-48b3-9968-6bb3cb56a399'::uuid)
+         Buffers: shared hit=275 read=720
+         I/O Timings: shared read=24.355
+ Planning Time: 0.134 ms
+ Execution Time: 31.395 ms
+(9 rows)
+
+Time: 32.231 ms
+\echo '======== E17a.4 - OFFSET 100000 ========'
+======== E17a.4 - OFFSET 100000 ========
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT id, transaction_date, amount, description
+FROM transactions
+WHERE user_id = :'ballena'
+ORDER BY transaction_date DESC
+LIMIT 20 OFFSET 100000;
+                                                                          QUERY PLAN                                                                           
+---------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=38061.57..38069.18 rows=20 width=43) (actual time=246.650..246.732 rows=20 loops=1)
+   Buffers: shared hit=12257 read=6311
+   I/O Timings: shared read=180.609
+   ->  Index Scan Backward using idx_tx_user_date on transactions  (cost=0.42..83287.34 rows=218824 width=43) (actual time=0.092..239.560 rows=100020 loops=1)
+         Index Cond: (user_id = '0898fb97-6631-48b3-9968-6bb3cb56a399'::uuid)
+         Buffers: shared hit=12257 read=6311
+         I/O Timings: shared read=180.609
+ Planning Time: 0.248 ms
+ Execution Time: 246.815 ms
+(9 rows)
+
+Time: 247.722 ms
+\echo '======== E17a.5 - OFFSET 200000 (casi el final) ========'
+======== E17a.5 - OFFSET 200000 (casi el final) ========
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT id, transaction_date, amount, description
+FROM transactions
+WHERE user_id = :'ballena'
+ORDER BY transaction_date DESC
+LIMIT 20 OFFSET 200000;
+                                                                     QUERY PLAN                                                                     
+----------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=56683.66..56683.71 rows=20 width=43) (actual time=613.760..613.768 rows=20 loops=1)
+   Buffers: shared hit=7082 read=12154, temp read=1314 written=1399
+   I/O Timings: shared read=190.727, temp read=5.237 write=38.088
+   ->  Sort  (cost=56183.66..56730.72 rows=218824 width=43) (actual time=543.272..594.435 rows=200020 loops=1)
+         Sort Key: transaction_date DESC
+         Sort Method: external merge  Disk: 11152kB
+         Buffers: shared hit=7082 read=12154, temp read=1314 written=1399
+         I/O Timings: shared read=190.727, temp read=5.237 write=38.088
+         ->  Bitmap Heap Scan on transactions  (cost=9292.31..30040.61 rows=218824 width=43) (actual time=29.756..339.735 rows=212817 loops=1)
+               Recheck Cond: (user_id = '0898fb97-6631-48b3-9968-6bb3cb56a399'::uuid)
+               Heap Blocks: exact=17175
+               Buffers: shared hit=7079 read=12154
+               I/O Timings: shared read=190.727
+               ->  Bitmap Index Scan on idx_tx_user_date  (cost=0.00..9237.60 rows=218824 width=0) (actual time=22.231..22.232 rows=215505 loops=1)
+                     Index Cond: (user_id = '0898fb97-6631-48b3-9968-6bb3cb56a399'::uuid)
+                     Buffers: shared hit=2058
+ Planning Time: 0.126 ms
+ Execution Time: 617.285 ms
+(18 rows)
+
+Time: 617.989 ms

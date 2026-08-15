@@ -17,6 +17,7 @@ Format: lightweight [MADR](https://adr.github.io/madr/). Template: [`0000-templa
 | [0007](./0007-migrations-over-synchronize.md) | Schema via migrations, never `synchronize` | Accepted |
 | [0008](./0008-redis-cache-ports.md) | Redis behind a minimal cache-store port; per-module caches by composition | Accepted |
 | [0009](./0009-scoped-repositories-as-guarded-factories.md) | Scoped repositories cross module boundaries as guarded factories | Accepted |
+| [0010](./0010-keyset-pagination.md) | Keyset pagination for transaction listings | **Proposed** |
 
 ## Where to start
 

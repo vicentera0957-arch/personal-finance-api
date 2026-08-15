@@ -1,0 +1,223 @@
+-- e17c-keyset
+-- corrido: 2026-08-15 15:51:13
+-- fuente:  e17c-keyset.sql
+
+\timing on
+Timing is on.
+\pset pager off
+Pager usage is off.
+\set ON_ERROR_STOP on
+\pset null '(null)'
+Null display is "(null)".
+SELECT user_id AS ballena FROM transactions GROUP BY user_id ORDER BY count(*) DESC LIMIT 1 \gset
+Time: 153.682 ms
+SET max_parallel_workers_per_gather = 0;
+SET
+Time: 0.379 ms
+\echo '======== E17c.0 - EL BUG DE CORRECTITUD DE OFFSET (antes de la performance) ========'
+======== E17c.0 - EL BUG DE CORRECTITUD DE OFFSET (antes de la performance) ========
+CREATE TEMP TABLE pagina_a AS
+SELECT id FROM transactions
+WHERE user_id = :'ballena'
+ORDER BY transaction_date DESC
+LIMIT 20 OFFSET 1000;
+SELECT 20
+Time: 26.935 ms
+SET enable_indexscan = off;
+SET
+Time: 0.337 ms
+SET enable_bitmapscan = off;
+SET
+Time: 0.304 ms
+CREATE TEMP TABLE pagina_b AS
+SELECT id FROM transactions
+WHERE user_id = :'ballena'
+ORDER BY transaction_date DESC
+LIMIT 20 OFFSET 1000;
+SELECT 20
+Time: 251.110 ms
+RESET enable_indexscan;
+RESET
+Time: 0.260 ms
+RESET enable_bitmapscan;
+RESET
+Time: 0.209 ms
+SELECT (SELECT count(*) FROM (SELECT id FROM pagina_a EXCEPT SELECT id FROM pagina_b) x) AS solo_en_a,
+       (SELECT count(*) FROM (SELECT id FROM pagina_b EXCEPT SELECT id FROM pagina_a) y) AS solo_en_b;
+ solo_en_a | solo_en_b 
+-----------+-----------
+         0 |         0
+(1 row)
+
+Time: 2.728 ms
+DROP TABLE pagina_a;
+DROP TABLE
+Time: 15.243 ms
+DROP TABLE pagina_b;
+DROP TABLE
+Time: 6.082 ms
+\echo '======== E17c.1 - INDICE PARA KEYSET: con desempate por id ========'
+======== E17c.1 - INDICE PARA KEYSET: con desempate por id ========
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_tx_user_date_id_keyset
+  ON transactions (user_id, transaction_date DESC, id DESC);
+CREATE INDEX
+Time: 3077.746 ms (00:03.078)
+ANALYZE transactions;
+ANALYZE
+Time: 286.990 ms
+SELECT indexrelname AS indice, pg_size_pretty(pg_relation_size(indexrelid)) AS tamano
+FROM pg_stat_user_indexes WHERE relname = 'transactions'
+ORDER BY indexrelname;
+             indice             | tamano 
+--------------------------------+--------
+ PK_a219afd8dd77ed80f5a862f1db9 | 40 MB
+ idx_tx_account_date            | 70 MB
+ idx_tx_expense_period          | 56 MB
+ idx_tx_expense_period_cover    | 64 MB
+ idx_tx_user_cat_nature_date    | 116 MB
+ idx_tx_user_date               | 70 MB
+ idx_tx_user_date_id_keyset     | 56 MB
+(7 rows)
+
+Time: 11.531 ms
+\echo '======== E17c.2 - TOMAR EL CURSOR DE LA FILA 10.000 ========'
+======== E17c.2 - TOMAR EL CURSOR DE LA FILA 10.000 ========
+SELECT transaction_date AS cur_date, id AS cur_id
+FROM transactions
+WHERE user_id = :'ballena'
+ORDER BY transaction_date DESC, id DESC
+OFFSET 10000 LIMIT 1
+\gset
+Time: 1.865 ms
+\echo 'cursor ->'
+cursor ->
+\echo :cur_date
+2026-08-02 18:59:30
+\echo :cur_id
+35411e1a-f49d-4c72-ae62-4f72d9598b0a
+\echo '======== E17c.3 - OFFSET 10000 (el metodo viejo) ========'
+======== E17c.3 - OFFSET 10000 (el metodo viejo) ========
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT id, transaction_date, amount
+FROM transactions
+WHERE user_id = :'ballena'
+ORDER BY transaction_date DESC, id DESC
+LIMIT 20 OFFSET 10000;
+                                                                         QUERY PLAN                                                                          
+-------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=3841.01..3848.69 rows=20 width=28) (actual time=2.823..2.830 rows=20 loops=1)
+   Buffers: shared hit=886
+   ->  Index Scan using idx_tx_user_date_id_keyset on transactions  (cost=0.42..81779.23 rows=212933 width=28) (actual time=0.035..2.428 rows=10020 loops=1)
+         Index Cond: (user_id = '0898fb97-6631-48b3-9968-6bb3cb56a399'::uuid)
+         Buffers: shared hit=886
+ Planning:
+   Buffers: shared hit=3
+ Planning Time: 0.183 ms
+ Execution Time: 2.869 ms
+(9 rows)
+
+Time: 3.577 ms
+\echo '======== E17c.4 - KEYSET desde el mismo punto ========'
+======== E17c.4 - KEYSET desde el mismo punto ========
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT id, transaction_date, amount
+FROM transactions
+WHERE user_id = :'ballena'
+  AND (transaction_date, id) < (:'cur_date'::timestamp, :'cur_id'::uuid)
+ORDER BY transaction_date DESC, id DESC
+LIMIT 20;
+                                                                                                       QUERY PLAN                                                                                                       
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=0.42..8.48 rows=20 width=28) (actual time=0.030..0.040 rows=20 loops=1)
+   Buffers: shared hit=6
+   ->  Index Scan using idx_tx_user_date_id_keyset on transactions  (cost=0.42..81837.04 rows=203223 width=28) (actual time=0.029..0.036 rows=20 loops=1)
+         Index Cond: ((user_id = '0898fb97-6631-48b3-9968-6bb3cb56a399'::uuid) AND (ROW(transaction_date, id) < ROW('2026-08-02 18:59:30'::timestamp without time zone, '35411e1a-f49d-4c72-ae62-4f72d9598b0a'::uuid)))
+         Buffers: shared hit=6
+ Planning:
+   Buffers: shared hit=16
+ Planning Time: 0.458 ms
+ Execution Time: 0.177 ms
+(9 rows)
+
+Time: 2.292 ms
+\echo '======== E17c.5 - KEYSET EN LA PAGINA 1 (sin cursor) ========'
+======== E17c.5 - KEYSET EN LA PAGINA 1 (sin cursor) ========
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT id, transaction_date, amount
+FROM transactions
+WHERE user_id = :'ballena'
+ORDER BY transaction_date DESC, id DESC
+LIMIT 20;
+                                                                        QUERY PLAN                                                                        
+----------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=0.42..8.11 rows=20 width=28) (actual time=0.046..0.055 rows=20 loops=1)
+   Buffers: shared hit=6
+   ->  Index Scan using idx_tx_user_date_id_keyset on transactions  (cost=0.42..81779.23 rows=212933 width=28) (actual time=0.045..0.052 rows=20 loops=1)
+         Index Cond: (user_id = '0898fb97-6631-48b3-9968-6bb3cb56a399'::uuid)
+         Buffers: shared hit=6
+ Planning Time: 0.114 ms
+ Execution Time: 0.097 ms
+(7 rows)
+
+Time: 0.802 ms
+\echo '======== E17c.6 - EL COSTO NO DEPENDE DE LA PROFUNDIDAD: cursor en la fila 200.000 ========'
+======== E17c.6 - EL COSTO NO DEPENDE DE LA PROFUNDIDAD: cursor en la fila 200.000 ========
+SELECT transaction_date AS far_date, id AS far_id
+FROM transactions
+WHERE user_id = :'ballena'
+ORDER BY transaction_date DESC, id DESC
+OFFSET 200000 LIMIT 1
+\gset
+Time: 22.751 ms
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT id, transaction_date, amount
+FROM transactions
+WHERE user_id = :'ballena'
+  AND (transaction_date, id) < (:'far_date'::timestamp, :'far_id'::uuid)
+ORDER BY transaction_date DESC, id DESC
+LIMIT 20;
+                                                                                                       QUERY PLAN                                                                                                       
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=0.42..60.84 rows=20 width=28) (actual time=0.052..0.065 rows=20 loops=1)
+   Buffers: shared hit=3 read=2
+   I/O Timings: shared read=0.014
+   ->  Index Scan using idx_tx_user_date_id_keyset on transactions  (cost=0.42..37383.46 rows=12375 width=28) (actual time=0.045..0.057 rows=20 loops=1)
+         Index Cond: ((user_id = '0898fb97-6631-48b3-9968-6bb3cb56a399'::uuid) AND (ROW(transaction_date, id) < ROW('2024-11-04 12:58:56'::timestamp without time zone, 'bc959e05-6868-478c-a525-00aa94df8815'::uuid)))
+         Buffers: shared hit=3 read=2
+         I/O Timings: shared read=0.014
+ Planning Time: 0.129 ms
+ Execution Time: 0.095 ms
+(9 rows)
+
+Time: 0.741 ms
+\echo '======== E17c.7 - COMPARACION FINAL: mismo destino, dos metodos ========'
+======== E17c.7 - COMPARACION FINAL: mismo destino, dos metodos ========
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT id, transaction_date, amount
+FROM transactions
+WHERE user_id = :'ballena'
+ORDER BY transaction_date DESC, id DESC
+LIMIT 20 OFFSET 200000;
+                                                                          QUERY PLAN                                                                          
+--------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=52893.93..52893.98 rows=20 width=28) (actual time=526.719..526.725 rows=20 loops=1)
+   Buffers: shared hit=4514 read=14164, temp read=969 written=998
+   I/O Timings: shared read=164.818, temp read=7.905 write=16.048
+   ->  Sort  (cost=52393.93..52926.26 rows=212933 width=28) (actual time=463.509..507.133 rows=200020 loops=1)
+         Sort Key: transaction_date DESC, id DESC
+         Sort Method: external merge  Disk: 7944kB
+         Buffers: shared hit=4514 read=14164, temp read=969 written=998
+         I/O Timings: shared read=164.818, temp read=7.905 write=16.048
+         ->  Bitmap Heap Scan on transactions  (cost=7778.66..28453.32 rows=212933 width=28) (actual time=12.894..298.995 rows=212817 loops=1)
+               Recheck Cond: (user_id = '0898fb97-6631-48b3-9968-6bb3cb56a399'::uuid)
+               Heap Blocks: exact=17155
+               Buffers: shared hit=4514 read=14164
+               I/O Timings: shared read=164.818
+               ->  Bitmap Index Scan on idx_tx_user_date_id_keyset  (cost=0.00..7725.42 rows=212933 width=0) (actual time=10.571..10.571 rows=212817 loops=1)
+                     Index Cond: (user_id = '0898fb97-6631-48b3-9968-6bb3cb56a399'::uuid)
+                     Buffers: shared hit=1523
+ Planning Time: 0.120 ms
+ Execution Time: 529.143 ms
+(18 rows)
+
+Time: 529.930 ms

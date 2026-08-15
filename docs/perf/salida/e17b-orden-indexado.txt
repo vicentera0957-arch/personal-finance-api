@@ -1,0 +1,202 @@
+-- e17b-orden-indexado
+-- corrido: 2026-08-15 15:50:47
+-- fuente:  e17b-orden-indexado.sql
+
+\timing on
+Timing is on.
+\pset pager off
+Pager usage is off.
+\set ON_ERROR_STOP on
+\pset null '(null)'
+Null display is "(null)".
+SELECT user_id AS ballena FROM transactions GROUP BY user_id ORDER BY count(*) DESC LIMIT 1 \gset
+Time: 193.698 ms
+SET max_parallel_workers_per_gather = 0;
+SET
+Time: 0.322 ms
+\echo '======== E17b.0 - EL INDICE QUE PODRIA ENTREGAR EL ORDEN ========'
+======== E17b.0 - EL INDICE QUE PODRIA ENTREGAR EL ORDEN ========
+SELECT indexrelname AS indice, pg_get_indexdef(indexrelid) AS definicion
+FROM pg_stat_user_indexes WHERE relname = 'transactions'
+ORDER BY indexrelname;
+             indice             |                                                                                   definicion                                                                                   
+--------------------------------+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ PK_a219afd8dd77ed80f5a862f1db9 | CREATE UNIQUE INDEX "PK_a219afd8dd77ed80f5a862f1db9" ON public.transactions USING btree (id)
+ idx_tx_account_date            | CREATE INDEX idx_tx_account_date ON public.transactions USING btree (account_id, transaction_date)
+ idx_tx_expense_period          | CREATE INDEX idx_tx_expense_period ON public.transactions USING btree (user_id, category_id, transaction_date) WHERE ((nature)::text = 'expense'::text)
+ idx_tx_expense_period_cover    | CREATE INDEX idx_tx_expense_period_cover ON public.transactions USING btree (user_id, category_id, transaction_date) INCLUDE (amount) WHERE ((nature)::text = 'expense'::text)
+ idx_tx_user_cat_nature_date    | CREATE INDEX idx_tx_user_cat_nature_date ON public.transactions USING btree (user_id, category_id, nature, transaction_date)
+ idx_tx_user_date               | CREATE INDEX idx_tx_user_date ON public.transactions USING btree (user_id, transaction_date)
+(6 rows)
+
+Time: 27.469 ms
+\echo '======== E17b.1 - ORDER BY transaction_date DESC: hay nodo Sort? ========'
+======== E17b.1 - ORDER BY transaction_date DESC: hay nodo Sort? ========
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT id, transaction_date, amount
+FROM transactions
+WHERE user_id = :'ballena'
+ORDER BY transaction_date DESC
+LIMIT 20;
+                                                                       QUERY PLAN                                                                        
+---------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=0.42..8.04 rows=20 width=28) (actual time=0.058..0.067 rows=20 loops=1)
+   Buffers: shared hit=6
+   ->  Index Scan Backward using idx_tx_user_date on transactions  (cost=0.42..83287.34 rows=218824 width=28) (actual time=0.056..0.063 rows=20 loops=1)
+         Index Cond: (user_id = '0898fb97-6631-48b3-9968-6bb3cb56a399'::uuid)
+         Buffers: shared hit=6
+ Planning:
+   Buffers: shared hit=10 read=3
+   I/O Timings: shared read=0.108
+ Planning Time: 0.437 ms
+ Execution Time: 0.124 ms
+(10 rows)
+
+Time: 1.482 ms
+\echo '======== E17b.2 - ORDER BY transaction_date ASC (el indice esta en ASC) ========'
+======== E17b.2 - ORDER BY transaction_date ASC (el indice esta en ASC) ========
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT id, transaction_date, amount
+FROM transactions
+WHERE user_id = :'ballena'
+ORDER BY transaction_date ASC
+LIMIT 20;
+                                                                   QUERY PLAN                                                                   
+------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=0.42..8.04 rows=20 width=28) (actual time=0.070..0.087 rows=20 loops=1)
+   Buffers: shared hit=1 read=4
+   I/O Timings: shared read=0.043
+   ->  Index Scan using idx_tx_user_date on transactions  (cost=0.42..83287.34 rows=218824 width=28) (actual time=0.068..0.084 rows=20 loops=1)
+         Index Cond: (user_id = '0898fb97-6631-48b3-9968-6bb3cb56a399'::uuid)
+         Buffers: shared hit=1 read=4
+         I/O Timings: shared read=0.043
+ Planning:
+   Buffers: shared hit=4
+ Planning Time: 0.171 ms
+ Execution Time: 0.119 ms
+(11 rows)
+
+Time: 0.706 ms
+\echo '======== E17b.3 - ORDER BY amount DESC: ningun indice lo entrega ========'
+======== E17b.3 - ORDER BY amount DESC: ningun indice lo entrega ========
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT id, transaction_date, amount
+FROM transactions
+WHERE user_id = :'ballena'
+ORDER BY amount DESC
+LIMIT 20;
+                                                                     QUERY PLAN                                                                     
+----------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=35863.44..35863.49 rows=20 width=28) (actual time=510.804..510.810 rows=20 loops=1)
+   Buffers: shared hit=2744 read=16492
+   I/O Timings: shared read=321.718
+   ->  Sort  (cost=35863.44..36410.50 rows=218824 width=28) (actual time=510.802..510.805 rows=20 loops=1)
+         Sort Key: amount DESC
+         Sort Method: top-N heapsort  Memory: 27kB
+         Buffers: shared hit=2744 read=16492
+         I/O Timings: shared read=321.718
+         ->  Bitmap Heap Scan on transactions  (cost=9292.31..30040.61 rows=218824 width=28) (actual time=44.352..461.363 rows=212817 loops=1)
+               Recheck Cond: (user_id = '0898fb97-6631-48b3-9968-6bb3cb56a399'::uuid)
+               Heap Blocks: exact=17175
+               Buffers: shared hit=2741 read=16492
+               I/O Timings: shared read=321.718
+               ->  Bitmap Index Scan on idx_tx_user_date  (cost=0.00..9237.60 rows=218824 width=0) (actual time=40.624..40.624 rows=215505 loops=1)
+                     Index Cond: (user_id = '0898fb97-6631-48b3-9968-6bb3cb56a399'::uuid)
+                     Buffers: shared hit=1063 read=995
+                     I/O Timings: shared read=13.417
+ Planning:
+   Buffers: shared hit=9
+ Planning Time: 0.243 ms
+ Execution Time: 511.023 ms
+(21 rows)
+
+Time: 513.009 ms
+\echo '======== E17b.4 - LO MISMO SIN LIMIT: el Sort tiene que consumir todo ========'
+======== E17b.4 - LO MISMO SIN LIMIT: el Sort tiene que consumir todo ========
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT id, transaction_date, amount
+FROM transactions
+WHERE user_id = :'ballena'
+ORDER BY amount DESC;
+                                                                  QUERY PLAN                                                                  
+----------------------------------------------------------------------------------------------------------------------------------------------
+ Sort  (cost=54685.66..55232.72 rows=218824 width=28) (actual time=382.228..417.728 rows=212817 loops=1)
+   Sort Key: amount DESC
+   Sort Method: external merge  Disk: 7952kB
+   Buffers: shared hit=1488 read=17745 written=64, temp read=994 written=999
+   I/O Timings: shared read=75.788 write=2.051, temp read=2.075 write=25.941
+   ->  Bitmap Heap Scan on transactions  (cost=9292.31..30040.61 rows=218824 width=28) (actual time=37.515..208.998 rows=212817 loops=1)
+         Recheck Cond: (user_id = '0898fb97-6631-48b3-9968-6bb3cb56a399'::uuid)
+         Heap Blocks: exact=17175
+         Buffers: shared hit=1488 read=17745 written=64
+         I/O Timings: shared read=75.788 write=2.051
+         ->  Bitmap Index Scan on idx_tx_user_date  (cost=0.00..9237.60 rows=218824 width=0) (actual time=32.820..32.821 rows=215505 loops=1)
+               Index Cond: (user_id = '0898fb97-6631-48b3-9968-6bb3cb56a399'::uuid)
+               Buffers: shared hit=887 read=1171
+               I/O Timings: shared read=4.827
+ Planning Time: 0.121 ms
+ Execution Time: 431.539 ms
+(16 rows)
+
+Time: 432.347 ms
+\echo '======== E17b.5 - EL DESEMPATE QUE FALTA: (fecha) no es unico ========'
+======== E17b.5 - EL DESEMPATE QUE FALTA: (fecha) no es unico ========
+SELECT count(*) AS timestamps_repetidos
+FROM (
+    SELECT transaction_date
+    FROM transactions
+    WHERE user_id = :'ballena'
+    GROUP BY transaction_date
+    HAVING count(*) > 1
+) x;
+ timestamps_repetidos 
+----------------------
+                  633
+(1 row)
+
+Time: 110.288 ms
+SELECT sum(n) AS filas_con_fecha_ambigua
+FROM (
+    SELECT count(*) AS n
+    FROM transactions
+    WHERE user_id = :'ballena'
+    GROUP BY transaction_date
+    HAVING count(*) > 1
+) y;
+ filas_con_fecha_ambigua 
+-------------------------
+                    1266
+(1 row)
+
+Time: 85.057 ms
+\echo '======== E17b.6 - ORDER BY con desempate: cambia el plan? ========'
+======== E17b.6 - ORDER BY con desempate: cambia el plan? ========
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT id, transaction_date, amount
+FROM transactions
+WHERE user_id = :'ballena'
+ORDER BY transaction_date DESC, id DESC
+LIMIT 20;
+                                                                          QUERY PLAN                                                                           
+---------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=0.82..9.33 rows=20 width=28) (actual time=0.112..0.115 rows=20 loops=1)
+   Buffers: shared hit=8 read=1
+   I/O Timings: shared read=0.011
+   ->  Incremental Sort  (cost=0.82..93117.30 rows=218824 width=28) (actual time=0.111..0.112 rows=20 loops=1)
+         Sort Key: transaction_date DESC, id DESC
+         Presorted Key: transaction_date
+         Full-sort Groups: 1  Sort Method: quicksort  Average Memory: 26kB  Peak Memory: 26kB
+         Buffers: shared hit=8 read=1
+         I/O Timings: shared read=0.011
+         ->  Index Scan Backward using idx_tx_user_date on transactions  (cost=0.42..83287.34 rows=218824 width=28) (actual time=0.036..0.043 rows=21 loops=1)
+               Index Cond: (user_id = '0898fb97-6631-48b3-9968-6bb3cb56a399'::uuid)
+               Buffers: shared hit=5 read=1
+               I/O Timings: shared read=0.011
+ Planning:
+   Buffers: shared hit=3 read=2
+   I/O Timings: shared read=0.020
+ Planning Time: 0.205 ms
+ Execution Time: 0.154 ms
+(18 rows)
+
+Time: 0.866 ms

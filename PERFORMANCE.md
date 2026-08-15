@@ -42,6 +42,11 @@ para quien no va a leer el resto:
 - **Un índice cuesta ~3-4 páginas de buffer por cada fila que escribís**, lineal
   en la cantidad de índices. Sobre una tabla append-only como `transactions` eso
   se paga en cada `INSERT`, y hoy son cinco. ([E8](#e8--el-costo-del-índice))
+- **`OFFSET` no solo es lento: puede devolver la misma fila dos veces.** Cuenta
+  desde el principio en cada request, así que un `INSERT` entre dos páginas corre
+  todo un lugar. Reproducido, y arreglado por keyset — que además cuesta lo mismo
+  en la página 1 que en la 200.000: **3.735× menos buffers**.
+  ([E17](#4--paginación-keyset))
 
 **Lo que salió de acá para el producto:** `CREATE STATISTICS` sobre
 `(user_id, category_id, nature)` es un candidato real de migración — ver el
@@ -913,14 +918,197 @@ fuera a producción iría un solo índice — el covering — y no los dos.**
 
 ---
 
+## §4 — Paginación keyset
+
+`findByUserId` pagina con `skip`/`take` de TypeORM, o sea `OFFSET`/`LIMIT`
+([transaction.repo.implement.ts](src/modules/transactions/infrastructure/persistence/transaction.repo.implement.ts)).
+Este bloque mide qué cuesta eso y qué lo reemplaza.
+
+| Página | `OFFSET` | keyset |
+| --- | --- | --- |
+| primera (fila 20) | 6 buffers · 1,14 ms | 6 buffers · **0,10 ms** |
+| fila 10.000 | 886 buffers · 2,87 ms | **6 buffers** · 0,18 ms |
+| fila 200.000 | **18.678 buffers** · 529 ms | **5 buffers** · **0,10 ms** |
+
+**3.735× menos buffers en la página profunda, y el costo del keyset no crece.**
+
+### E17a · La degradación de `OFFSET`
+
+**Experimento:** `docs/perf/scripts/e17a-offset.sql`
+**Salida cruda:** `docs/perf/salida/e17a-offset.txt`
+**Fecha:** 2026-08-15
+
+Mismo `LIMIT 20`, mismo usuario (212.817 filas), solo cambia el `OFFSET`:
+
+| `OFFSET` | Nodo | Buffers | Tiempo |
+| --- | --- | --- | --- |
+| 0 | Index Scan Backward | **6** | 1,14 ms |
+| 1.000 | Index Scan Backward | 102 | 5,52 ms |
+| 10.000 | Index Scan Backward | 995 | 31,4 ms |
+| 100.000 | Index Scan Backward | 18.568 | 246,8 ms |
+| 200.000 | **Bitmap + Sort externo** | 19.236 + **2.713 temp** | **617,3 ms** |
+
+**541× más lento para devolver siempre 20 filas.** El crecimiento es lineal en el
+`OFFSET`, no en el `LIMIT`: `OFFSET` no le dice a Postgres "empezá en la fila N", le dice
+"producí N filas y descartalas". Es O(offset), no O(1).
+
+**Y en 200.000 el plan se rompe cualitativamente.** El planner abandona el Index Scan y
+elige leer todo y ordenar:
+
+```text
+Sort  (actual rows=200020)
+  Sort Key: transaction_date DESC
+  Sort Method: external merge  Disk: 11152kB
+  ->  Bitmap Heap Scan on transactions (actual rows=212817)
+```
+
+Materializa **200.020 filas y las ordena en disco** para devolver 20. Aparecen buffers
+`temp` — I/O a archivos temporales, que hasta ahora no habían salido en todo el lab.
+
+### E17b · El índice que entrega el orden
+
+**Experimento:** `docs/perf/scripts/e17b-orden-indexado.sql`
+**Salida cruda:** `docs/perf/salida/e17b-orden-indexado.txt`
+
+Es el prerequisito conceptual del keyset. `LIMIT 20` solo puede abortar temprano si
+alguien le va entregando filas ya ordenadas.
+
+| `ORDER BY` | Nodo | Buffers | Tiempo |
+| --- | --- | --- | --- |
+| `transaction_date DESC` | Index Scan **Backward** | **6** | 0,124 ms |
+| `transaction_date ASC` | Index Scan | 5 | 0,119 ms |
+| `amount DESC` + `LIMIT 20` | **Sort** (top-N heapsort) | **19.236** | **511 ms** |
+| `amount DESC` sin `LIMIT` | **Sort** (external merge, 7.952 kB) | 19.233 + temp | 431 ms |
+| `transaction_date DESC, id DESC` | **Incremental Sort** | 9 | 0,154 ms |
+
+**3.200× de diferencia** entre un orden que el índice entrega y uno que no.
+
+Tres cosas que se leen acá:
+
+**El índice sirve en las dos direcciones.** Está declarado `ASC` y la query pide `DESC`;
+el plan dice `Index Scan Backward` y cuesta lo mismo. Un B-tree se recorre para los dos
+lados, así que no hace falta un índice por sentido.
+
+**El `LIMIT` no salva a un `Sort`.** Comparar las dos filas de `amount DESC`: con `LIMIT`
+tarda 511 ms, sin `LIMIT` tarda 431 ms. El `LIMIT` cambió el *método* (top-N heapsort en
+27 kB de memoria en vez de un merge externo de 7,9 MB) pero no el trabajo: **un `Sort` es
+materializado y consume toda su entrada antes de emitir la primera fila.** No hay salida
+temprana posible.
+
+**El desempate es casi gratis.** Agregar `, id DESC` produce un `Incremental Sort`
+(PG13+): el índice ya entrega el orden por `transaction_date`, así que el nodo solo ordena
+*dentro* de cada grupo de fechas iguales. 9 buffers contra 6 — nada.
+
+Y de paso, el dato que motivaba el desempate: **633 timestamps repetidos, 1.266 filas**
+sobre las 212.817 del usuario (0,6%).
+
+### E17c · Keyset
+
+**Experimento:** `docs/perf/scripts/e17c-keyset.sql`
+**Salida cruda:** `docs/perf/salida/e17c-keyset.txt`
+
+```sql
+CREATE INDEX CONCURRENTLY idx_tx_user_date_id_keyset
+  ON transactions (user_id, transaction_date DESC, id DESC);   -- 56 MB
+```
+
+```sql
+SELECT ... FROM transactions
+WHERE user_id = $1
+  AND (transaction_date, id) < ($2, $3)     -- comparación de filas, no de columnas
+ORDER BY transaction_date DESC, id DESC
+LIMIT 20;
+```
+
+| Punto | `OFFSET` | keyset |
+| --- | --- | --- |
+| página 1 | 6 buffers · 1,14 ms | **6 buffers** · 0,097 ms |
+| fila 10.000 | 886 buffers · 2,87 ms | **6 buffers** · 0,177 ms |
+| fila 200.000 | 18.678 buffers · **529 ms** | **5 buffers** · **0,095 ms** |
+
+**El keyset cuesta lo mismo en la página 1 que en la 10.000.** Es O(1) — un descenso del
+B-tree hasta el cursor y 20 filas hacia adelante. La profundidad no aparece en la cuenta.
+
+`(transaction_date, id) < ($2, $3)` es una **comparación de filas**, no dos comparaciones
+sueltas: significa "estrictamente antes en el orden lexicográfico del par". Postgres la
+resuelve como un solo `Index Cond`. Escrita como
+`date < $2 OR (date = $2 AND id < $3)` el planner ya no puede usarla para posicionar.
+
+#### El bug de correctitud — y la hipótesis equivocada
+
+`OFFSET` no solo es lento: **puede devolver la misma fila dos veces**. Demostrado:
+
+```text
+PAGINA 1 (OFFSET 0 LIMIT 3)
+  8a65eb63…  2026-08-11 22:58:04
+  4027d7e6…  2026-08-11 22:57:44
+  1909da50…  2026-08-11 22:56:55     ← última de la página 1
+
+llega una transacción nueva (más reciente que todas)
+
+PAGINA 2 (OFFSET 3 LIMIT 3)
+  1909da50…  2026-08-11 22:56:55     ← REPETIDA
+  38bdc7ff…  2026-08-11 22:56:26
+  884958d5…  2026-08-11 22:55:05
+
+filas en las dos páginas:  1        ← con OFFSET
+filas en las dos páginas:  0        ← con keyset, mismo escenario
+```
+
+La causa es que **`OFFSET` cuenta desde el principio en cada request**. Si algo se inserta
+arriba entre dos páginas, todo se corre un lugar y la página siguiente repite una fila; si
+algo se borra, se saltea una. El usuario no ve un error: ve un ítem duplicado, o no ve uno
+que existe.
+
+El keyset es inmune porque no cuenta: pregunta *"dame lo que viene después de este valor"*,
+y ese valor no se mueve cuando aparecen filas nuevas arriba.
+
+> **Corrección.** Una versión anterior de este lab atribuía el bug al `ORDER BY
+> transaction_date` sin desempate por `id`. **Ese mecanismo no se reprodujo.** Se probó
+> dos veces: comparando la misma página resuelta por dos planes distintos (Index Scan
+> contra Seq Scan forzado), y después dirigiendo el `OFFSET` para que cayera exactamente
+> sobre un empate de fecha. **Los dos planes devolvieron el mismo id, en el mismo orden,
+> en los dos intentos.**
+>
+> El orden sin desempate no está *garantizado*, pero sobre una base estática los dos
+> caminos coinciden en la práctica. Lo que sí rompe `OFFSET` es la mutación entre páginas,
+> que es reproducible al 100% y mucho más frecuente en producción. El desempate por `id`
+> sigue siendo necesario —el keyset lo requiere para que el cursor sea único— pero no es
+> por sí solo el bug.
+
+### Conclusiones
+
+**1 · `OFFSET` es O(offset), no O(1).** No salta a la fila N: produce N filas y las
+descarta. En la página 10.000 de este dataset son 18.678 buffers para devolver 20 filas.
+
+**2 · Pasado cierto punto el plan se degrada cualitativamente.** De Index Scan a
+materializar 200.020 filas y ordenarlas en disco.
+
+**3 · Un `Sort` no se puede abortar.** El `LIMIT` cambia el método, no el trabajo: es un
+nodo materializado que consume toda su entrada antes de emitir la primera fila. Por eso el
+keyset necesita un índice que **entregue** el orden, no que lo permita.
+
+**4 · `OFFSET` también es incorrecto bajo escritura concurrente**, y eso pesa más que la
+performance: es un bug visible para el usuario, no una lentitud.
+
+**5 · Lo que se paga:** 56 MB de índice, ~4 páginas por escritura (E8), y el salto a una
+página arbitraria — que con keyset deja de existir.
+
+> **Estado.** El ADR está escrito ([ADR-0010](docs/adr/0010-keyset-pagination.md)) con
+> **status `Proposed`**: la decisión está fundamentada con estos números, pero el endpoint
+> **no está migrado**. Migrarlo cambia el contrato público de la API (`page` sale, entra un
+> cursor opaco) y eso es una decisión de producto, no un ejercicio de laboratorio.
+
+---
+
 ## En curso
 
 El bloque 1 está cerrado: E1–E4 cubren cómo se lee un plan y qué mueve de verdad
-al planner. El bloque 2 también: E5–E8 miden qué compra y qué cuesta un índice.
+al planner. El bloque 2 también: E5–E8 miden qué compra y qué cuesta un índice. Y el
+bloque 4: E17 mide la paginación y deja escrito el ADR-0010.
 
-Los bloques siguientes — paginación keyset (E17) y SQL analítico con joins
-(E19–E21) — ya tienen sus scripts escritos en
-[`docs/perf/scripts/`](docs/perf/scripts/), pero **no se publican acá hasta tener
+El bloque siguiente — SQL analítico con joins (E19–E21) — ya tiene sus scripts escritos en
+[`docs/perf/scripts/`](docs/perf/scripts/), pero **no se publica acá hasta tener
 número medido**. Es la misma regla que gobierna todo lo de arriba: ejercicio sin
 evidencia cruda no cuenta, y una sección vacía no es un adelanto, es una promesa.
 
