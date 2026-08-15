@@ -1,0 +1,118 @@
+-- e7a-heap-fetches
+-- corrido: 2026-08-14 21:50:34
+-- fuente:  e7a-heap-fetches.sql
+
+\timing on
+Timing is on.
+\pset pager off
+Pager usage is off.
+\set ON_ERROR_STOP on
+\pset null '(null)'
+Null display is "(null)".
+SELECT user_id AS ballena FROM transactions GROUP BY user_id ORDER BY count(*) DESC LIMIT 1 \gset
+Time: 112.643 ms
+SELECT category_id AS categoria FROM transactions WHERE user_id = :'ballena' AND nature = 'expense' AND transaction_date >= '2026-07-01' AND transaction_date < '2026-08-01' GROUP BY category_id ORDER BY count(*) DESC LIMIT 1 \gset
+Time: 13.017 ms
+SET max_parallel_workers_per_gather = 0;
+SET
+Time: 0.361 ms
+\echo '======== E7.0 - VISIBILITY MAP ANTES ========'
+======== E7.0 - VISIBILITY MAP ANTES ========
+SELECT relname, relpages, relallvisible,
+       round(100.0 * relallvisible / nullif(relpages, 0), 2) AS pct_all_visible
+FROM pg_class WHERE relname = 'transactions';
+   relname    | relpages | relallvisible | pct_all_visible 
+--------------+----------+---------------+-----------------
+ transactions |    17170 |         17083 |           99.49
+(1 row)
+
+Time: 7.428 ms
+SELECT relname, n_live_tup, n_dead_tup, last_vacuum, last_autovacuum
+FROM pg_stat_user_tables WHERE relname = 'transactions';
+   relname    | n_live_tup | n_dead_tup | last_vacuum | last_autovacuum 
+--------------+------------+------------+-------------+-----------------
+ transactions |    1000000 |       5000 | (null)      | (null)
+(1 row)
+
+Time: 14.166 ms
+\echo '======== E7.1 - MEDICION CON EL VM LIMPIO (Heap Fetches deberia ser 0) ========'
+======== E7.1 - MEDICION CON EL VM LIMPIO (Heap Fetches deberia ser 0) ========
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT COALESCE(SUM(e.amount), 0) AS total
+FROM v_period_expenses e
+WHERE e.user_id          = :'ballena'
+  AND e.category_id      = :'categoria'
+  AND e.transaction_date >= '2026-07-01'
+  AND e.transaction_date <  '2026-08-01';
+                                                                                                                                                QUERY PLAN                                                                                                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=70.88..70.89 rows=1 width=8) (actual time=1.231..1.232 rows=1 loops=1)
+   Buffers: shared hit=37
+   ->  Index Only Scan using idx_tx_expense_period_cover on transactions  (cost=0.42..68.83 rows=818 width=4) (actual time=0.121..1.015 rows=4028 loops=1)
+         Index Cond: ((user_id = '0898fb97-6631-48b3-9968-6bb3cb56a399'::uuid) AND (category_id = '4ab66006-6631-4966-941e-041666d26010'::uuid) AND (transaction_date >= '2026-07-01 00:00:00'::timestamp without time zone) AND (transaction_date < '2026-08-01 00:00:00'::timestamp without time zone))
+         Heap Fetches: 0
+         Buffers: shared hit=37
+ Planning:
+   Buffers: shared hit=11
+ Planning Time: 0.481 ms
+ Execution Time: 1.322 ms
+(10 rows)
+
+Time: 2.825 ms
+\echo '======== E7.2 - APAGAR AUTOVACUUM EN LA TABLA (si no, limpia solo) ========'
+======== E7.2 - APAGAR AUTOVACUUM EN LA TABLA (si no, limpia solo) ========
+ALTER TABLE transactions SET (autovacuum_enabled = false);
+ALTER TABLE
+Time: 3.411 ms
+\echo '======== E7.3 - ENSUCIAR: reescribir las 4.029 filas del periodo ========'
+======== E7.3 - ENSUCIAR: reescribir las 4.029 filas del periodo ========
+UPDATE transactions SET description = description
+WHERE user_id          = :'ballena'
+  AND category_id      = :'categoria'
+  AND nature           = 'expense'
+  AND transaction_date >= '2026-07-01'
+  AND transaction_date <  '2026-08-01';
+UPDATE 4028
+Time: 426.626 ms
+\echo '======== E7.4 - VISIBILITY MAP DESPUES DE ENSUCIAR ========'
+======== E7.4 - VISIBILITY MAP DESPUES DE ENSUCIAR ========
+SELECT relname, relpages, relallvisible,
+       round(100.0 * relallvisible / nullif(relpages, 0), 2) AS pct_all_visible
+FROM pg_class WHERE relname = 'transactions';
+   relname    | relpages | relallvisible | pct_all_visible 
+--------------+----------+---------------+-----------------
+ transactions |    17170 |         17083 |           99.49
+(1 row)
+
+Time: 0.433 ms
+SELECT relname, n_live_tup, n_dead_tup FROM pg_stat_user_tables WHERE relname = 'transactions';
+   relname    | n_live_tup | n_dead_tup 
+--------------+------------+------------
+ transactions |    1000000 |       5000
+(1 row)
+
+Time: 2.418 ms
+\echo '======== E7.5 - MISMA QUERY: cuanto subio Heap Fetches ========'
+======== E7.5 - MISMA QUERY: cuanto subio Heap Fetches ========
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT COALESCE(SUM(e.amount), 0) AS total
+FROM v_period_expenses e
+WHERE e.user_id          = :'ballena'
+  AND e.category_id      = :'categoria'
+  AND e.transaction_date >= '2026-07-01'
+  AND e.transaction_date <  '2026-08-01';
+                                                                                                                                                QUERY PLAN                                                                                                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=82.95..82.96 rows=1 width=8) (actual time=5.279..5.281 rows=1 loops=1)
+   Buffers: shared hit=8155
+   ->  Index Only Scan using idx_tx_expense_period_cover on transactions  (cost=0.42..80.90 rows=822 width=4) (actual time=0.064..5.057 rows=4028 loops=1)
+         Index Cond: ((user_id = '0898fb97-6631-48b3-9968-6bb3cb56a399'::uuid) AND (category_id = '4ab66006-6631-4966-941e-041666d26010'::uuid) AND (transaction_date >= '2026-07-01 00:00:00'::timestamp without time zone) AND (transaction_date < '2026-08-01 00:00:00'::timestamp without time zone))
+         Heap Fetches: 8056
+         Buffers: shared hit=8155
+ Planning:
+   Buffers: shared hit=2
+ Planning Time: 0.283 ms
+ Execution Time: 5.356 ms
+(10 rows)
+
+Time: 6.229 ms

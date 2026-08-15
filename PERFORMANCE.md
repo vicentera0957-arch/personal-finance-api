@@ -717,12 +717,110 @@ es E7.
 
 ---
 
+### E7 · `Heap Fetches` y el visibility map
+
+**Experimentos:** `docs/perf/scripts/e7a-heap-fetches.sql` · `e7b-postvacuum.sql`
+**Salida cruda:** `docs/perf/salida/e7a-heap-fetches.txt` · `e7b-postvacuum.txt`
+**Fecha:** 2026-08-15
+
+E6 terminó con `Heap Fetches: 0` y 37 buffers. Este ejercicio pregunta qué sostiene ese
+cero — y qué pasa cuando deja de sostenerlo.
+
+#### El resultado
+
+| | `Heap Fetches` | Buffers | Tiempo |
+| --- | --- | --- | --- |
+| E7.1 · visibility map limpio | **0** | **37** | 1,32 ms |
+| E7.5 · tras un `UPDATE` de 4.028 filas | **8.056** | **8.155** | 5,36 ms |
+| E7.8 · tras `VACUUM` | **0** | 103 | **0,86 ms** |
+
+**220× más buffers** por un `UPDATE` que no cambió ni una fila del resultado — reescribió
+`description` con su propio valor. El plan es idéntico en las tres corridas: el mismo
+`Index Only Scan`, sobre el mismo índice, devolviendo las mismas 4.028 filas.
+
+#### Por qué un "Index Only Scan" toca el heap
+
+Un índice guarda **valores y punteros, nunca visibilidad**. `xmin`/`xmax` viven en la
+tupla del heap. Así que al leer una entrada del índice, Postgres no puede saber si esa
+versión de la fila es visible para la transacción actual.
+
+La salida es el **visibility map**: un bitmap con dos bits por página de heap, uno de
+ellos `ALL_VISIBLE`. Si la página está marcada, todas sus tuplas son visibles para
+todos y el scan puede confiar en el índice sin bajar. Si no lo está, hay que ir a
+verificar — y eso es un `Heap Fetch`.
+
+**Solo `VACUUM` marca páginas como `ALL_VISIBLE`.** Cualquier escritura las desmarca.
+
+#### Por qué 8.056 y no 4.028
+
+El `UPDATE` tocó 4.028 filas, pero un `UPDATE` en Postgres no modifica en el lugar:
+inserta una versión nueva y marca la vieja como muerta. Las dos versiones tienen entrada
+en el índice hasta que pase el `VACUUM`.
+
+```text
+4.028 versiones muertas + 4.028 versiones nuevas = 8.056 entradas de índice
+```
+
+El scan las recorre todas y verifica cada una contra el heap. **Exactamente 2×** las
+filas del resultado.
+
+#### El catálogo mintió
+
+Después de ensuciar, `pg_class` seguía reportando lo mismo que antes:
+
+```text
+antes del UPDATE    relpages 17170   relallvisible 17083   → 99,49%
+despues del UPDATE  relpages 17170   relallvisible 17083   → 99,49%   ← sin cambio
+despues del VACUUM  relpages 17240   relallvisible 17240   → 100,00%
+```
+
+`relallvisible` es una estimación que **solo se refresca en `VACUUM`/`ANALYZE`**. El
+visibility map real sí se había actualizado; el catálogo no lo reflejaba. Es la misma
+lección de E4 desde otro ángulo: el catálogo no es tiempo real, y acá **`Heap Fetches`
+del plan fue la única señal verdadera**.
+
+#### Después del `VACUUM`: 103 buffers, no 37
+
+`Heap Fetches` volvió a 0, pero el scan quedó en **103 buffers contra los 37 originales**.
+`VACUUM` liberó las 4.028 entradas muertas del índice, pero **no devolvió las páginas**:
+quedaron parcialmente vacías y el scan igual las atraviesa. La tabla tampoco encogió —
+creció de 17.170 a 17.240 páginas.
+
+Eso es bloat, y es exactamente lo que E16 mide: `VACUUM` recupera espacio *reutilizable*,
+no espacio *devuelto*.
+
+#### Conclusiones
+
+**1 · `Heap Fetches: 0` no prueba que el índice sea covering.** Prueba que el visibility
+map estaba limpio *en ese momento*. Es una propiedad del estado de mantenimiento de la
+tabla, no del índice.
+
+**2 · Un Index Only Scan sobre una tabla con escritura activa no es "index only".** En una
+tabla caliente, entre dos pasadas de autovacuum, el mismo plan puede costar 220× más.
+
+**3 · Los índices no guardan visibilidad, y esa es la razón de que MVCC necesite
+`VACUUM`.** No es limpieza opcional: es lo que habilita el Index Only Scan.
+
+**4 · El catálogo no es tiempo real.** `relallvisible` se actualiza en `VACUUM`/`ANALYZE`.
+Para saber qué pasó de verdad, el plan.
+
+**5 · `VACUUM` no encoge.** Devuelve espacio reutilizable, no espacio al sistema
+operativo — y las páginas medio vacías se siguen leyendo.
+
+> **Consecuencia para el producto.** `transactions` es append-only y sus filas nunca se
+> actualizan (ADR-0005: inmutables, se borra y se recrea), así que el visibility map se
+> mantiene limpio solo. Un covering index es una apuesta segura acá. La misma apuesta
+> sobre `accounts` —donde `current_balance` se reescribe en cada transacción— sería
+> mucho peor.
+
+---
+
 ## En curso
 
 El bloque 1 está cerrado: E1–E4 cubren cómo se lee un plan y qué mueve de verdad
-al planner. El bloque 2 va por la mitad: E5 y E6 están medidos arriba.
+al planner. Del bloque 2 falta solo E8: E5, E6 y E7 están medidos arriba.
 
-Los bloques siguientes — el resto de índices (E7–E8), paginación keyset (E17) y
+Los bloques siguientes — el cierre de índices (E8), paginación keyset (E17) y
 SQL analítico con joins (E19–E21) — ya tienen sus scripts escritos en
 [`docs/perf/scripts/`](docs/perf/scripts/), pero **no se publican acá hasta tener
 número medido**. Es la misma regla que gobierna todo lo de arriba: ejercicio sin

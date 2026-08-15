@@ -1,0 +1,96 @@
+-- e7b-postvacuum
+-- corrido: 2026-08-14 21:50:35
+-- fuente:  e7b-postvacuum.sql
+
+\timing on
+Timing is on.
+\pset pager off
+Pager usage is off.
+\set ON_ERROR_STOP on
+\pset null '(null)'
+Null display is "(null)".
+SELECT user_id AS ballena FROM transactions GROUP BY user_id ORDER BY count(*) DESC LIMIT 1 \gset
+Time: 77.157 ms
+SELECT category_id AS categoria FROM transactions WHERE user_id = :'ballena' AND nature = 'expense' AND transaction_date >= '2026-07-01' AND transaction_date < '2026-08-01' GROUP BY category_id ORDER BY count(*) DESC LIMIT 1 \gset
+Time: 13.009 ms
+SET max_parallel_workers_per_gather = 0;
+SET
+Time: 0.200 ms
+\echo '======== E7.6 - VACUUM (no puede ir dentro de una transaccion) ========'
+======== E7.6 - VACUUM (no puede ir dentro de una transaccion) ========
+VACUUM (VERBOSE) transactions;
+psql:<stdin>:7: INFO:  vacuuming "personal_finance_db.public.transactions"
+psql:<stdin>:7: INFO:  launched 2 parallel vacuum workers for index vacuuming (planned: 2)
+psql:<stdin>:7: INFO:  finished vacuuming "personal_finance_db.public.transactions": index scans: 1
+pages: 0 removed, 17240 remain, 1085 scanned (6.29% of total)
+tuples: 5000 removed, 995247 remain, 0 are dead but not yet removable
+removable cutoff: 11035, which was 0 XIDs old when operation ended
+index scan needed: 1006 pages from table (5.84% of total) had 9028 dead item identifiers removed
+index "PK_a219afd8dd77ed80f5a862f1db9": pages: 4952 in total, 0 newly deleted, 0 currently deleted, 0 reusable
+index "idx_tx_user_cat_nature_date": pages: 14533 in total, 73 newly deleted, 73 currently deleted, 0 reusable
+index "idx_tx_account_date": pages: 8846 in total, 43 newly deleted, 43 currently deleted, 0 reusable
+index "idx_tx_user_date": pages: 8845 in total, 43 newly deleted, 43 currently deleted, 0 reusable
+index "idx_tx_expense_period": pages: 6849 in total, 0 newly deleted, 0 currently deleted, 0 reusable
+index "idx_tx_expense_period_cover": pages: 7896 in total, 0 newly deleted, 0 currently deleted, 0 reusable
+I/O timings: read: 322.106 ms, write: 15.643 ms
+avg read rate: 353.874 MB/s, avg write rate: 14.501 MB/s
+buffer usage: 16988 hits, 39508 misses, 1619 dirtied
+WAL usage: 7187 records, 1614 full page images, 9040543 bytes
+system usage: CPU: user: 0.12 s, system: 0.25 s, elapsed: 0.87 s
+VACUUM
+Time: 872.993 ms
+\echo '======== E7.7 - VISIBILITY MAP DESPUES DEL VACUUM ========'
+======== E7.7 - VISIBILITY MAP DESPUES DEL VACUUM ========
+SELECT relname, relpages, relallvisible,
+       round(100.0 * relallvisible / nullif(relpages, 0), 2) AS pct_all_visible
+FROM pg_class WHERE relname = 'transactions';
+   relname    | relpages | relallvisible | pct_all_visible 
+--------------+----------+---------------+-----------------
+ transactions |    17240 |         17240 |          100.00
+(1 row)
+
+Time: 2.601 ms
+SELECT relname, n_live_tup, n_dead_tup, last_vacuum
+FROM pg_stat_user_tables WHERE relname = 'transactions';
+   relname    | n_live_tup | n_dead_tup |          last_vacuum          
+--------------+------------+------------+-------------------------------
+ transactions |     995247 |          0 | 2026-08-15 01:50:37.285791+00
+(1 row)
+
+Time: 9.063 ms
+\echo '======== E7.8 - MISMA QUERY: Heap Fetches volvio a 0? ========'
+======== E7.8 - MISMA QUERY: Heap Fetches volvio a 0? ========
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT COALESCE(SUM(e.amount), 0) AS total
+FROM v_period_expenses e
+WHERE e.user_id          = :'ballena'
+  AND e.category_id      = :'categoria'
+  AND e.transaction_date >= '2026-07-01'
+  AND e.transaction_date <  '2026-08-01';
+                                                                                                                                                QUERY PLAN                                                                                                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=50.84..50.85 rows=1 width=8) (actual time=0.814..0.815 rows=1 loops=1)
+   Buffers: shared hit=103
+   ->  Index Only Scan using idx_tx_expense_period_cover on transactions  (cost=0.42..48.80 rows=815 width=4) (actual time=0.061..0.616 rows=4028 loops=1)
+         Index Cond: ((user_id = '0898fb97-6631-48b3-9968-6bb3cb56a399'::uuid) AND (category_id = '4ab66006-6631-4966-941e-041666d26010'::uuid) AND (transaction_date >= '2026-07-01 00:00:00'::timestamp without time zone) AND (transaction_date < '2026-08-01 00:00:00'::timestamp without time zone))
+         Heap Fetches: 0
+         Buffers: shared hit=103
+ Planning:
+   Buffers: shared hit=36
+ Planning Time: 0.782 ms
+ Execution Time: 0.861 ms
+(10 rows)
+
+Time: 2.642 ms
+\echo '======== E7.9 - REACTIVAR AUTOVACUUM (obligatorio: no dejar la tabla sin mantenimiento) ========'
+======== E7.9 - REACTIVAR AUTOVACUUM (obligatorio: no dejar la tabla sin mantenimiento) ========
+ALTER TABLE transactions RESET (autovacuum_enabled);
+ALTER TABLE
+Time: 2.808 ms
+SELECT relname, reloptions FROM pg_class WHERE relname = 'transactions';
+   relname    | reloptions 
+--------------+------------
+ transactions | (null)
+(1 row)
+
+Time: 1.031 ms
