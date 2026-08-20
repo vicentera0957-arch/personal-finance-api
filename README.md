@@ -47,39 +47,7 @@ qué se rompe bajo escrituras concurrentes: leer *Designing Data-Intensive Appli
 en paralelo fue lo que me hizo dejar de preguntar *"¿esto funciona?"* y empezar a
 preguntar *"¿qué hace esto cuando corre dos veces, al mismo tiempo?"*.
 
-Cada decisión de diseño está escrita, incluidas las que resultaron equivocadas. Cuatro
-sobre las que me gustaría que me preguntaran — elegidas por el criterio, no por el dato:
-
-- **Elegir no usar la herramienta más potente.** `SERIALIZABLE` cerraría el write skew en
-  una línea. Se descartó por *dónde mueve la falla*: a lógica de reintentos en cada ruta
-  de escritura, con idempotencia y backoff que hay que hacer bien, y que falla solo bajo
-  carga. Los locks pesimistas puntuales mantienen el costo visible y local.
-  ([ADR-0002](docs/adr/0002-unit-of-work-pessimistic-locks.md))
-- **Hacer imposible el error peligroso en vez de documentarlo.** Un repositorio scoped
-  construido sobre el `EntityManager` equivocado compila, corre y devuelve filas que se
-  ven bien — Postgres otorga el `FOR UPDATE` y lo suelta apenas termina el `SELECT`. No
-  lanza nada, no loguea nada, y ningún test de integración lo agarra de forma confiable.
-  Por eso la clase no se exporta y la única puerta es una factory que recibe un
-  `QueryRunner`: pasarle lo incorrecto **deja de compilar**.
-  ([ADR-0009](docs/adr/0009-scoped-repositories-as-guarded-factories.md))
-- **Superseder mi propio ADR.** El [ADR-0003](docs/adr/0003-port-owned-by-consumer.md)
-  racionalizaba un ciclo de módulos como si fuera un patrón. El ciclo era un artefacto de
-  composición y el diagnóstico estaba mal; el
-  [ADR-0009](docs/adr/0009-scoped-repositories-as-guarded-factories.md) lo reemplazó.
-  Los dos se conservan, y el 0003 ahora dice explícitamente por qué estaba equivocado.
-- **Saber dónde esto sigue siendo frágil.** El modelo de locks es correcto hoy, pero
-  descansa en convención en dos puntos que el compilador no puede verificar: el orden de
-  adquisición que lo hace libre de deadlocks, y el acuerdo de que todo escritor de gastos
-  del período tome primero el lock del presupuesto. Los dos están documentados como deuda
-  conocida, en vez de dejarlos para que alguien los descubra.
-  ([modelo de concurrencia §13](docs/concurrency-model.md))
-
-**Vicente Cristóbal Rivas Avello** · [LinkedIn](https://www.linkedin.com/in/vicente-rivas-avello/)
-
-## El problema (y por qué no es trivial)
-
-Un backend de finanzas es fácil de construir y difícil de hacer **correcto**. Todo lo de
-arriba existe por una sola razón: los bugs interesantes acá no son de CRUD, son de
+Los bugs interesantes acá no son de CRUD, son de
 concurrencia. Un balance actualizado dos veces. Un presupuesto borrado mientras una
 transacción cae en su período. Una transacción revertida dos veces porque llegaron dos
 `DELETE` juntos.
@@ -88,22 +56,16 @@ Ninguno de esos se ve con un request a la vez, y ninguno se arregla revisando el
 con más cuidado. Se cierran en la capa de base de datos, o no se cierran — y por eso el
 proyecto está organizado alrededor de ellos en lugar de alrededor de sus endpoints.
 
+Cada decisión de diseño está escrita, incluidas las que resultaron equivocadas. Cuatro
+sobre las que me gustaría que me preguntaran — elegidas por el criterio, no por el dato:
+
+**Vicente Cristóbal Rivas Avello** · [LinkedIn](https://www.linkedin.com/in/vicente-rivas-avello/)\
 ---
 
 ## La API
 
 Todas las rutas salvo `/auth/*`, `/health` y `/ready` requieren un access token Bearer.
 El usuario que actúa **siempre** sale del JWT — nunca del body ni de la URL.
-
-| Recurso | Endpoints |
-| --- | --- |
-| Auth | `POST /auth/register` · `POST /auth/login` · `POST /auth/refresh` · `POST /auth/logout` |
-| Users | `GET /users/:id` · `PATCH /users/:id/profile` · `DELETE /users/:id` |
-| Accounts | `POST /accounts` · `GET /accounts` · `GET /accounts/:id` · `PATCH /accounts/:id/{name,archive,unarchive}` · `DELETE /accounts/:id` |
-| Categories | `POST /categories` · `GET /categories` · `GET /categories/:id` · `PATCH /categories/:id` · `DELETE /categories/:id` |
-| Budgets | `POST /budgets` · `GET /budgets?month=&year=` · `GET /budgets/:id` · `PATCH /budgets/:id/limit` · `DELETE /budgets/:id` |
-| Transactions | `POST /transactions` · `GET /transactions?page=&limit=&from=&to=` · `GET /transactions/:id` · `GET /transactions/account/:accountId` · `DELETE /transactions/:id` |
-| Reports | `GET /reports/summary?month=&year=` |
 
 Las reglas de dominio se traducen en errores HTTP precisos: gastar por encima del límite
 del presupuesto es un `422`, borrar un presupuesto con gastos en su período es un `409`,
@@ -260,7 +222,7 @@ de dominio está gateada en **95% de líneas / 90% de funciones**.
 **Toda la documentación técnica está en inglés, a propósito** — ver la nota sobre el
 idioma al principio. Índice completo: [docs/README.md](docs/README.md).
 
-| Si querés… | Leé |
+| Si Quieres | Lee |
 | --- | --- |
 | La arquitectura y el flujo de un request | [docs/architecture.md](docs/architecture.md) |
 | Por qué se tomó cada decisión | [docs/adr/](docs/adr/) |
