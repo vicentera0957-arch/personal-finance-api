@@ -56,10 +56,10 @@ Ninguno de esos se ve con un request a la vez, y ninguno se arregla revisando el
 con más cuidado. Se cierran en la capa de base de datos, o no se cierran — y por eso el
 proyecto está organizado alrededor de ellos en lugar de alrededor de sus endpoints.
 
-Cada decisión de diseño está escrita, incluidas las que resultaron equivocadas. Cuatro
-sobre las que me gustaría que me preguntaran — elegidas por el criterio, no por el dato:
+Cada decisión de diseño está escrita, incluidas las que resultaron equivocadas.
 
 **Vicente Cristóbal Rivas Avello** · [LinkedIn](https://www.linkedin.com/in/vicente-rivas-avello/)
+
 ---
 
 ## La API
