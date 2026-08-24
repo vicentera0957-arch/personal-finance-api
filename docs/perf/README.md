@@ -15,11 +15,10 @@ es que tenga su `.txt` de evidencia en `salida/` **y** su sección en
 
 | Bloque | Ejercicios | Estado |
 | --- | --- | --- |
-| 1 · Leer un plan | E1 · E2 · E3a/b · E4 | **cerrado** — evidencia + narrativa |
-| 2 · Índices | E5 | medido (`salida/e5-partial-index.txt`), sin narrativa |
-| 2 · Índices | E6 · E7a/b · E8 | script escrito, sin correr |
+| 1 · Leer un plan | E1 · E2 · E3a/b · E4 | **cerrado** — evidencia + narrativa (`PERFORMANCE.md` §1) |
+| 2 · Índices | E5 · E6 · E7a/b · E8 | **cerrado** — evidencia + narrativa (`PERFORMANCE.md` §2) |
 | 3 · Concurrencia | — | **no aplica**: ya cubierto por `docs/concurrency-model.md` y la suite de `test/integration/concurrency/` |
-| 4 · Keyset | E17a/b/c | script escrito, sin correr |
+| 4 · Keyset | E17a/b/c | **cerrado** — evidencia + narrativa (`PERFORMANCE.md` §4) |
 | 5 · Analítico y joins | E19 · E20 · E21 | script escrito, sin correr |
 | 6 · MVCC y bloat | E13 · E14 · E15 · E16 | script escrito, sin correr |
 
@@ -308,12 +307,12 @@ Además `idx_tx_user_cat_nature_date` **ya cubre** la query de E1. Consecuencia:
 "antes" del Bloque 2 **no va a ser un Seq Scan**, y E5 deja de demostrar "índice vs.
 sin índice" para demostrar "índice general vs. índice especializado".
 
-**E5 ya se corrió** (evidencia en `salida/e5-partial-index.txt`), como experimento
-efimero: crear → medir → `DROP`, sin migration commiteada. La decisión de
-`period-sum-index-decision.md` sigue en pie — no hay ninguna migration con
-`idx_tx_expense_period`. Falta escribir su sección en `PERFORMANCE.md`. Si alguna
-vez se decide crear la migration, hay que actualizar ese doc y `CLAUDE.md` en el
-mismo PR.
+**E5 está cerrado** (evidencia en `salida/e5-partial-index.txt`, narrativa en
+`PERFORMANCE.md` §2), y se corrió como experimento efímero: crear → medir → `DROP`,
+sin migration commiteada. La decisión de `period-sum-index-decision.md` sigue en pie
+— no hay ninguna migration con `idx_tx_expense_period`. Si alguna vez se decide
+crear la migration, hay que actualizar ese doc y `docs/conventions.md` en el mismo
+PR.
 
 > **Verificá los índices antes de medir el Bloque 2.** El `DROP` del final de
 > `e5-partial-index.sql` puede no haber corrido — si el script aborta antes
@@ -331,10 +330,10 @@ mismo PR.
 Nota adicional del dataset: con **94,60% de filas `expense`**, un índice parcial
 `WHERE nature = 'expense'` excluye apenas el 5,40%. No maquillar ese número — y
 notar que con el dataset de 1.000.000 el margen se estrechó todavía más que con
-el de 15.000 (era 8,57%). La conclusión honesta de E5 en este repo no va a ser
-"el índice parcial pesa menos", va a ser "acá el valor del índice parcial es la
-especialización, no el tamaño". Es un gasto realista en finanzas personales: la
-gente registra muchos más gastos que ingresos.
+el de 15.000 (era 8,57%). Así terminó siendo: la conclusión de E5 no fue "el índice
+parcial pesa menos" sino "acá el valor del índice parcial es la especialización, no
+el tamaño" (conclusión 3 de E5 en `PERFORMANCE.md`). Es un gasto realista en
+finanzas personales: la gente registra muchos más gastos que ingresos.
 
 ### ADR-0006 ya está ocupado
 
