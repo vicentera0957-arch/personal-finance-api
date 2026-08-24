@@ -70,7 +70,7 @@ El usuario que actúa **siempre** sale del JWT — nunca del body ni de la URL.
 Las reglas de dominio se traducen en errores HTTP precisos: gastar por encima del límite
 del presupuesto es un `422`, borrar un presupuesto con gastos en su período es un `409`,
 operar sobre una cuenta archivada es un `409`, y tocar el recurso de otro usuario es un
-`403`. La tabla completa de excepción → status vive en [CLAUDE.md](CLAUDE.md).
+`403`. La tabla completa de excepción → status vive en [docs/conventions.md](docs/conventions.md).
 
 ## Decisiones de ingeniería
 
@@ -233,7 +233,7 @@ idioma al principio. Índice completo: [docs/README.md](docs/README.md).
 | Cómo desplegarlo | [docs/deployment.md](docs/deployment.md) |
 | Notas de diseño por módulo | [src/modules/](src/modules/README.md) |
 | Cómo se encontraron y cerraron los bugs difíciles | [docs/history/](docs/history/) |
-| La referencia exhaustiva (patrones, reglas, anti-patrones) | [CLAUDE.md](CLAUDE.md) |
+| La referencia exhaustiva (patrones, reglas, anti-patrones) | [docs/conventions.md](docs/conventions.md) |
 
 ## Licencia
 
