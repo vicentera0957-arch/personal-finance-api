@@ -17,7 +17,7 @@ Start here. This is the index for everything under `docs/`.
 | Cache design (composition vs inheritance) | [`../src/shared/domain/cache-decision.md`](../src/shared/domain/cache-decision.md) |
 | Unit of Work port hierarchy | [`../src/shared/domain/uow-decision.md`](../src/shared/domain/uow-decision.md) |
 | Per-module design notes (co-located) | [`../src/modules/`](../src/modules/README.md) |
-| The exhaustive reference (patterns, rules, anti-patterns) | [`../CLAUDE.md`](../CLAUDE.md) |
+| The exhaustive reference (patterns, rules, anti-patterns) | [`conventions.md`](./conventions.md) |
 
 Diagrams are **Mermaid, inline** in [`architecture.md`](./architecture.md), so they
 render on GitHub and can't silently drift from the text around them.
