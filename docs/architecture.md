@@ -1,5 +1,7 @@
 # Architecture
 
+- **Last updated:** 2026-08-10
+
 This is the technical entry point. It explains the layering, the module graph, and
 how a money-mutating request flows through the system. For the _why_ behind specific
 choices, see the [ADRs](./adr/). For the concurrency deep-dive, see

@@ -15,7 +15,7 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
 // anotadas en `typeorm_metadata`; una view creada por SQL crudo es invisible a
 // `migration:generate` (verificado con dry-run), así que no propone recrearla ni
 // dropearla. Misma política que el índice parcial descartado en
-// docs/period-sum-index-decision.md: objetos DB no modelables declarativamente
+// docs/adr/0013-period-sum-index.md: objetos DB no modelables declarativamente
 // se gestionan sólo por migración manual.
 export class CreatePeriodExpensesView1783292601885 implements MigrationInterface {
   public async up(queryRunner: QueryRunner): Promise<void> {

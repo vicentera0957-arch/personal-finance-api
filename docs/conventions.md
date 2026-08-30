@@ -1,5 +1,7 @@
 # Conventions
 
+- **Last updated:** 2026-08-30
+
 The exhaustive reference: the patterns, rules and anti-patterns that govern this
 codebase. It mixes **reference** (tables, lists) and **mental model** (the _why_).
 
@@ -338,7 +340,7 @@ Three layers, every time a uniqueness rule exists:
 - **Partial observability.** Prometheus metrics (`/metrics`) and structured logs (pino) are in place; **distributed tracing and error tracking (Sentry) are still missing.**
 - See `docs/history/hardening-audit-2026-04.md` for the broader audit and roadmap.
 
-> **Resolved (was a gap):** the "missing partial index" for the period-sum query was **documentation drift** — the composite index `idx_tx_user_cat_nature_date` on `transactions(userId, categoryId, nature, transactionDate)` exists since `InitialSchema` and covers the query (benchmarked: sub-ms Bitmap Index Scan; see `docs/period-sum-index-decision.md`, approved 2026-07-02). A **partial** index (`WHERE nature='expense'`) would only pay off at millions of rows, and TypeORM 0.3 can't model it declaratively (entity↔DB drift if added by hand) — decision: **don't add it**; revisit only if monitoring shows index size or write latency problems.
+> **Resolved (was a gap):** the "missing partial index" for the period-sum query was **documentation drift** — the composite index `idx_tx_user_cat_nature_date` on `transactions(userId, categoryId, nature, transactionDate)` exists since `InitialSchema` and covers the query (benchmarked: sub-ms Bitmap Index Scan; see [ADR-0013](adr/0013-period-sum-index.md), accepted 2026-07-02). A **partial** index (`WHERE nature='expense'`) would only pay off at millions of rows, and TypeORM 0.3 can't model it declaratively (entity↔DB drift if added by hand) — decision: **don't add it**; revisit only if monitoring shows index size or write latency problems.
 
 > **Resolved (was a gap):** throttler storage is now **Redis-backed** (`ThrottlerStorageRedisService` in `app.module.ts`) — per-IP limits hold across instances.
 

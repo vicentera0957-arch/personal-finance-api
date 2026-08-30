@@ -152,6 +152,6 @@ Y en `.env`, `DB_LOGGING=false`.
 
 ## Entregable
 
-`PERFORMANCE.md` §5 con la tabla de conteos antes/después y una conclusión de dos
+`performance.md` §5 con la tabla de conteos antes/después y una conclusión de dos
 líneas: qué encontraste (nada) y por qué eso es un resultado, no una falta de
 resultado.

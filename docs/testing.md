@@ -1,5 +1,7 @@
 # Testing
 
+- **Last updated:** 2026-08-10
+
 How this project is tested and the conventions to follow. Consolidates the former
 `testing-conventions.md` and `unit-testing-guide.md`.
 

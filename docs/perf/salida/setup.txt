@@ -8,7 +8,7 @@
 -- `down`/`up`. psql lo lee tambien en modo no-interactivo (`-f`), asi que estas
 -- opciones aplican igual cuando `pgq` captura evidencia a un .txt.
 -- El "Time: N ms" al pie de cada sentencia. Ojo: NO es el numero que se reporta
--- en PERFORMANCE.md — ese sale de `Execution Time` dentro del EXPLAIN ANALYZE.
+-- en performance.md — ese sale de `Execution Time` dentro del EXPLAIN ANALYZE.
 -- Este incluye ida y vuelta de red y parseo del cliente.
 \timing on
 Timing is on.

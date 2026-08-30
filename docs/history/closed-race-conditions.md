@@ -1,5 +1,8 @@
 # Closed race conditions
 
+- **Status:** Point-in-time record — not current guidance
+- **Date:** 2026-04 → 2026-05 (registry; races closed across both months)
+
 Kept so future contributors don't redo the analysis. **All currently closed.** Moved out of
 `CLAUDE.md` because it is a historical record, not guidance a session needs loaded on every turn —
 the live rules it produced are in the locking & serialization map under "Concurrency" there.

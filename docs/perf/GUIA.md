@@ -1,5 +1,7 @@
 # Guía de ejecución del lab
 
+- **Última actualización:** 2026-08-30
+
 Todo está escrito. Esto es lo que corrés, en qué orden, y qué tenés que mirar en
 cada salida.
 
@@ -12,7 +14,7 @@ docker compose up -d postgres
 
 Y la regla que gobierna todo: **ejercicio sin número medido no cuenta.** Cada
 `pgq` deja la evidencia en `docs/perf/salida/`; la conclusión la escribís vos en
-`PERFORMANCE.md`.
+`performance.md`.
 
 ---
 
@@ -39,7 +41,7 @@ E16 no tiene nada que medir).
 
 ### E1 — Baseline crudo ✅ hecho
 
-`docs/perf/salida/e1-baseline.txt` · `PERFORMANCE.md` §1
+`docs/perf/salida/e1-baseline.txt` · `performance.md` §1
 
 ### E2 — La selectividad decide, no el volumen · ~40 min
 
@@ -128,7 +130,7 @@ antes y después.
 **El dato incómodo, no lo maquilles:** el 94,6% de las filas son `expense`, así
 que el índice parcial excluye apenas un 5,4%. En este dataset su valor **no es**
 el tamaño — es la especialización al patrón de query. Escribilo así en
-`PERFORMANCE.md`.
+`performance.md`.
 
 **La sección 5.5 es la importante.** Tu índice pone `transaction_date` al final:
 igualdades primero, rango último. El contraejemplo invierte el orden y te muestra
@@ -372,7 +374,7 @@ pgq docs\perf\scripts\setup.sql
 
 No es haber corrido los ejercicios. Es tener los artefactos:
 
-- [x] `PERFORMANCE.md` con ≥2 EXPLAIN antes/después con números propios — bloque 1 (E1–E4)
+- [x] `performance.md` con ≥2 EXPLAIN antes/después con números propios — bloque 1 (E1–E4)
 - [x] Las anomalías de concurrencia documentadas — ya estaban: `docs/concurrency-model.md`
       + `docs/history/closed-race-conditions.md`, con red de regresión en
       `test/integration/concurrency/`. No hace falta un `CONCURRENCY.md` aparte

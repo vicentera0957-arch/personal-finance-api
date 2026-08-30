@@ -6,7 +6,7 @@
 
 ---
 
-## Resolved race conditions (April 2026)
+## Resolved race conditions (2026-04)
 
 ### Bug A — Write skew on the budget limit (RESOLVED)
 

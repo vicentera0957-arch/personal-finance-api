@@ -13,7 +13,7 @@ pgq docs\perf\scripts\bloque3-setup.sql
 ```
 
 Crea dos cuentas de laboratorio con 100.000 de saldo y un presupuesto de 100.000
-para septiembre 2026 sin gasto previo. Nada de esto toca los datos del seed.
+para 2026-09 sin gasto previo. Nada de esto toca los datos del seed.
 
 Después abrí **dos terminales de PowerShell** y en cada una:
 
@@ -39,7 +39,7 @@ cuenta A   aaaaaaaa-0000-0000-0000-000000000001
 cuenta B   aaaaaaaa-0000-0000-0000-000000000002
 usuario    7afba7e7-5856-4bd5-8cce-57887f4b1947
 categoria  98de0404-ead4-4c77-9cb3-5875f282a936
-presupuesto de septiembre 2026: limite 100.000, gastado 0
+presupuesto de 2026-09: limite 100.000, gastado 0
 ```
 
 Al terminar los cuatro:

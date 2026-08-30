@@ -13,7 +13,7 @@ exposes that directly: the caller sends an offset and gets a page back.
 
 Two problems, both measured against 1.000.000 rows — the raw output is in
 `docs/perf/salida/e17a-offset.txt` and `e17c-keyset.txt`, the narrative in
-`PERFORMANCE.md` §4.
+`performance.md` §4.
 
 **It does not scale with depth.** `OFFSET n` does not seek to row *n*; it produces *n*
 rows and throws them away. Same `LIMIT 20`, same user, only the offset changes:
@@ -120,7 +120,7 @@ get wrong.
   next/previous still work; a numbered pager does not. This is the real cost, and it is a
   product decision, not a technical one.
 - A total row count still needs a separate `COUNT(*)`, which keyset does not make cheaper.
-- One more index: 56 MB, plus ~4 buffer pages per write (see `PERFORMANCE.md` §2, E8).
+- One more index: 56 MB, plus ~4 buffer pages per write (see `performance.md` §2, E8).
 - Breaking API change. `page` and `offset` disappear from the contract.
 - The cursor must be opaque. Exposing `(date, id)` invites clients to construct their own,
   which freezes the sort order as a public contract forever.

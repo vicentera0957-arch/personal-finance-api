@@ -14,10 +14,10 @@
 #                            NADA queda guardado. Es la terminal de trabajo.
 #     pgq <archivo.sql>      corre el .sql y GUARDA la salida cruda en
 #                            docs/perf/salida/<nombre>.txt. Es la evidencia que
-#                            se commitea y que PERFORMANCE.md cita.
+#                            se commitea y que performance.md cita.
 #
 # La regla del plan: "ejercicio sin numero medido no cuenta". `pg` no produce
-# numero medido; `pgq` si. Si algo va a terminar en PERFORMANCE.md, pasa por pgq.
+# numero medido; `pgq` si. Si algo va a terminar en performance.md, pasa por pgq.
 # =============================================================================
 
 $script:PgLabService  = 'postgres'
@@ -89,7 +89,7 @@ function pgq {
         Pop-Location
     }
 
-    # Cabecera con fecha: los numeros de PERFORMANCE.md solo son comparables
+    # Cabecera con fecha: los numeros de performance.md solo son comparables
     # entre si dentro del mismo dataset. Si re-seedeas (por ejemplo los 200k que
     # pide E17a), esta linea es lo unico que despues permite saber que .txt quedo
     # medido sobre que tabla.

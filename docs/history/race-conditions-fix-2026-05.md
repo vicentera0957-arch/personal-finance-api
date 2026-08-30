@@ -1,8 +1,11 @@
 # Race Conditions Fix — 2026-05
 
-> **Point-in-time record.** Closure of two active races (Race 1 and Race 2) identified
-> after the [April 2026 hardening audit](./hardening-audit-2026-04.md). Status **as of
-> May 2026**: 588/588 tests passing, zero new TypeScript errors introduced.
+- **Status:** Point-in-time record — not current guidance
+- **Date:** 2026-05
+
+> Closure of two active races (Race 1 and Race 2) identified after the
+> [2026-04 hardening audit](./hardening-audit-2026-04.md). Status **as of 2026-05**:
+> 588/588 tests passing, zero new TypeScript errors introduced.
 >
 > Kept for the TOCTOU diagrams and the flow-by-flow analysis. For the complete set of
 > seven closed races see [`closed-race-conditions.md`](./closed-race-conditions.md); for

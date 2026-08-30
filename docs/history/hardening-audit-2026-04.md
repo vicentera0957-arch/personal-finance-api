@@ -1,10 +1,13 @@
 # Hardening Audit — 2026-04
 
-> **Point-in-time record. Do not read as current status.** The changes documented here
-> were implemented in April 2026.
+- **Status:** Point-in-time record — not current guidance
+- **Date:** 2026-04
+
+> **Do not read as current status.** The changes documented here were implemented in
+> 2026-04.
 >
 > **Bug A, Bug B and Bug E — open when this audit was written — are all closed.** They
-> were closed in May 2026 along with Race 1, Race 2, Race 3 and B4; the analysis for all
+> were closed in 2026-05 along with Race 1, Race 2, Race 3 and B4; the analysis for all
 > seven is in [`closed-race-conditions.md`](./closed-race-conditions.md), and the
 > resulting lock map is in [`concurrency-model.md`](../concurrency-model.md). The
 > "Active race conditions" section of `CLAUDE.md` that this header used to point at no

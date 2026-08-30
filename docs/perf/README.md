@@ -1,29 +1,31 @@
 # Lab de performance PostgreSQL
 
+- **Última actualización:** 2026-08-30
+
 Cómo levantar el laboratorio de medición en una máquina nueva, y qué convenciones
 gobiernan los artefactos que produce.
 
 > Este archivo es el **runbook del lab**, escrito para operarlo. Las conclusiones
-> publicables viven en [`PERFORMANCE.md`](../../PERFORMANCE.md); acá está cómo se
+> publicables viven en [`performance.md`](../../performance.md); acá está cómo se
 > producen.
 
 ## Estado de los ejercicios
 
 Los `.sql` de todos los ejercicios están escritos. Lo que distingue a uno cerrado
 es que tenga su `.txt` de evidencia en `salida/` **y** su sección en
-`PERFORMANCE.md`.
+`performance.md`.
 
 | Bloque | Ejercicios | Estado |
 | --- | --- | --- |
-| 1 · Leer un plan | E1 · E2 · E3a/b · E4 | **cerrado** — evidencia + narrativa (`PERFORMANCE.md` §1) |
-| 2 · Índices | E5 · E6 · E7a/b · E8 | **cerrado** — evidencia + narrativa (`PERFORMANCE.md` §2) |
+| 1 · Leer un plan | E1 · E2 · E3a/b · E4 | **cerrado** — evidencia + narrativa (`performance.md` §1) |
+| 2 · Índices | E5 · E6 · E7a/b · E8 | **cerrado** — evidencia + narrativa (`performance.md` §2) |
 | 3 · Concurrencia | — | **no aplica**: ya cubierto por `docs/concurrency-model.md` y la suite de `test/integration/concurrency/` |
-| 4 · Keyset | E17a/b/c | **cerrado** — evidencia + narrativa (`PERFORMANCE.md` §4) |
+| 4 · Keyset | E17a/b/c | **cerrado** — evidencia + narrativa (`performance.md` §4) |
 | 5 · Analítico y joins | E19 · E20 · E21 | script escrito, sin correr |
 | 6 · MVCC y bloat | E13 · E14 · E15 · E16 | script escrito, sin correr |
 
 **La regla que gobierna todo:** ejercicio sin número medido no cuenta. Cada bloque
-cierra con algo escrito en `PERFORMANCE.md` o un commit.
+cierra con algo escrito en `performance.md` o un commit.
 
 ---
 
@@ -35,7 +37,7 @@ cierra con algo escrito en `PERFORMANCE.md` o un commit.
 | `docs/perf/scripts/*.sql` | El experimento. Reproducible por cualquiera. | sí |
 | `docs/perf/scripts/*.md` | Runbooks de los ejercicios que necesitan dos sesiones y no se pueden scriptear | sí |
 | `docs/perf/salida/*.txt` | La salida cruda de psql. **Es la evidencia.** | sí |
-| `PERFORMANCE.md` | La narrativa con las conclusiones. **Solo se publica ahí lo que tiene número medido** | sí |
+| `performance.md` | La narrativa con las conclusiones. **Solo se publica ahí lo que tiene número medido** | sí |
 
 Este README es la **puesta en marcha** (infraestructura, datos, convenciones).
 Para correr los ejercicios andá a [GUIA.md](GUIA.md).
@@ -67,7 +69,7 @@ cada `.txt`. Cuatro directivas, y el porqué de cada una vive acá:
 
 | Directiva | Por qué |
 | --- | --- |
-| `\timing on` | El `Time: N ms` al pie de cada sentencia. **No es** el número que se reporta en `PERFORMANCE.md` — ese sale del `Execution Time` de adentro del `EXPLAIN ANALYZE`. El de `\timing` incluye ida y vuelta de red y parseo del cliente |
+| `\timing on` | El `Time: N ms` al pie de cada sentencia. **No es** el número que se reporta en `performance.md` — ese sale del `Execution Time` de adentro del `EXPLAIN ANALYZE`. El de `\timing` incluye ida y vuelta de red y parseo del cliente |
 | `\pset pager off` | Con `less` de por medio la salida capturada queda con códigos de escape ANSI, o directamente se cuelga esperando una tecla |
 | `\set ON_ERROR_STOP on` | Un error a mitad de archivo aborta. Sin esto un `.sql` con un typo sigue corriendo y produce un `.txt` que parece válido pero midió otra cosa |
 | `\pset null '(null)'` | Distinguir "no hay fila" de "hay fila con valor vacío" importa al leer `pg_stats` y `pg_stat_user_tables` |
@@ -256,12 +258,12 @@ comparables entre corridas (dependen de cuántos workers consiguió esa vez). Se
 para *leer planes*, no porque esté mal en producción.
 
 **Para planes complejos:** `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` → pegar en
-[explain.dalibo.com](https://explain.dalibo.com) → link compartible desde `PERFORMANCE.md`.
+[explain.dalibo.com](https://explain.dalibo.com) → link compartible desde `performance.md`.
 
 **Comandos psql útiles:** `\d transactions` · `\di` · `\gset` · `\echo :var` · `\x auto` · `\q`
 
 **El `Time: N ms` que imprime `\timing` NO es el número que se reporta.** Incluye red
-y parseo del cliente. El número que va a `PERFORMANCE.md` es el `Execution Time` de
+y parseo del cliente. El número que va a `performance.md` es el `Execution Time` de
 adentro del `EXPLAIN ANALYZE`.
 
 ---
@@ -298,7 +300,7 @@ Cosas que la lista de ejercicios no podía saber y que se detectaron al montar e
 
 ### E5 choca con una decisión ya tomada
 
-[`docs/period-sum-index-decision.md`](../period-sum-index-decision.md) (aprobada
+[ADR-0013](../adr/0013-period-sum-index.md) (aceptada
 2026-07-02) concluye explícitamente **no agregar el índice parcial**, con dos
 razones: solo rinde a millones de filas, y TypeORM 0.3 no lo modela
 declarativamente (deriva entity↔DB si se agrega a mano).
@@ -308,10 +310,10 @@ Además `idx_tx_user_cat_nature_date` **ya cubre** la query de E1. Consecuencia:
 sin índice" para demostrar "índice general vs. índice especializado".
 
 **E5 está cerrado** (evidencia en `salida/e5-partial-index.txt`, narrativa en
-`PERFORMANCE.md` §2), y se corrió como experimento efímero: crear → medir → `DROP`,
-sin migration commiteada. La decisión de `period-sum-index-decision.md` sigue en pie
+`performance.md` §2), y se corrió como experimento efímero: crear → medir → `DROP`,
+sin migration commiteada. La decisión de ADR-0013 sigue en pie
 — no hay ninguna migration con `idx_tx_expense_period`. Si alguna vez se decide
-crear la migration, hay que actualizar ese doc y `docs/conventions.md` en el mismo
+crear la migration, hay que actualizar ese ADR y `docs/conventions.md` en el mismo
 PR.
 
 > **Verificá los índices antes de medir el Bloque 2.** El `DROP` del final de
@@ -332,7 +334,7 @@ Nota adicional del dataset: con **94,60% de filas `expense`**, un índice parcia
 notar que con el dataset de 1.000.000 el margen se estrechó todavía más que con
 el de 15.000 (era 8,57%). Así terminó siendo: la conclusión de E5 no fue "el índice
 parcial pesa menos" sino "acá el valor del índice parcial es la especialización, no
-el tamaño" (conclusión 3 de E5 en `PERFORMANCE.md`). Es un gasto realista en
+el tamaño" (conclusión 3 de E5 en `performance.md`). Es un gasto realista en
 finanzas personales: la gente registra muchos más gastos que ingresos.
 
 ### ADR-0006 ya está ocupado
@@ -351,7 +353,7 @@ comparables entre sí**.
 Por eso el re-seed **ya se hizo, antes del Bloque 1**: el dataset de 1.000.000 de
 filas es el único sobre el que se mide todo. `seed-load-user-1` tiene 212.817
 transacciones, de sobra para E17a. **No re-seedees a mitad del lab.** Si por algo
-tenés que hacerlo, re-corré el Gate y anotá en `PERFORMANCE.md` a partir de qué
+tenés que hacerlo, re-corré el Gate y anotá en `performance.md` a partir de qué
 tabla cambió el dataset — la cabecera con fecha que `pgq` escribe en cada `.txt`
 es el respaldo.
 

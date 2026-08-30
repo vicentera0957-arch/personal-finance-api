@@ -1,10 +1,12 @@
-# Structural refactors P1–P7 (August 2026)
+# Structural refactors P1–P7 — 2026-08
+
+- **Status:** Point-in-time record — not current guidance
+- **Date:** 2026-08-01 → 2026-08-06
 
 A seven-item inventory of structural problems in the coupling between `transactions`,
 `accounts`, `budgets` and `auth` — decomposed into independent, individually shippable
 units, then closed one at a time between 2026-08-01 and 2026-08-06. **All seven are
-closed.** This is a point-in-time record, not living guidance: the rules that came out of
-it are in [`CLAUDE.md`](../../CLAUDE.md) and [`concurrency-model.md`](../concurrency-model.md).
+closed.** The rules that came out of it are in [`CLAUDE.md`](../../CLAUDE.md) and [`concurrency-model.md`](../concurrency-model.md).
 
 None of the seven was a bug except P7. The app booted, the locks worked, the suite passed.
 They were latent traps — the kind that cost nothing today and a lot once the codebase grows

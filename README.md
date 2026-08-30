@@ -41,7 +41,7 @@ Para ejecutar el proyecto localmente, ver [Correrlo localmente](#correrlo-localm
 
 ## Sobre este proyecto
 
-Mi proyecto/lab personal de backend, construido entre **marzo y agosto de 2026** mientras
+Mi proyecto/lab personal de backend, construido entre **2026-03 y 2026-08** mientras
 aprendía NestJS y PostgreSQL. Empezó como una API CRUD y terminó siendo un estudio de
 qué se rompe bajo escrituras concurrentes: leer *Designing Data-Intensive Applications*
 en paralelo fue lo que me hizo dejar de preguntar *"¿esto funciona?"* y empezar a
@@ -131,7 +131,7 @@ presupuesto, con la salida cruda de psql commiteada al lado del script que la pr
 entrada vieja en la documentación que hablaba de un "índice faltante" resultó ser deriva
 — el índice ya existía, y el benchmark que lo demostró también mató la optimización que
 se proponía.
-→ [PERFORMANCE.md](PERFORMANCE.md) · [decisión sobre el índice del período](docs/period-sum-index-decision.md)
+→ [performance.md](performance.md) · [ADR-0013 · índice del período](docs/adr/0013-period-sum-index.md)
 
 ### Defensa en profundidad y hardening de producción
 
@@ -225,14 +225,14 @@ idioma al principio. Índice completo: [docs/README.md](docs/README.md).
 | Si Quieres | Lee |
 | --- | --- |
 | La arquitectura y el flujo de un request | [docs/architecture.md](docs/architecture.md) |
-| Por qué se tomó cada decisión | [docs/adr/](docs/adr/) |
+| Por qué se tomó cada decisión | [docs/adr/](docs/adr/README.md) |
 | El modelo de concurrencia y el mapa de locks | [docs/concurrency-model.md](docs/concurrency-model.md) |
 | La estrategia de testing (unitarios + integración) | [docs/testing.md](docs/testing.md) |
-| Performance de queries, medida | [PERFORMANCE.md](PERFORMANCE.md) |
+| Performance de queries, medida | [performance.md](performance.md) |
 | Observabilidad (logs, métricas, traces) | [docs/observability.md](docs/observability.md) |
 | Cómo desplegarlo | [docs/deployment.md](docs/deployment.md) |
 | Notas de diseño por módulo | [src/modules/](src/modules/README.md) |
-| Cómo se encontraron y cerraron los bugs difíciles | [docs/history/](docs/history/) |
+| Cómo se encontraron y cerraron los bugs difíciles | [docs/history/](docs/history/README.md) |
 | La referencia exhaustiva (patrones, reglas, anti-patrones) | [docs/conventions.md](docs/conventions.md) |
 
 ## Licencia

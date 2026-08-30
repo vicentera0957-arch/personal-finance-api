@@ -1,5 +1,7 @@
 # Deployment runbook
 
+- **Last updated:** 2026-08-03
+
 Guide for deploying the Personal Finance API. Written for a first deploy: it explains
 the **what** and the **why**. It is platform-agnostic; platform-specific notes are at the end.
 

@@ -1,15 +1,17 @@
 # Ejercicios PostgreSQL — lista consolidada
 
+- **Última actualización:** 2026-08-30
+
 **Alcance:** solo base de datos. Cantrill, ERP, inglés y visibilidad quedan fuera.
 
 **Regla que gobierna todo:** ejercicio sin número medido no cuenta. Cada bloque cierra
-con algo escrito en `PERFORMANCE.md` / `CONCURRENCY.md` o un commit.
+con algo escrito en `performance.md` / `CONCURRENCY.md` o un commit.
 
 **Convención de artefactos:**
 
 - `docs/perf/scripts/*.sql` — el experimento (se commitea)
 - `docs/perf/salida/*.txt` — la salida cruda (se commitea)
-- `PERFORMANCE.md` — la narrativa con conclusiones
+- `performance.md` — la narrativa con conclusiones
 
 **Total estimado:** ~13h 45m del núcleo obligatorio · ~4h 45m de extensiones opcionales.
 
@@ -64,7 +66,7 @@ ANALYZE transactions; ANALYZE accounts; ANALYZE budgets; ANALYZE categories;
 
 # Bloque 1 · Línea base medible — 2h 15m ✅
 
-*Produce: `PERFORMANCE.md` §1 "Antes".*
+*Produce: `performance.md` §1 "Antes".*
 
 ### E1 — Baseline crudo · 30 min ✅
 
@@ -142,14 +144,14 @@ diagnóstico raíz #1, y **no se arregla con índices** sino con estadísticas.
 
 ---
 
-📄 **Entregable:** `PERFORMANCE.md` §1 completa. ✅
+📄 **Entregable:** `performance.md` §1 completa. ✅
 ✅ **Checkpoint (inglés):** *"Why did the planner switch plans between 4k and 15k rows?"*
 
 ---
 
 # Bloque 2 · Índices que cambian el plan — 2h 30m 🔄
 
-*Produce: `PERFORMANCE.md` §2 "Antes/Después" + commit de migration.*
+*Produce: `performance.md` §2 "Antes/Después" + commit de migration.*
 
 ### E5 — Partial index · 45 min ✅
 
@@ -232,7 +234,7 @@ patrón es write-heavy, esa asimetría importa más que en un CRUD.
 
 ---
 
-📄 **Entregable:** `PERFORMANCE.md` §2 con planning time, execution time, buffers y
+📄 **Entregable:** `performance.md` §2 con planning time, execution time, buffers y
 nodo, antes/después · commit de la migration.
 
 ---
@@ -339,7 +341,7 @@ página. Documentar el cambio de contrato (`page` sale, entra un cursor opaco).
 
 ---
 
-📄 **Entregable:** endpoint migrado · **ADR-0010** · `PERFORMANCE.md` §4.
+📄 **Entregable:** endpoint migrado · **ADR-0010** · `performance.md` §4.
 
 ---
 
@@ -397,7 +399,7 @@ fabricarlo a propósito es la otra mitad.** Runbook: `docs/perf/scripts/e21-n1-t
 
 ---
 
-📄 **Entregable:** endpoint de reportes + `PERFORMANCE.md` §5 con el conteo de queries
+📄 **Entregable:** endpoint de reportes + `performance.md` §5 con el conteo de queries
 antes/después.
 
 ---
@@ -510,7 +512,7 @@ bloat previo no hay nada que medir).
 
 No es haber terminado los ejercicios. Es tener los artefactos:
 
-- [ ] `PERFORMANCE.md` con ≥2 EXPLAIN antes/después con números propios
+- [ ] `performance.md` con ≥2 EXPLAIN antes/después con números propios
 - [ ] `CONCURRENCY.md` o ADR con las 4 anomalías reproducidas
 - [ ] Keyset en producción + **ADR-0010**
 - [ ] Endpoint de reportes con CTEs + window functions

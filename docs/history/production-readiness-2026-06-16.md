@@ -1,6 +1,9 @@
-# Production Readiness — 2026-06
+# Production Readiness — 2026-06-16
 
-> **Point-in-time record.** Log of the changes made on 2026-06-16, not current status.
+- **Status:** Point-in-time record — not current guidance
+- **Date:** 2026-06-16
+
+> Log of the changes made on 2026-06-16, not current status.
 > For where the project stands today see the README and
 > [`deployment.md`](../deployment.md).
 
@@ -194,9 +197,9 @@ Dependabot PRs when healthy upstream versions exist.
 - **Error tracking** (Sentry or similar) — today there are metrics + logs; grouping stack
   traces and alerting on new 500s is missing.
 - **Partial index** for the period-sum query — decision consciously deferred
-  (see `docs/period-sum-index-decision.md`).
+  (settled later in [ADR-0013](../adr/0013-period-sum-index.md)).
 
 > **Since then:** the partial index question was settled on 2026-07-02 — *don't add it*,
 > the composite index already covers the query
-> ([period-sum-index-decision.md](../period-sum-index-decision.md)). Error tracking is
+> ([ADR-0013](../adr/0013-period-sum-index.md)). Error tracking is
 > still open; see [observability.md](../observability.md) for what it would take.

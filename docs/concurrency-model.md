@@ -1,5 +1,7 @@
 # Concurrency model
 
+- **Last updated:** 2026-08-10
+
 > Reference and study document. Gathers in one place what is fragmented across
 > [CLAUDE.md](../CLAUDE.md) (the authoritative lock map), [uow-decision.md](../src/shared/domain/uow-decision.md)
 > (the pattern), [race-conditions-fix-2026-05.md](./history/race-conditions-fix-2026-05.md) (cross-module

@@ -1,5 +1,7 @@
 # Observability
 
+- **Last updated:** 2026-08-10
+
 The three pillars — **logs**, **metrics**, **traces** — plus error tracking as a fourth
 operational concern. Two are in place; two are deliberately not, and this document says
 what each would cost to add.

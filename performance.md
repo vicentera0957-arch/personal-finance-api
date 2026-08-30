@@ -1,4 +1,6 @@
-# PERFORMANCE
+# Performance
+
+- **Última actualización:** 2026-08-30
 
 Narrativa del lab de performance de PostgreSQL. Los números crudos viven en
 `docs/perf/salida/*.txt` y los experimentos que los produjeron en `docs/perf/scripts/*.sql`.
@@ -78,7 +80,7 @@ budget, en cada gasto que se crea.
   ese usuario en el mes. Se descartaron `Arriendo` y `Servicios` (1 fila cada
   una): con un conjunto casi vacío el planner elige otra estrategia, y la foto
   sería de una consulta que en producción no existe.
-- **Período** — `[2026-07-01, 2026-08-01)`. Mes cerrado. Agosto 2026 está
+- **Período** — `[2026-07-01, 2026-08-01)`. Mes cerrado. 2026-08 está
   truncado al día 10 (el seed no genera fechas futuras) y no es comparable.
 
 **Sanity check:** `total = 170.301.625` sobre `4.029` filas. No es un conjunto

@@ -58,7 +58,7 @@ migration proposing to `DROP` or recreate it must never be accepted.
   Rejected: it would mean two sources of schema truth, since the entities still describe
   tables. TypeORM migrations already accept raw SQL when the ORM can't express something
   — `v_period_expenses` and the partial-index sketch in
-  [`period-sum-index-decision.md`](../period-sum-index-decision.md) both are raw SQL — so
+  [ADR-0013](./0013-period-sum-index.md) both are raw SQL — so
   the escape hatch exists without adding a tool.
 - **Migrations at container boot instead of at release.** Rejected: it couples schema
   changes to instance startup, so N replicas racing to migrate is a real scenario. The
@@ -78,7 +78,7 @@ migration proposing to `DROP` or recreate it must never be accepted.
 
 - Must author/generate a migration for every entity change; TypeORM 0.3 cannot model
   some constructs (e.g. partial indexes) — see
-  [`period-sum-index-decision.md`](../period-sum-index-decision.md).
+  [ADR-0013](./0013-period-sum-index.md).
 - Anything written as raw SQL (the view) is invisible to `migration:generate`, so
   generated migrations must be read before being committed, not trusted.
 - `data-source.ts` has to detect compiled (`dist/`) vs ts-node (`src/`) so one file

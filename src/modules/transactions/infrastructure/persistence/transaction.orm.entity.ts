@@ -21,7 +21,7 @@ import { CategoryOrmEntity } from '../../../categories/infrastructure/persistenc
 //     rango en la fecha. Benchmarkeado: Bitmap Index Scan sub-milisegundo. Un índice
 //     PARCIAL (WHERE nature='expense') solo aportaría tamaño a escala de millones de
 //     filas y TypeORM 0.3 no lo modela (drift entity↔DB si se agrega a mano) —
-//     decisión: NO agregarlo. Ver docs/period-sum-index-decision.md.
+//     decisión: NO agregarlo. Ver docs/adr/0013-period-sum-index.md.
 @Entity('transactions')
 @Index('idx_tx_user_date', ['userId', 'transactionDate'])
 @Index('idx_tx_account_date', ['accountId', 'transactionDate'])
