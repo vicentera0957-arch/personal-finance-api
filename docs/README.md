@@ -12,6 +12,7 @@ Start here. This is the index for everything under `docs/`.
 | The architecture, module graph & request flow (diagrams) | [`architecture.md`](./architecture.md) |
 | Why decisions were made (ADRs) | [`adr/`](./adr/README.md) |
 | The concurrency model & lock map | [`concurrency-model.md`](./concurrency-model.md) |
+| The schema: constraint map, domain↔relational divergences, `v_period_expenses` | [`data-model.md`](./data-model.md) |
 | Testing approach & conventions | [`testing.md`](./testing.md) |
 | Observability (logs, metrics, tracing) | [`observability.md`](./observability.md) |
 | Deploy (build → release → run) | [`deployment.md`](./deployment.md) |

@@ -11,6 +11,7 @@ only carries what an agent should have loaded on every turn.
 | [`docs/conventions.md`](docs/conventions.md) | Patterns, rules, anti-patterns, exception→HTTP table, module summaries — the exhaustive reference |
 | [`docs/architecture.md`](docs/architecture.md) | Layering, module graph, request flow (diagrams) |
 | [`docs/concurrency-model.md`](docs/concurrency-model.md) | Unit of Work, lock map, serialization |
+| [`docs/data-model.md`](docs/data-model.md) | Constraint map, where the schema and the domain diverge, `v_period_expenses` |
 | [`docs/adr/`](docs/adr/) | Why each decision was taken |
 | [`src/modules/`](src/modules/README.md) | Per-module design notes, co-located with the code |
 

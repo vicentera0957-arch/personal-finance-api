@@ -1,6 +1,6 @@
 # Concurrency model
 
-- **Last updated:** 2026-08-10
+- **Last updated:** 2026-08-30
 
 > Reference and study document. Gathers in one place what is fragmented across
 > [CLAUDE.md](../CLAUDE.md) (the authoritative lock map), [uow-decision.md](../src/shared/domain/uow-decision.md)
@@ -137,6 +137,11 @@ the type system — see CLAUDE.md's anti-patterns list. If a future flow needs t
 Aggregates (`SUM`/`COUNT`) **cannot** take `FOR UPDATE` (Postgres forbids it) and it wouldn't
 help anyway: a lock on existing rows does not stop *phantom inserts* in the range. Their consistency
 comes from the guardian-row lock that the caller takes **first**.
+
+> This table answers *what serializes two concurrent writers*. Its mirror,
+> [`data-model.md`](./data-model.md) §2, answers *what rejects a single invalid one* —
+> which constraint or check defends each invariant, in which layer, and what the caller
+> gets back.
 
 ---
 

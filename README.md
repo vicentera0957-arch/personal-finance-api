@@ -227,6 +227,7 @@ idioma al principio. Índice completo: [docs/README.md](docs/README.md).
 | La arquitectura y el flujo de un request | [docs/architecture.md](docs/architecture.md) |
 | Por qué se tomó cada decisión | [docs/adr/](docs/adr/README.md) |
 | El modelo de concurrencia y el mapa de locks | [docs/concurrency-model.md](docs/concurrency-model.md) |
+| El modelo de datos: qué constraint resguarda cada invariante | [docs/data-model.md](docs/data-model.md) |
 | La estrategia de testing (unitarios + integración) | [docs/testing.md](docs/testing.md) |
 | Performance de queries, medida | [performance.md](performance.md) |
 | Observabilidad (logs, métricas, traces) | [docs/observability.md](docs/observability.md) |
