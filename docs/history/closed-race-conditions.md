@@ -17,9 +17,16 @@ the live rules it produced are in the locking & serialization map under "Concurr
 | Race 3 | Two concurrent `DELETE /transactions/:id` (double-reverse balance)            | `ScopedTransactionRepository.findByIdWithLock` takes `FOR UPDATE`. `DeleteTransactionUseCase` does fail-fast outside UoW (cheap 404/403) then re-fetches inside UoW. Second arrival sees null after first commits. |
 | B4     | `PATCH /budgets/:id/limit` could lower limit below already-spent amount       | `UpdateBudgetLimitUseCase` sums period expenses (`ScopedExpenseChecker.sumExpenseAmountInPeriod`, no own lock) under the budget-row `FOR UPDATE` and throws `BudgetLimitBelowSpentException` (→ 409) when `new limit < spent`.         |
 
-The regression net for all seven is `test/integration/concurrency/concurrency.integration.spec.ts`.
-Treat that file as the oracle: if you change the lock model, those scenarios must still pass
-**unmodified**.
+The regression net for six of the seven is
+`test/integration/concurrency/concurrency.integration.spec.ts`. Treat that file as the oracle:
+if you change the lock model, those scenarios must still pass **unmodified**.
+
+> **Bug E is the exception.** The concurrency spec has no test for it: `auth.integration.spec.ts`
+> covers the duplicate email *sequentially* (register twice, expect 409), which exercises the
+> `23505` catch but not the race. `Promise.all` appears in no other integration spec, so nothing
+> currently drives two simultaneous registrations at the unique index. The defence itself is the
+> DB constraint, which does not depend on a lock we could regress, but the coverage claim should
+> not be read as stronger than it is.
 
 > Caveat worth knowing before trusting any single scenario there: the Race 2 assertions are looser
 > than they look. If the account-side `FOR UPDATE` vanished, the typical interleaving still produces

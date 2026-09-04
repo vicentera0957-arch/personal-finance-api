@@ -10,8 +10,10 @@ import { Public } from './modules/auth/infrastructure/decorators/public.decorato
  *                  instancia está viva y puede seguir recibiendo tráfico.
  *                  Si responde !=200, el orquestador reinicia el contenedor.
  *
- * Gap conocido: falta /ready (readiness) que valide DB conectada, pool ok, etc.
- * Se puede añadir con @nestjs/terminus (TerminusModule + TypeOrmHealthIndicator).
+ * La readiness probe NO vive acá: es GET /ready, en
+ * shared/infrastructure/health/health.controller.ts, con @nestjs/terminus
+ * (TypeOrmHealthIndicator + RedisHealthIndicator). Liveness responde si el proceso
+ * vive; readiness responde si sus dependencias contestan.
  */
 @Controller()
 export class AppController {
