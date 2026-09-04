@@ -207,7 +207,7 @@ npm run test:integration   # integración contra un Postgres real
 npm run test:cov           # cobertura
 ```
 
-**635 tests unitarios** (78 suites, sin base) y **107 tests de integración** (12 specs,
+**640 tests unitarios** (78 suites, sin base) y **107 tests de integración** (12 specs,
 Postgres + Redis reales). La suite incluye un spec dedicado a **concurrencia** que corre
 las carreras de arriba contra una base real y asierta sobre el *estado final*, no sobre
 las respuestas individuales — y cada lock se verificó sacándolo y viendo que el test
