@@ -9,11 +9,6 @@ import { Public } from './modules/auth/infrastructure/decorators/public.decorato
  *                  Docker/K8s/LB la llaman cada N segundos para saber si la
  *                  instancia está viva y puede seguir recibiendo tráfico.
  *                  Si responde !=200, el orquestador reinicia el contenedor.
- *
- * La readiness probe NO vive acá: es GET /ready, en
- * shared/infrastructure/health/health.controller.ts, con @nestjs/terminus
- * (TypeOrmHealthIndicator + RedisHealthIndicator). Liveness responde si el proceso
- * vive; readiness responde si sus dependencias contestan.
  */
 @Controller()
 export class AppController {

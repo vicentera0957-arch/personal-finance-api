@@ -268,19 +268,8 @@ jobs:
   # Manejás auth + datos financieros: una CVE en una dep transitiva ES tu
   # modelo de amenaza. No necesita `npm ci`: npm audit usa package-lock.json.
   #
-  # Gatea en high/critical (no en moderate). Estado tras el `npm audit fix` de
-  # 2026-09-04: 0 vulnerabilidades. Ese fix resolvió dos high que aparecieron
-  # DESPUÉS del último run verde de main (browserslist y fast-uri, ambas por
-  # @nestjs/cli y ts-jest — tooling de build, no el runtime) más dos moderate
-  # (qs, vía express). Todos fueron bumps transitivos patch/minor: package.json
-  # no se tocó.
-  #
-  # Lección operativa: este job puede pasar de verde a rojo sin que nadie empuje
-  # código, porque el input es el feed de advisories, no el diff. Un badge verde
-  # solo prueba que el gate pasaba en el ÚLTIMO run, no que pase hoy.
-  #
+  # Gatea en high/critical (no en moderate).
   # NO correr `npm audit fix --force`: metería downgrades destructivos (jest 30→25).
-  # Si `--force` es lo único que arregla algo, va por PR de Dependabot.
   # ─────────────────────────────────────────────────────────────
   security-audit:
     name: Security audit
